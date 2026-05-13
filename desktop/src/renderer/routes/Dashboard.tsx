@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ObsStatus, ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { AppSettings } from '../../main/services/settings/settings'
+import type { ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
 import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
@@ -19,7 +20,9 @@ const pipelineSteps = ['Закрытие сделки найдено', 'OBS Repl
 export const Dashboard = () => {
   const [appVersion, setAppVersion] = useState<string>()
   const [settings, setSettings] = useState<AppSettings>()
+  const [clips, setClips] = useState<ClipQueueItem[]>([])
   const [lastCheck, setLastCheck] = useState<ObsTestReplayResult>()
+  const [clipMessage, setClipMessage] = useState('')
   const [obs, setObs] = useState<ObsUiState>({
     status: 'Проверка',
     message: 'Запрашиваем статус OBS через локальный IPC...',
@@ -28,14 +31,16 @@ export const Dashboard = () => {
   })
 
   const refreshStatus = async () => {
-    const [version, nextSettings, status] = await Promise.all([
+    const [version, nextSettings, status, pendingClips] = await Promise.all([
       window.tradeClipper.app.getVersion(),
       window.tradeClipper.settings.get(),
-      window.tradeClipper.obs.getStatus()
+      window.tradeClipper.obs.getStatus(),
+      window.tradeClipper.clips.listPending()
     ])
 
     setAppVersion(version)
     setSettings(nextSettings)
+    setClips(pendingClips)
     setObs({
       status: status.status === 'setup-needed' ? 'Нужно настроить' : status.status === 'connected' ? 'Подключено' : 'Отключено',
       message: status.message,
@@ -48,6 +53,17 @@ export const Dashboard = () => {
     const result = await window.tradeClipper.obs.testReplaySave()
     setLastCheck(result)
     await refreshStatus()
+  }
+
+  const createTestClip = async () => {
+    setClipMessage('Создаём тестовый клип: сохраняем OBS replay, ищем файл и режем ffmpeg...')
+    try {
+      const clip = await window.tradeClipper.clips.createTest()
+      setClipMessage(`Клип создан: ${clip.fileName}`)
+      await refreshStatus()
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось создать клип')
+    }
   }
 
   useEffect(() => {
@@ -122,9 +138,13 @@ export const Dashboard = () => {
             <div>
               <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
               <p className="mt-1 text-sm text-zinc-500">Клипы остаются локально, пока вы вручную не подтвердите загрузку в YouTube.</p>
+              {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
             </div>
+            <button className="cursor-pointer rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25" onClick={createTestClip}>Создать тестовый клип</button>
           </div>
-          <ClipCard />
+          <div className="space-y-3">
+            {clips.length > 0 ? clips.map((clip) => <ClipCard key={clip.id} clip={clip} />) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет локальных клипов на проверке.</div>}
+          </div>
         </section>
       </div>
     </>

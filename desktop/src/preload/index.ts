@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
 import type { AppSettings, SettingsUpdateInput } from '../main/services/settings/settings'
+import type { ClipQueueItem } from '../main/services/trades/tradeClipPipeline'
 
 const api = {
   app: {
@@ -13,6 +14,10 @@ const api = {
   obs: {
     getStatus: (): Promise<ObsStatus> => ipcRenderer.invoke('obs:get-status'),
     testReplaySave: (): Promise<ObsTestReplayResult> => ipcRenderer.invoke('obs:test-replay-save')
+  },
+  clips: {
+    listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),
+    createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test')
   }
 }
 

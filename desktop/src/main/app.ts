@@ -4,6 +4,8 @@ import { createObsService } from './services/obs/obsService'
 import { createSecretStore } from './services/security/secretStore'
 import { type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
+import { createSimulatedClosedTrade } from './services/trades/simulatedTradePipeline'
+import { createTradeClipPipeline } from './services/trades/tradeClipPipeline'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -58,6 +60,10 @@ app.whenReady().then(() => {
     getSettings: () => settingsStore.load(),
     getPassword: () => secretStore.getObsPassword()
   })
+  const clipPipeline = createTradeClipPipeline({
+    getSettings: () => settingsStore.load(),
+    saveReplayBuffer: () => obsService.testReplaySave()
+  })
 
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   ipcMain.handle('app:get-version', () => app.getVersion())
@@ -79,6 +85,8 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
+  ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
+  ipcMain.handle('clips:create-test', () => clipPipeline.createClipForClosedTrade(createSimulatedClosedTrade(Date.now())))
   createMainWindow()
 
   app.on('activate', () => {

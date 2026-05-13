@@ -6,6 +6,7 @@ export type AppSettings = {
     paddingBeforeSeconds: number
     paddingAfterSeconds: number
     replayBufferSeconds: number
+    replaySourceDir: string
     outputDir: string
   }
   obs: {
@@ -40,6 +41,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     paddingBeforeSeconds: 3,
     paddingAfterSeconds: 5,
     replayBufferSeconds: 1800,
+    replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
   },
   obs: {
@@ -64,6 +66,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       paddingBeforeSeconds: clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, 60),
       paddingAfterSeconds: clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, 60),
       replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, 120, 7200),
+      replaySourceDir: settings.clip?.replaySourceDir ?? defaults.clip.replaySourceDir,
       outputDir: settings.clip?.outputDir ?? defaults.clip.outputDir
     },
     obs: {

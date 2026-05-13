@@ -15,6 +15,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [port, setPort] = useState('4455')
   const [paddingBefore, setPaddingBefore] = useState('3')
   const [paddingAfter, setPaddingAfter] = useState('5')
+  const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
   const [saving, setSaving] = useState(false)
@@ -26,6 +27,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setPort(String(settings.obs.port))
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
+    setReplaySourceDir(settings.clip.replaySourceDir)
     setOutputDir(settings.clip.outputDir)
   }, [settings])
 
@@ -42,6 +44,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         clip: {
           paddingBeforeSeconds: Number(paddingBefore),
           paddingAfterSeconds: Number(paddingAfter),
+          replaySourceDir,
           outputDir
         }
       })
@@ -83,7 +86,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           Секунд после выхода
           <input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" />
         </label>
-        <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-1">
+        <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
+          Папка OBS replay
+          <input className={inputClass} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
+        </label>
+        <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
           Папка клипов
           <input className={inputClass} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
         </label>
