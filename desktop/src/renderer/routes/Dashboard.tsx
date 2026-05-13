@@ -4,6 +4,7 @@ import type { AppSettings } from '../../main/services/settings/settings'
 import type { ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
+import { SetupWizard } from '../components/setup/SetupWizard'
 import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
 import { ActiveTradeCard } from '../components/trade/ActiveTradeCard'
 import { ClipCard } from '../components/trade/ClipCard'
@@ -23,6 +24,7 @@ export const Dashboard = () => {
   const [clips, setClips] = useState<ClipQueueItem[]>([])
   const [lastCheck, setLastCheck] = useState<ObsTestReplayResult>()
   const [clipMessage, setClipMessage] = useState('')
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false)
   const [obs, setObs] = useState<ObsUiState>({
     status: 'Проверка',
     message: 'Запрашиваем статус OBS через локальный IPC...',
@@ -99,7 +101,20 @@ export const Dashboard = () => {
 
   return (
     <>
-      <TopBar appVersion={appVersion} onRunHealthCheck={runHealthCheck} />
+      <TopBar appVersion={appVersion} onRunHealthCheck={runHealthCheck} onOpenSetupWizard={() => setSetupWizardOpen(true)} />
+      <SetupWizard
+        open={setupWizardOpen}
+        settings={settings}
+        obsMessage={lastCheck?.message ?? obs.message}
+        clipMessage={clipMessage}
+        onClose={() => setSetupWizardOpen(false)}
+        onSaved={(nextSettings) => {
+          setSettings(nextSettings)
+          void refreshStatus()
+        }}
+        onRunHealthCheck={runHealthCheck}
+        onCreateTestClip={createTestClip}
+      />
       <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
         <section className="col-span-12 xl:col-span-7">
           <ActiveTradeCard />

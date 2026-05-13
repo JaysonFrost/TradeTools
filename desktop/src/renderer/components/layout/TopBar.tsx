@@ -1,13 +1,14 @@
-import { Bell, CircleCheck, Search } from 'lucide-react'
+import { Bell, CircleCheck, Rocket, Search } from 'lucide-react'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 
 export type TopBarProps = {
   appVersion?: string
   onRunHealthCheck?: () => void
+  onOpenSetupWizard?: () => void
 }
 
-export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined }: TopBarProps) => (
+export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined, onOpenSetupWizard = () => undefined }: TopBarProps) => (
   <header className="flex items-center justify-between">
     <div>
       <div className="flex items-center gap-3">
@@ -23,6 +24,7 @@ export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined }: TopBa
         <span>Поиск сделок, клипов, монет</span>
       </div>
       <Button variant="ghost" className="px-3"><Bell size={17} /></Button>
+      <Button variant="ghost" onClick={onOpenSetupWizard}><Rocket size={17} className="mr-2" />Пошаговая настройка</Button>
       <Button onClick={onRunHealthCheck}><CircleCheck size={17} className="mr-2" />Проверить систему</Button>
     </div>
   </header>
