@@ -28,6 +28,10 @@ export type PartialSettings = Partial<{
   access: Partial<AppSettings['access']>
 }>
 
+export type SettingsUpdateInput = PartialSettings & {
+  obsPassword?: string
+}
+
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 
 export const createDefaultSettings = (appDataDir: string): AppSettings => ({

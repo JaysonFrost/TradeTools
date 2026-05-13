@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
-import type { AppSettings, PartialSettings } from '../main/services/settings/settings'
+import type { AppSettings, SettingsUpdateInput } from '../main/services/settings/settings'
 
 const api = {
   app: {
@@ -8,7 +8,7 @@ const api = {
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-    update: (patch: PartialSettings): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch)
+    update: (patch: SettingsUpdateInput): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch)
   },
   obs: {
     getStatus: (): Promise<ObsStatus> => ipcRenderer.invoke('obs:get-status'),

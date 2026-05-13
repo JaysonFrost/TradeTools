@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
 import { createObsService } from './services/obs/obsService'
-import { type PartialSettings } from './services/settings/settings'
+import { createSecretStore } from './services/security/secretStore'
+import { type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 
 const isAllowedDevUrl = (url: string): boolean => {
@@ -14,6 +15,11 @@ const isAllowedDevUrl = (url: string): boolean => {
 }
 
 const getIconPath = (): string => join(__dirname, '../../build/icon.png')
+
+const extractSettingsPatch = (input: SettingsUpdateInput): SettingsUpdateInput => {
+  const { obsPassword: _obsPassword, ...patch } = input
+  return patch
+}
 
 const createMainWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
@@ -47,14 +53,30 @@ const createMainWindow = (): BrowserWindow => {
 
 app.whenReady().then(() => {
   const settingsStore = createSettingsStore(app.getPath('userData'))
+  const secretStore = createSecretStore()
   const obsService = createObsService({
-    getSettings: () => settingsStore.load()
+    getSettings: () => settingsStore.load(),
+    getPassword: () => secretStore.getObsPassword()
   })
 
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('settings:get', () => settingsStore.load())
-  ipcMain.handle('settings:update', (_event, patch: PartialSettings) => settingsStore.update(patch))
+  ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
+    const obsPassword = input.obsPassword?.trim()
+    if (obsPassword) {
+      await secretStore.setObsPassword(obsPassword)
+      return settingsStore.update({
+        ...extractSettingsPatch(input),
+        obs: {
+          ...(input.obs ?? {}),
+          passwordConfigured: true
+        }
+      })
+    }
+
+    return settingsStore.update(extractSettingsPatch(input))
+  })
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   createMainWindow()

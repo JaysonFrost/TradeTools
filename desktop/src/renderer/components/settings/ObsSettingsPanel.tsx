@@ -16,6 +16,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [paddingBefore, setPaddingBefore] = useState('3')
   const [paddingAfter, setPaddingAfter] = useState('5')
   const [outputDir, setOutputDir] = useState('')
+  const [obsPassword, setObsPassword] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -33,6 +34,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setMessage('')
     try {
       const updated = await window.tradeClipper.settings.update({
+        obsPassword: obsPassword.trim() || undefined,
         obs: {
           host,
           port: Number(port)
@@ -44,6 +46,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         }
       })
       onSaved(updated)
+      setObsPassword('')
       setMessage('Настройки сохранены')
     } finally {
       setSaving(false)
@@ -55,11 +58,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Быстрые настройки</h2>
-          <p className="mt-1 text-sm text-zinc-500">OBS WebSocket и отступы клипа. Пароль будет сохранён в системный keychain на следующем этапе.</p>
+          <p className="mt-1 text-sm text-zinc-500">OBS WebSocket, пароль в системном keychain, папка клипов и отступы вокруг сделки.</p>
         </div>
         <Button onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
       </div>
-      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <label className="text-xs font-medium text-zinc-500">
           OBS host
           <input className={inputClass} value={host} onChange={(event) => setHost(event.target.value)} />
@@ -67,6 +70,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         <label className="text-xs font-medium text-zinc-500">
           OBS port
           <input className={inputClass} value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" />
+        </label>
+        <label className="text-xs font-medium text-zinc-500">
+          OBS пароль
+          <input className={inputClass} value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} type="password" placeholder={settings?.obs.passwordConfigured ? 'Сохранён' : 'Не задан'} />
         </label>
         <label className="text-xs font-medium text-zinc-500">
           Секунд до входа
