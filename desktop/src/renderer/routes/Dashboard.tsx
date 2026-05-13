@@ -139,7 +139,7 @@ export const Dashboard = () => {
             {lastCheck && <p className={`mt-5 rounded-2xl border p-3 text-sm ${lastCheck.ok ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>{lastCheck.message}</p>}
           </div>
         </section>
-        <section className="col-span-12 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="col-span-12 grid gap-4 lg:grid-cols-2">
           {integrations.map((integration) => <IntegrationStatusCard key={integration.name} {...integration} />)}
         </section>
         <section className="col-span-12">
@@ -155,7 +155,7 @@ export const Dashboard = () => {
               <p className="mt-1 text-sm text-zinc-500">Клипы остаются локально, пока вы вручную не подтвердите загрузку в YouTube.</p>
               {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
             </div>
-            <button className="cursor-pointer rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25" onClick={createTestClip}>Создать тестовый клип</button>
+            <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25" onClick={createTestClip}>Создать тестовый клип</button>
           </div>
           <div className="space-y-3">
             {clips.length > 0 ? clips.map((clip) => <ClipCard key={clip.id} clip={clip} />) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет локальных клипов на проверке.</div>}

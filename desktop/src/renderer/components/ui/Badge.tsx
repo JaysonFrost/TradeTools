@@ -14,7 +14,7 @@ export type BadgeProps = {
 }
 
 export const Badge = ({ children, tone = 'neutral' }: BadgeProps) => (
-  <span className={clsx('inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium', toneClasses[tone])}>
+  <span className={clsx('inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium', toneClasses[tone])}>
     {children}
   </span>
 )

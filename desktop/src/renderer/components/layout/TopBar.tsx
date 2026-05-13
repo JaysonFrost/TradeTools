@@ -9,17 +9,17 @@ export type TopBarProps = {
 }
 
 export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined, onOpenSetupWizard = () => undefined }: TopBarProps) => (
-  <header className="flex items-center justify-between">
-    <div>
-      <div className="flex items-center gap-3">
-        <h1 className="m-0 text-3xl font-semibold tracking-[-0.04em]">Пульт торговых клипов</h1>
+  <header className="flex items-start justify-between gap-6">
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="m-0 whitespace-nowrap text-3xl font-semibold tracking-[-0.04em]">Trade Clipper</h1>
         <Badge tone="warning">Локальный режим</Badge>
         {appVersion && <Badge tone="neutral">v{appVersion}</Badge>}
       </div>
       <p className="mt-2 text-sm text-zinc-400">Автоклипы по сделкам, очередь проверки, загрузка в YouTube и синхронизация с дневником.</p>
     </div>
-    <div className="flex items-center gap-3">
-      <div className="hidden items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-500 lg:flex">
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
+      <div className="hidden items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-500 2xl:flex">
         <Search size={16} />
         <span>Поиск сделок, клипов, монет</span>
       </div>

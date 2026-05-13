@@ -25,7 +25,7 @@ export const ClipCard = ({ clip }: ClipCardProps) => (
           <h3 className="m-0 truncate text-base font-semibold">{clip.fileName}</h3>
           <Badge tone="warning">На проверке</Badge>
         </div>
-        <p className="mono mt-2 text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath} • YouTube еще не загружен</p>
+        <p className="mono mt-2 truncate text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath} • YouTube еще не загружен</p>
         <div className="mt-4 flex gap-2">
           <Button variant="ghost">Предпросмотр</Button>
           <Button><ExternalLink size={16} className="mr-2" />Загрузить</Button>
