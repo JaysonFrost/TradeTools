@@ -1,9 +1,8 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
 import { createObsService } from './services/obs/obsService'
-import { createDefaultSettings } from './services/settings/settings'
-
-const obsService = createObsService()
+import { type PartialSettings } from './services/settings/settings'
+import { createSettingsStore } from './services/settings/settingsStore'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -47,9 +46,15 @@ const createMainWindow = (): BrowserWindow => {
 }
 
 app.whenReady().then(() => {
+  const settingsStore = createSettingsStore(app.getPath('userData'))
+  const obsService = createObsService({
+    getSettings: () => settingsStore.load()
+  })
+
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   ipcMain.handle('app:get-version', () => app.getVersion())
-  ipcMain.handle('settings:get', () => createDefaultSettings(app.getPath('userData')))
+  ipcMain.handle('settings:get', () => settingsStore.load())
+  ipcMain.handle('settings:update', (_event, patch: PartialSettings) => settingsStore.update(patch))
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   createMainWindow()
