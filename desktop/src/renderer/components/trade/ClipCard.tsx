@@ -12,12 +12,12 @@ export const ClipCard = () => (
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="m-0 truncate text-base font-semibold">2026-05-13_03-49-21_BINANCE_FUTURES_BTCUSDT_LONG.mp4</h3>
-          <Badge tone="warning">Review</Badge>
+          <Badge tone="warning">На проверке</Badge>
         </div>
-        <p className="mono mt-2 text-xs text-zinc-500">1m 54s • 384 MB • YouTube not uploaded</p>
+        <p className="mono mt-2 text-xs text-zinc-500">1м 54с • 384 MB • YouTube еще не загружен</p>
         <div className="mt-4 flex gap-2">
-          <Button variant="ghost">Preview</Button>
-          <Button><ExternalLink size={16} className="mr-2" />Upload</Button>
+          <Button variant="ghost">Предпросмотр</Button>
+          <Button><ExternalLink size={16} className="mr-2" />Загрузить</Button>
         </div>
       </div>
     </div>

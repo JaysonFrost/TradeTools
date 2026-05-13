@@ -1,5 +1,9 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron'
 import { join } from 'node:path'
+import { createObsService } from './services/obs/obsService'
+import { createDefaultSettings } from './services/settings/settings'
+
+const obsService = createObsService()
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -10,6 +14,8 @@ const isAllowedDevUrl = (url: string): boolean => {
   }
 }
 
+const getIconPath = (): string => join(__dirname, '../../build/icon.png')
+
 const createMainWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
     width: 1440,
@@ -19,6 +25,7 @@ const createMainWindow = (): BrowserWindow => {
     backgroundColor: '#08090A',
     title: 'Trade Clipper',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    icon: getIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -42,6 +49,9 @@ const createMainWindow = (): BrowserWindow => {
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('settings:get', () => createDefaultSettings(app.getPath('userData')))
+  ipcMain.handle('obs:get-status', () => obsService.getStatus())
+  ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   createMainWindow()
 
   app.on('activate', () => {

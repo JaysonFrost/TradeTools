@@ -42,5 +42,28 @@
     "typescript": "^6.0.3",
     "vite": "^5.4.21",
     "vitest": "^2.1.9"
+  },
+  "build": {
+    "appId": "com.tradeclipper.desktop",
+    "productName": "Trade Clipper",
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.video"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": "nsis"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": "AppImage"
+    }
   }
 }

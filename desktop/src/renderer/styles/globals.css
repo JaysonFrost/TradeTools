@@ -16,6 +16,8 @@ body {
 }
 
 button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
 
 .glass-panel {
   background: var(--panel);

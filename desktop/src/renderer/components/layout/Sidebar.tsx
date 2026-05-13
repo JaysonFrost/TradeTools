@@ -3,12 +3,12 @@ import { BarChart3, Clapperboard, CloudUpload, LayoutDashboard, Settings, Wallet
 import { clsx } from 'clsx'
 
 const items = [
-  { label: 'Dashboard', icon: LayoutDashboard, active: true },
-  { label: 'Trades', icon: BarChart3 },
-  { label: 'Review Queue', icon: Clapperboard },
+  { label: 'Панель', icon: LayoutDashboard, active: true },
+  { label: 'Сделки', icon: BarChart3 },
+  { label: 'Очередь клипов', icon: Clapperboard },
   { label: 'YouTube', icon: CloudUpload },
-  { label: 'Journal', icon: WalletCards },
-  { label: 'Settings', icon: Settings }
+  { label: 'Дневник', icon: WalletCards },
+  { label: 'Настройки', icon: Settings }
 ]
 
 export const Sidebar = () => (
@@ -19,7 +19,7 @@ export const Sidebar = () => (
       </div>
       <div>
         <div className="text-base font-semibold tracking-[-0.02em]">Trade Clipper</div>
-        <div className="mono text-[11px] text-zinc-500">OBS • YouTube • Journal</div>
+        <div className="mono text-[11px] text-zinc-500">OBS • YouTube • Дневник</div>
       </div>
     </div>
     <nav className="space-y-1.5">
@@ -29,7 +29,7 @@ export const Sidebar = () => (
           <button
             key={item.label}
             className={clsx(
-              'relative flex w-full items-center gap-3 rounded-2xl px-3.5 py-3 text-sm transition',
+              'relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-3 text-sm transition',
               item.active ? 'text-white' : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
             )}
           >
@@ -41,8 +41,8 @@ export const Sidebar = () => (
       })}
     </nav>
     <div className="mt-auto rounded-3xl border border-violet-400/20 bg-violet-500/10 p-4">
-      <div className="text-sm font-semibold">Auto mode locked</div>
-      <p className="mt-1 text-xs leading-5 text-zinc-400">Manual upload first. Full automation turns on after pipeline checks pass.</p>
+      <div className="text-sm font-semibold">Авто-режим закрыт</div>
+      <p className="mt-1 text-xs leading-5 text-zinc-400">Сначала ручная проверка и загрузка. Полная автоматизация включится после проверок пайплайна.</p>
     </div>
   </aside>
 )
