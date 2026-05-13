@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+  --bg: #08090a;
+  --panel: rgba(15, 16, 21, 0.78);
+  --panel-strong: #0f1015;
+  --elevated: rgba(24, 25, 35, 0.9);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(139, 92, 246, 0.32);
+  --text: #f7f8f8;
+  --text-secondary: #a8adbd;
+  --text-muted: #686b82;
+  --purple: #7132f5;
+  --violet: #8b5cf6;
+  --glow: rgba(113, 50, 245, 0.35);
+  --success: #10b981;
+  --danger: #f43f5e;
+  --warning: #f59e0b;
+  --radius-card: 24px;
+  --radius-control: 14px;
+  --shadow-card: 0 24px 80px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255,255,255,0.05);
+}
