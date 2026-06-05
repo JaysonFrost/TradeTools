@@ -12,7 +12,7 @@ export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined, onOpenS
   <header className="flex items-start justify-between gap-6">
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="m-0 whitespace-nowrap text-3xl font-semibold tracking-[-0.04em]">Trade Clipper</h1>
+        <h1 className="m-0 whitespace-nowrap text-3xl font-semibold tracking-[-0.04em]">TradeCut</h1>
         <Badge tone="warning">Локальный режим</Badge>
         {appVersion && <Badge tone="neutral">v{appVersion}</Badge>}
       </div>

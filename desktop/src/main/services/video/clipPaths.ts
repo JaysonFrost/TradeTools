@@ -9,6 +9,7 @@ export type ClipPathTrade = {
 }
 
 export type ClipFileNames = {
+  title: string
   videoFileName: string
   metadataFileName: string
 }
@@ -21,28 +22,33 @@ export type ClipOutputPaths = {
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 
-const formatDateParts = (timeMs: number): { day: string; timestamp: string } => {
+const formatDateParts = (timeMs: number): { day: string; titleTimestamp: string } => {
   const date = new Date(timeMs)
-  const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
-  const timestamp = `${day}_${pad(date.getUTCHours())}-${pad(date.getUTCMinutes())}-${pad(date.getUTCSeconds())}`
-  return { day, timestamp }
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const titleTimestamp = `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${String(date.getFullYear()).slice(-2)} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return { day, titleTimestamp }
 }
 
-const sanitizePart = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9-]+/g, '-')
+const formatSymbol = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9]+/g, '')
+
+const formatExchange = (value: string): string => {
+  const cleaned = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!cleaned) return 'Exchange'
+
+  return cleaned
+    .split(/\s+/)
+    .map((part) => `${part[0].toUpperCase()}${part.slice(1)}`)
+    .join(' ')
+}
 
 export const buildClipFileNames = (trade: ClipPathTrade): ClipFileNames => {
-  const { timestamp } = formatDateParts(trade.entryTimeMs)
-  const stem = [
-    timestamp,
-    sanitizePart(trade.exchange),
-    sanitizePart(trade.marketType),
-    sanitizePart(trade.symbol),
-    sanitizePart(trade.side)
-  ].join('_')
+  const { titleTimestamp } = formatDateParts(trade.entryTimeMs)
+  const title = `${formatSymbol(trade.symbol)} ${formatExchange(trade.exchange)} ${titleTimestamp}`
 
   return {
-    videoFileName: `${stem}.mp4`,
-    metadataFileName: `${stem}.json`
+    title,
+    videoFileName: `${title}.mp4`,
+    metadataFileName: `${title}.json`
   }
 }
 

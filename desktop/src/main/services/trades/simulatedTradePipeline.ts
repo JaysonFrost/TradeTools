@@ -61,7 +61,7 @@ export const planSimulatedClip = (input: SimulatedClipInput): SimulatedClipPlan 
       outputPath: paths.videoPath,
       startSeconds: trim.startSeconds,
       endSeconds: trim.endSeconds,
-      mode: 'copy'
+      mode: 'reencode'
     })
   }
 }

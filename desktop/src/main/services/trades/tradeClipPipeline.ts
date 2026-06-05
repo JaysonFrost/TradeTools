@@ -1,10 +1,11 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { basename, extname, isAbsolute, relative, resolve } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
 import { buildClipFileNames, buildClipOutputPaths } from '../video/clipPaths'
-import { findNewestReplayFile } from '../video/replayFileFinder'
+import { waitForNewestReplayFile } from '../video/replayFileFinder'
 import { planReplayTrim } from '../video/trimPlanner'
+import { probeVideoDurationSeconds, type VideoDurationProbe } from '../video/videoProbe'
 import type { ClosedTrade } from './simulatedTradePipeline'
 
 export type ClipReviewStatus = 'pending-review'
@@ -12,6 +13,7 @@ export type ClipReviewStatus = 'pending-review'
 export type ClipQueueItem = {
   id: string
   status: ClipReviewStatus
+  title: string
   fileName: string
   videoPath: string
   metadataPath: string
@@ -23,10 +25,17 @@ export type ClipQueueItem = {
   exitTimeMs: number
   durationSeconds: number
   createdAtMs: number
+  youtubeVideoId?: string
+  youtubeUrl?: string
+  uploadedAtMs?: number
 }
 
 export type TradeClipMetadata = ClipQueueItem & {
   replayPath: string
+  replaySavedAtMs: number
+  replayDurationSeconds: number
+  outputDurationSeconds: number
+  outputSizeBytes: number
   trade: ClosedTrade
   trim: {
     startSeconds: number
@@ -39,29 +48,63 @@ export type SaveReplayBufferResult = {
   ok: boolean
   message: string
   requestedAtMs: number
+  replayPath?: string
+}
+
+export type UploadClipToYouTubeInput = {
+  videoPath: string
+  title: string
+  description: string
+}
+
+export type UploadClipToYouTubeResult = {
+  videoId: string
+  youtubeUrl: string
+}
+
+export type DeleteClipFromQueueResult = {
+  ok: true
+  metadataPath: string
 }
 
 export type TradeClipPipelineDeps = {
   getSettings: () => Promise<AppSettings>
   saveReplayBuffer: () => Promise<SaveReplayBufferResult>
   runFfmpeg?: (args: string[]) => Promise<void>
+  getVideoDurationSeconds?: VideoDurationProbe
   now?: () => number
 }
 
 export type TradeClipPipeline = {
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem>
   listPendingClips: () => Promise<ClipQueueItem[]>
+  uploadClipToYouTube: (metadataPath: string, upload: (input: UploadClipToYouTubeInput) => Promise<UploadClipToYouTubeResult>) => Promise<ClipQueueItem>
+  deleteClipFromQueue: (metadataPath: string) => Promise<DeleteClipFromQueueResult>
 }
 
-const parseMetadata = async (metadataPath: string): Promise<ClipQueueItem | undefined> => {
+const parseTradeClipMetadata = async (metadataPath: string): Promise<TradeClipMetadata | undefined> => {
   try {
-    const parsed = JSON.parse(await readFile(metadataPath, 'utf8')) as ClipQueueItem
+    const parsed = JSON.parse(await readFile(metadataPath, 'utf8')) as TradeClipMetadata
     if (parsed.status !== 'pending-review') return undefined
-    return parsed
+    return {
+      ...parsed,
+      title: parsed.title ?? parsed.fileName.replace(/\.[^.]+$/, '')
+    }
   } catch {
     return undefined
   }
 }
+
+const parseMetadata = async (metadataPath: string): Promise<ClipQueueItem | undefined> => parseTradeClipMetadata(metadataPath)
+
+const buildYouTubeDescription = (metadata: TradeClipMetadata): string => [
+  `${metadata.symbol} ${metadata.side}`,
+  `${metadata.exchange} ${metadata.marketType}`,
+  `Entry: ${new Date(metadata.entryTimeMs).toISOString()}`,
+  `Exit: ${new Date(metadata.exitTimeMs).toISOString()}`,
+  '',
+  'Exported by TradeCut'
+].join('\n')
 
 const collectJsonFiles = async (directory: string): Promise<string[]> => {
   try {
@@ -77,7 +120,13 @@ const collectJsonFiles = async (directory: string): Promise<string[]> => {
   }
 }
 
+const isPathInside = (parentPath: string, childPath: string): boolean => {
+  const childRelativePath = relative(parentPath, childPath)
+  return Boolean(childRelativePath) && !childRelativePath.startsWith('..') && !isAbsolute(childRelativePath)
+}
+
 export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipPipeline => {
+  const getVideoDurationSeconds = deps.getVideoDurationSeconds ?? probeVideoDurationSeconds
   const runFfmpeg = deps.runFfmpeg ?? (async (args) => {
     const { spawn } = await import('node:child_process')
     await new Promise<void>((resolve, reject) => {
@@ -87,6 +136,12 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     })
   })
   const now = deps.now ?? (() => Date.now())
+  let temporaryClipSequence = 0
+
+  const nextTemporaryClipPath = (videoPath: string): string => {
+    temporaryClipSequence += 1
+    return `${videoPath}.tmp-${process.pid}-${now()}-${temporaryClipSequence}.mp4`
+  }
 
   return {
     async createClipForClosedTrade(trade) {
@@ -94,37 +149,54 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       const replaySave = await deps.saveReplayBuffer()
       if (!replaySave.ok) throw new Error(replaySave.message)
 
-      const replayPath = await findNewestReplayFile({
+      const replayPath = replaySave.replayPath ?? await waitForNewestReplayFile({
         directory: settings.clip.replaySourceDir,
         afterMs: replaySave.requestedAtMs
       })
-      if (!replayPath) throw new Error('OBS сохранил Replay Buffer, но свежий replay-файл не найден')
+      if (!replayPath) throw new Error(`OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`)
 
-      const replayStat = await import('node:fs/promises').then(({ stat }) => stat(replayPath))
+      const replayStat = await stat(replayPath)
+      const replaySavedAtMs = replayStat.mtimeMs
+      const replayDurationSeconds = await getVideoDurationSeconds(replayPath)
       const paths = buildClipOutputPaths(settings.clip.outputDir, trade)
       const trim = planReplayTrim({
         tradeEntryTimeMs: trade.entryTimeMs,
         tradeExitTimeMs: trade.exitTimeMs,
-        replaySavedAtMs: replayStat.mtimeMs,
-        replayDurationSeconds: settings.clip.replayBufferSeconds,
+        replaySavedAtMs,
+        replayDurationSeconds,
         paddingBeforeSeconds: settings.clip.paddingBeforeSeconds,
         paddingAfterSeconds: settings.clip.paddingAfterSeconds
       })
       const ffmpegArgs = buildFfmpegTrimArgs({
         inputPath: replayPath,
-        outputPath: paths.videoPath,
+        outputPath: nextTemporaryClipPath(paths.videoPath),
         startSeconds: trim.startSeconds,
         endSeconds: trim.endSeconds,
-        mode: 'copy'
+        mode: 'reencode'
       })
+      const temporaryVideoPath = ffmpegArgs.at(-1)
+      if (!temporaryVideoPath) throw new Error('Не удалось подготовить временный путь клипа')
 
       await mkdir(paths.dayFolder, { recursive: true })
-      await runFfmpeg(ffmpegArgs)
+      let outputDurationSeconds: number
+      try {
+        await runFfmpeg(ffmpegArgs)
+        outputDurationSeconds = await getVideoDurationSeconds(temporaryVideoPath)
+        if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
+          throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность OBS Replay Buffer.`)
+        }
+        await rename(temporaryVideoPath, paths.videoPath)
+      } catch (error) {
+        await unlink(temporaryVideoPath).catch(() => undefined)
+        throw error
+      }
+      const outputStat = await stat(paths.videoPath)
 
       const names = buildClipFileNames(trade)
       const item: ClipQueueItem = {
         id: `${trade.id}-${trade.entryTimeMs}`,
         status: 'pending-review',
+        title: names.title,
         fileName: names.videoFileName,
         videoPath: paths.videoPath,
         metadataPath: paths.metadataPath,
@@ -140,6 +212,10 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       const metadata: TradeClipMetadata = {
         ...item,
         replayPath,
+        replaySavedAtMs,
+        replayDurationSeconds,
+        outputDurationSeconds,
+        outputSizeBytes: outputStat.size,
         trade,
         trim
       }
@@ -154,6 +230,42 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       return items
         .filter((item): item is ClipQueueItem => item !== undefined)
         .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(a.videoPath)))
+    },
+    async uploadClipToYouTube(metadataPath, upload) {
+      const metadata = await parseTradeClipMetadata(metadataPath)
+      if (!metadata) throw new Error('Метаданные клипа не найдены')
+
+      const result = await upload({
+        videoPath: metadata.videoPath,
+        title: metadata.title,
+        description: buildYouTubeDescription(metadata)
+      })
+      const updatedMetadata: TradeClipMetadata = {
+        ...metadata,
+        youtubeVideoId: result.videoId,
+        youtubeUrl: result.youtubeUrl,
+        uploadedAtMs: now()
+      }
+
+      await writeFile(metadata.metadataPath, `${JSON.stringify(updatedMetadata, null, 2)}\n`, 'utf8')
+      return updatedMetadata
+    },
+    async deleteClipFromQueue(metadataPath) {
+      const settings = await deps.getSettings()
+      const queueRoot = resolve(settings.clip.outputDir, 'clips')
+      const resolvedMetadataPath = resolve(metadataPath)
+      if (extname(resolvedMetadataPath).toLowerCase() !== '.json' || !isPathInside(queueRoot, resolvedMetadataPath)) {
+        throw new Error('Некорректный путь метаданных клипа')
+      }
+
+      const metadata = await parseTradeClipMetadata(resolvedMetadataPath)
+      if (!metadata) throw new Error('Метаданные клипа не найдены')
+
+      await unlink(resolvedMetadataPath)
+      return {
+        ok: true,
+        metadataPath: resolvedMetadataPath
+      }
     }
   }
 }

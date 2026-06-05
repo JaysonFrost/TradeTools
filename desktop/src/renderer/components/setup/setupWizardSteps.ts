@@ -10,7 +10,7 @@ export type SetupWizardStep = {
 export const setupWizardSteps: SetupWizardStep[] = [
   {
     id: 'welcome',
-    title: 'Быстрый старт Trade Clipper',
+    title: 'Быстрый старт TradeCut',
     goal: 'За 5–10 минут пройти все обязательные настройки, чтобы приложение могло сохранять клипы сделок.',
     actions: [
       'Проверим OBS WebSocket',
@@ -21,7 +21,7 @@ export const setupWizardSteps: SetupWizardStep[] = [
   {
     id: 'obs-websocket',
     title: 'Подключите OBS WebSocket',
-    goal: 'Trade Clipper должен уметь отправлять OBS команду SaveReplayBuffer.',
+    goal: 'TradeCut должен уметь отправлять OBS команду SaveReplayBuffer.',
     actions: [
       'Откройте OBS → Tools → WebSocket Server Settings',
       'Включите Enable WebSocket server',
@@ -65,7 +65,7 @@ export const setupWizardSteps: SetupWizardStep[] = [
     title: 'Создайте тестовый клип',
     goal: 'Проверить весь локальный pipeline до подключения реальных сделок.',
     actions: [
-      'Trade Clipper отправит SaveReplayBuffer в OBS',
+      'TradeCut отправит SaveReplayBuffer в OBS',
       'Найдет свежий replay-файл в папке OBS replay',
       'Обрежет его через ffmpeg по тестовой сделке BTCUSDT',
       'Добавит клип в очередь проверки'

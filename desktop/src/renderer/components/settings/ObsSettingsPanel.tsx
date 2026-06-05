@@ -1,5 +1,7 @@
+import { FolderOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
+import { getTradeCutApi } from '../../lib/tradeCutApi'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
@@ -35,7 +37,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setSaving(true)
     setMessage('')
     try {
-      const updated = await window.tradeClipper.settings.update({
+      const api = getTradeCutApi()
+      const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         obs: {
           host,
@@ -51,8 +54,22 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       onSaved(updated)
       setObsPassword('')
       setMessage('Настройки сохранены')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
+    try {
+      const api = getTradeCutApi()
+      const selectedPath = await api.dialog.selectDirectory(currentPath.trim() || undefined)
+      if (!selectedPath) return
+      setValue(selectedPath)
+      setMessage('Папка выбрана. Нажмите «Сохранить», чтобы применить настройки.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось открыть выбор папки')
     }
   }
 
@@ -86,14 +103,20 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           Секунд после выхода
           <input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" />
         </label>
-        <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
+        <div className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
           Папка OBS replay
-          <input className={inputClass} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
-        </label>
-        <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
+          <div className="mt-1 flex gap-2">
+            <input className={inputClass.replace('mt-1 ', '')} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
+            <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+          </div>
+        </div>
+        <div className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
           Папка клипов
-          <input className={inputClass} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
-        </label>
+          <div className="mt-1 flex gap-2">
+            <input className={inputClass.replace('mt-1 ', '')} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
+            <Button variant="ghost" onClick={() => void selectDirectory(outputDir, setOutputDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+          </div>
+        </div>
       </div>
       {message && <p className="mt-4 text-sm text-emerald-300">{message}</p>}
     </Card>

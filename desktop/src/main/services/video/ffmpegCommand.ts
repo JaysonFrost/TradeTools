@@ -19,11 +19,12 @@ export const buildFfmpegTrimArgs = (input: FfmpegTrimInput): string[] => {
     throw new Error('Trim end must be after start')
   }
 
-  const baseArgs = ['-y', '-ss', formatSeconds(input.startSeconds), '-to', formatSeconds(input.endSeconds), '-i', input.inputPath]
+  const durationSeconds = input.endSeconds - input.startSeconds
+  const baseArgs = ['-y', '-ss', formatSeconds(input.startSeconds), '-t', formatSeconds(durationSeconds), '-i', input.inputPath]
 
   if (input.mode === 'copy') {
-    return [...baseArgs, '-c', 'copy', input.outputPath]
+    return [...baseArgs, '-avoid_negative_ts', 'make_zero', '-c', 'copy', input.outputPath]
   }
 
-  return [...baseArgs, '-c:v', 'libx264', '-c:a', 'aac', input.outputPath]
+  return [...baseArgs, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-movflags', '+faststart', input.outputPath]
 }

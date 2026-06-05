@@ -1,15 +1,18 @@
 import { motion } from 'framer-motion'
-import { BarChart3, Clapperboard, CloudUpload, LayoutDashboard, Settings, WalletCards } from 'lucide-react'
+import { Clapperboard, CloudUpload, LayoutDashboard, Settings, WalletCards } from 'lucide-react'
 import { clsx } from 'clsx'
 
 const items = [
-  { label: 'Панель', icon: LayoutDashboard, active: true },
-  { label: 'Сделки', icon: BarChart3 },
-  { label: 'Очередь клипов', icon: Clapperboard },
-  { label: 'YouTube', icon: CloudUpload },
-  { label: 'Дневник', icon: WalletCards },
-  { label: 'Настройки', icon: Settings }
+  { label: 'Панель', icon: LayoutDashboard, active: true, targetId: 'dashboard-top' },
+  { label: 'Очередь клипов', icon: Clapperboard, targetId: 'clip-queue' },
+  { label: 'YouTube', icon: CloudUpload, targetId: 'integrations-section' },
+  { label: 'Дневник', icon: WalletCards, targetId: 'integrations-section' },
+  { label: 'Настройки', icon: Settings, targetId: 'settings-section' }
 ]
+
+const scrollToSection = (targetId: string) => {
+  document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 export const Sidebar = () => (
   <aside className="glass-panel flex h-[calc(100vh-32px)] w-72 flex-col rounded-[28px] p-4">
@@ -18,7 +21,7 @@ export const Sidebar = () => (
         <Clapperboard size={22} />
       </div>
       <div>
-        <div className="text-base font-semibold tracking-[-0.02em]">Trade Clipper</div>
+        <div className="text-base font-semibold tracking-[-0.02em]">TradeCut</div>
         <div className="mono text-[11px] text-zinc-500">OBS • YouTube • Дневник</div>
       </div>
     </div>
@@ -28,6 +31,7 @@ export const Sidebar = () => (
         return (
           <button
             key={item.label}
+            onClick={() => scrollToSection(item.targetId)}
             className={clsx(
               'relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-3 text-sm transition',
               item.active ? 'text-white' : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'

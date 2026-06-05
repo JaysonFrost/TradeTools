@@ -1,4 +1,4 @@
-# Universal Trade Clipper Implementation Plan
+# Universal TradeCut Implementation Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
@@ -55,7 +55,7 @@ Sidecar:
 Create:
 
 ```text
-/Users/igorarnautov/TradeClipper/
+<project-root>/
   .env
   pyproject.toml
   README.md
@@ -132,15 +132,15 @@ OBS requirements:
 **Objective:** Create the local service package.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/pyproject.toml`
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/__init__.py`
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/main.py`
+- Create: `<project-root>/pyproject.toml`
+- Create: `<project-root>/src/trade_clipper/__init__.py`
+- Create: `<project-root>/src/trade_clipper/main.py`
 
 **pyproject.toml:**
 
 ```toml
 [project]
-name = "trade-clipper"
+name = "tradecut"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -154,14 +154,14 @@ dependencies = [
 ]
 
 [project.scripts]
-trade-clipper = "trade_clipper.main:main"
+tradecut = "trade_clipper.main:main"
 ```
 
 **main.py initial:**
 
 ```python
 def main():
-    print("trade-clipper ready")
+    print("tradecut ready")
 
 if __name__ == "__main__":
     main()
@@ -170,17 +170,17 @@ if __name__ == "__main__":
 Verify:
 
 ```bash
-cd /Users/igorarnautov/TradeClipper
+cd <project-root>
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-trade-clipper
+tradecut
 ```
 
 Expected:
 
 ```text
-trade-clipper ready
+tradecut ready
 ```
 
 ---
@@ -190,19 +190,19 @@ trade-clipper ready
 **Objective:** Load OBS, output, padding, and exchange API config from `.env`.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/.env`
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/config.py`
+- Create: `<project-root>/.env`
+- Create: `<project-root>/src/trade_clipper/config.py`
 
 **.env template:**
 
 ```bash
-TRADECLIPPER_DATA_DIR=/Users/igorarnautov/TradeClips
-TRADECLIPPER_OBS_HOST=127.0.0.1
-TRADECLIPPER_OBS_PORT=4455
-TRADECLIPPER_OBS_PASSWORD=change_me
-TRADECLIPPER_PADDING_BEFORE_SECONDS=3
-TRADECLIPPER_PADDING_AFTER_SECONDS=5
-TRADECLIPPER_REPLAY_BUFFER_SECONDS=1800
+TRADECUT_DATA_DIR=/Users/igorarnautov/TradeClips
+TRADECUT_OBS_HOST=127.0.0.1
+TRADECUT_OBS_PORT=4455
+TRADECUT_OBS_PASSWORD=change_me
+TRADECUT_PADDING_BEFORE_SECONDS=3
+TRADECUT_PADDING_AFTER_SECONDS=5
+TRADECUT_REPLAY_BUFFER_SECONDS=1800
 
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
@@ -241,13 +241,13 @@ class Settings(BaseModel):
 def load_settings() -> Settings:
     load_dotenv()
     return Settings(
-        data_dir=Path(os.environ.get("TRADECLIPPER_DATA_DIR", "/Users/igorarnautov/TradeClips")),
-        obs_host=os.environ.get("TRADECLIPPER_OBS_HOST", "127.0.0.1"),
-        obs_port=int(os.environ.get("TRADECLIPPER_OBS_PORT", "4455")),
-        obs_password=os.environ.get("TRADECLIPPER_OBS_PASSWORD", ""),
-        padding_before_seconds=int(os.environ.get("TRADECLIPPER_PADDING_BEFORE_SECONDS", "3")),
-        padding_after_seconds=int(os.environ.get("TRADECLIPPER_PADDING_AFTER_SECONDS", "5")),
-        replay_buffer_seconds=int(os.environ.get("TRADECLIPPER_REPLAY_BUFFER_SECONDS", "1800")),
+        data_dir=Path(os.environ.get("TRADECUT_DATA_DIR", "/Users/igorarnautov/TradeClips")),
+        obs_host=os.environ.get("TRADECUT_OBS_HOST", "127.0.0.1"),
+        obs_port=int(os.environ.get("TRADECUT_OBS_PORT", "4455")),
+        obs_password=os.environ.get("TRADECUT_OBS_PASSWORD", ""),
+        padding_before_seconds=int(os.environ.get("TRADECUT_PADDING_BEFORE_SECONDS", "3")),
+        padding_after_seconds=int(os.environ.get("TRADECUT_PADDING_AFTER_SECONDS", "5")),
+        replay_buffer_seconds=int(os.environ.get("TRADECUT_REPLAY_BUFFER_SECONDS", "1800")),
         binance_api_key=os.environ.get("BINANCE_API_KEY") or None,
         binance_api_secret=os.environ.get("BINANCE_API_SECRET") or None,
         bybit_api_key=os.environ.get("BYBIT_API_KEY") or None,
@@ -277,9 +277,9 @@ Expected:
 **Objective:** Detect open/close lifecycle from position/exposure changes.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/models.py`
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/trade_state.py`
-- Create: `/Users/igorarnautov/TradeClipper/tests/test_trade_state.py`
+- Create: `<project-root>/src/trade_clipper/models.py`
+- Create: `<project-root>/src/trade_clipper/trade_state.py`
+- Create: `<project-root>/tests/test_trade_state.py`
 
 **Core rules:**
 - zero → non-zero = open trade
@@ -313,7 +313,7 @@ Expected:
 **Objective:** Connect to OBS websocket and trigger replay buffer save.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/obs_client.py`
+- Create: `<project-root>/src/trade_clipper/obs_client.py`
 
 **Functions:**
 - `connect()`
@@ -339,8 +339,8 @@ Expected:
 **Objective:** Calculate trim offsets and call ffmpeg.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/video.py`
-- Create: `/Users/igorarnautov/TradeClipper/tests/test_video_timing.py`
+- Create: `<project-root>/src/trade_clipper/video.py`
+- Create: `<project-root>/tests/test_video_timing.py`
 
 **Formula:**
 
@@ -386,7 +386,7 @@ all tests passed
 **Objective:** Store trades, executions, clips, and processing state.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/db.py`
+- Create: `<project-root>/src/trade_clipper/db.py`
 
 **Tables:**
 - trades
@@ -419,8 +419,8 @@ clips exchange_events executions trades
 **Objective:** Watch Binance spot and futures account updates.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/exchanges/base.py`
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/exchanges/binance.py`
+- Create: `<project-root>/src/trade_clipper/exchanges/base.py`
+- Create: `<project-root>/src/trade_clipper/exchanges/binance.py`
 
 **Recommended:**
 - Use Binance user data stream.
@@ -435,7 +435,7 @@ API key permissions:
 Verification:
 
 ```bash
-trade-clipper --exchange binance --dry-run
+tradecut --exchange binance --dry-run
 ```
 
 Expected:
@@ -450,7 +450,7 @@ Expected:
 **Objective:** Watch Bybit spot and futures account updates.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/exchanges/bybit.py`
+- Create: `<project-root>/src/trade_clipper/exchanges/bybit.py`
 
 Use Bybit private websocket streams:
 - position
@@ -460,7 +460,7 @@ Use Bybit private websocket streams:
 Verification:
 
 ```bash
-trade-clipper --exchange bybit --dry-run
+tradecut --exchange bybit --dry-run
 ```
 
 Expected:
@@ -475,7 +475,7 @@ Expected:
 **Objective:** Watch OKX spot and swap/futures account updates.
 
 **Files:**
-- Create: `/Users/igorarnautov/TradeClipper/src/trade_clipper/exchanges/okx.py`
+- Create: `<project-root>/src/trade_clipper/exchanges/okx.py`
 
 Use OKX private websocket channels:
 - positions
@@ -490,7 +490,7 @@ Credentials require:
 Verification:
 
 ```bash
-trade-clipper --exchange okx --dry-run
+tradecut --exchange okx --dry-run
 ```
 
 Expected:
@@ -505,7 +505,7 @@ Expected:
 **Objective:** When a trade closes, save OBS replay and trim final clip.
 
 **Files:**
-- Modify: `/Users/igorarnautov/TradeClipper/src/trade_clipper/main.py`
+- Modify: `<project-root>/src/trade_clipper/main.py`
 
 Flow:
 
@@ -523,7 +523,7 @@ closed_trade_event
 Verification:
 
 ```bash
-trade-clipper --dry-run-simulated-trade
+tradecut --dry-run-simulated-trade
 ```
 
 Expected:
@@ -536,15 +536,15 @@ Expected:
 
 ## Task 12: Add launchd autostart
 
-**Objective:** Run trade-clipper automatically on Mac login.
+**Objective:** Run tradecut automatically on Mac login.
 
 **Files:**
-- Create: `/Users/igorarnautov/Library/LaunchAgents/com.igor.tradeclipper.plist`
+- Create: `/Users/igorarnautov/Library/LaunchAgents/com.igor.tradecut.plist`
 
 Expected command:
 
 ```bash
-/Users/igorarnautov/TradeClipper/.venv/bin/trade-clipper
+<project-root>/.venv/bin/tradecut
 ```
 
 Logs:
@@ -557,9 +557,9 @@ Logs:
 Commands:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.igor.tradeclipper.plist
-launchctl start com.igor.tradeclipper
-launchctl list | grep tradeclipper
+launchctl load ~/Library/LaunchAgents/com.igor.tradecut.plist
+launchctl start com.igor.tradecut
+launchctl list | grep tradecut
 ```
 
 ---

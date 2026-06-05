@@ -9,7 +9,7 @@ describe('buildFfmpegTrimArgs', () => {
       startSeconds: 12,
       endSeconds: 42,
       mode: 'copy'
-    })).toEqual(['-y', '-ss', '12.000', '-to', '42.000', '-i', '/tmp/replay.mp4', '-c', 'copy', '/tmp/clip.mp4'])
+    })).toEqual(['-y', '-ss', '12.000', '-t', '30.000', '-i', '/tmp/replay.mp4', '-avoid_negative_ts', 'make_zero', '-c', 'copy', '/tmp/clip.mp4'])
   })
 
   it('builds a frame-accurate re-encode command argument list', () => {
@@ -19,7 +19,26 @@ describe('buildFfmpegTrimArgs', () => {
       startSeconds: 1.25,
       endSeconds: 8.5,
       mode: 'reencode'
-    })).toContain('libx264')
+    })).toEqual([
+      '-y',
+      '-ss',
+      '1.250',
+      '-t',
+      '7.250',
+      '-i',
+      '/tmp/replay.mp4',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '18',
+      '-c:a',
+      'aac',
+      '-movflags',
+      '+faststart',
+      '/tmp/clip.mp4'
+    ])
   })
 
   it('rejects invalid trim ranges', () => {

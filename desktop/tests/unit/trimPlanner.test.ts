@@ -43,4 +43,17 @@ describe('planReplayTrim', () => {
       })
     ).toThrow('Trade exit must be after entry')
   })
+
+  it('rejects trades outside the measured replay time window', () => {
+    expect(() =>
+      planReplayTrim({
+        tradeEntryTimeMs: Date.parse('2026-05-13T03:40:00.000Z'),
+        tradeExitTimeMs: Date.parse('2026-05-13T03:41:00.000Z'),
+        replaySavedAtMs: Date.parse('2026-05-13T03:51:12.000Z'),
+        replayDurationSeconds: 120,
+        paddingBeforeSeconds: 3,
+        paddingAfterSeconds: 5
+      })
+    ).toThrow('Сделка не попадает в окно OBS Replay Buffer')
+  })
 })

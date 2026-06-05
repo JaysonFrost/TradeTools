@@ -13,7 +13,7 @@ afterEach(async () => {
 
 describe('settingsStore', () => {
   it('loads defaults when settings file does not exist', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'trade-clipper-settings-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.load()
@@ -24,7 +24,7 @@ describe('settingsStore', () => {
   })
 
   it('persists normalized OBS and clip settings without storing raw password', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'trade-clipper-settings-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.update({
@@ -37,6 +37,34 @@ describe('settingsStore', () => {
     expect(settings.obs).toEqual({ host: 'localhost', port: 4455, passwordConfigured: true })
 
     const reloaded = await store.load()
+    expect(reloaded).toEqual(settings)
+  })
+
+  it('persists Binance Futures configured flags without raw API credentials', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
+    const store = createSettingsStore(tempDir)
+
+    const settings = await store.update({
+      exchange: {
+        binanceFutures: {
+          enabled: true,
+          testnet: true,
+          apiKeyConfigured: true,
+          apiSecretConfigured: true
+        }
+      }
+    })
+
+    expect(settings.exchange.binanceFutures).toEqual({
+      enabled: true,
+      testnet: true,
+      apiKeyConfigured: true,
+      apiSecretConfigured: true
+    })
+
+    const reloaded = await store.load()
+    expect(JSON.stringify(reloaded)).not.toContain('binance-key')
+    expect(JSON.stringify(reloaded)).not.toContain('binance-secret')
     expect(reloaded).toEqual(settings)
   })
 })

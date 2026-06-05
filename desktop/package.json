@@ -1,5 +1,5 @@
 {
-  "name": "trade-clipper",
+  "name": "tradecut",
   "version": "0.1.0",
   "description": "Cross-platform desktop app for automatic trade video clipping, YouTube upload, and journal sync.",
   "type": "module",
@@ -44,8 +44,8 @@
     "vitest": "^2.1.9"
   },
   "build": {
-    "appId": "com.tradeclipper.desktop",
-    "productName": "Trade Clipper",
+    "appId": "com.tradecut.desktop",
+    "productName": "TradeCut",
     "files": [
       "out/**",
       "package.json"

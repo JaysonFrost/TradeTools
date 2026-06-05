@@ -6,22 +6,23 @@ const trade = {
   marketType: 'FUTURES',
   symbol: 'BTCUSDT',
   side: 'LONG',
-  entryTimeMs: Date.parse('2026-05-13T03:49:21.000Z')
+  entryTimeMs: new Date(2026, 4, 22, 14, 32, 11).getTime()
 }
 
 describe('clipPaths', () => {
-  it('builds deterministic sanitized clip and metadata filenames', () => {
+  it('builds readable clip titles and filenames for Binance symbols', () => {
     expect(buildClipFileNames(trade)).toEqual({
-      videoFileName: '2026-05-13_03-49-21_BINANCE_FUTURES_BTCUSDT_LONG.mp4',
-      metadataFileName: '2026-05-13_03-49-21_BINANCE_FUTURES_BTCUSDT_LONG.json'
+      title: 'BTCUSDT Binance 22.05.26 14:32:11',
+      videoFileName: 'BTCUSDT Binance 22.05.26 14:32:11.mp4',
+      metadataFileName: 'BTCUSDT Binance 22.05.26 14:32:11.json'
     })
   })
 
   it('places clips under dated output folder', () => {
     expect(buildClipOutputPaths('/Users/igor/TradeClips', trade)).toEqual({
-      dayFolder: '/Users/igor/TradeClips/clips/2026-05-13',
-      videoPath: '/Users/igor/TradeClips/clips/2026-05-13/2026-05-13_03-49-21_BINANCE_FUTURES_BTCUSDT_LONG.mp4',
-      metadataPath: '/Users/igor/TradeClips/clips/2026-05-13/2026-05-13_03-49-21_BINANCE_FUTURES_BTCUSDT_LONG.json'
+      dayFolder: '/Users/igor/TradeClips/clips/2026-05-22',
+      videoPath: '/Users/igor/TradeClips/clips/2026-05-22/BTCUSDT Binance 22.05.26 14:32:11.mp4',
+      metadataPath: '/Users/igor/TradeClips/clips/2026-05-22/BTCUSDT Binance 22.05.26 14:32:11.json'
     })
   })
 })

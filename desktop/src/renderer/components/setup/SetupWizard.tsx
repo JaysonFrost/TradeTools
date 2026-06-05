@@ -1,8 +1,9 @@
-import { ArrowLeft, ArrowRight, CheckCircle2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, FolderOpen, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
-import { Button } from '../ui/Button'
+import { getTradeCutApi } from '../../lib/tradeCutApi'
 import { setupWizardSteps } from './setupWizardSteps'
+import { Button } from '../ui/Button'
 
 export type SetupWizardProps = {
   open: boolean
@@ -48,7 +49,8 @@ export const SetupWizard = ({ open, settings, obsMessage, clipMessage, onClose, 
     setSaving(true)
     setLocalMessage('')
     try {
-      const updated = await window.tradeClipper.settings.update({
+      const api = getTradeCutApi()
+      const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         obs: {
           host,
@@ -64,9 +66,70 @@ export const SetupWizard = ({ open, settings, obsMessage, clipMessage, onClose, 
       onSaved(updated)
       setObsPassword('')
       setLocalMessage('Настройки сохранены')
+    } catch (error) {
+      setLocalMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки')
     } finally {
       setSaving(false)
     }
+  }
+
+  const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
+    try {
+      const api = getTradeCutApi()
+      const selectedPath = await api.dialog.selectDirectory(currentPath.trim() || undefined)
+      if (!selectedPath) return
+      setValue(selectedPath)
+      setLocalMessage('Папка выбрана. Не забудьте сохранить этот шаг.')
+    } catch (error) {
+      setLocalMessage(error instanceof Error ? error.message : 'Не удалось открыть выбор папки')
+    }
+  }
+
+  const runStepAction = async (actionIndex: number) => {
+    setLocalMessage('')
+
+    if (step.id === 'welcome') {
+      setStepIndex(actionIndex === 0 ? 1 : actionIndex === 1 ? 3 : 5)
+      return
+    }
+
+    if (step.id === 'obs-websocket') {
+      setLocalMessage(actionIndex === 3 ? 'Введите пароль ниже и нажмите «Сохранить этот шаг».' : 'Выполните этот пункт в OBS, затем вернитесь в мастер.')
+      return
+    }
+
+    if (step.id === 'obs-replay') {
+      if (actionIndex === step.actions.length - 1) {
+        await onRunHealthCheck()
+      } else {
+        setLocalMessage('Выполните этот пункт в OBS. После запуска Replay Buffer нажмите проверку системы.')
+      }
+      return
+    }
+
+    if (step.id === 'folders') {
+      if (actionIndex === 0) {
+        await selectDirectory(replaySourceDir, setReplaySourceDir)
+      } else if (actionIndex === 1) {
+        await selectDirectory(outputDir, setOutputDir)
+      } else {
+        setLocalMessage('Задайте отступы ниже и нажмите «Сохранить этот шаг».')
+      }
+      return
+    }
+
+    if (step.id === 'test-clip') {
+      await onCreateTestClip()
+      return
+    }
+
+    if (step.id === 'done') {
+      if (actionIndex === 2) setStepIndex(1)
+      else onClose()
+      return
+    }
+
+    setLocalMessage('Этот пункт пока информационный.')
   }
 
   const next = () => setStepIndex((value) => Math.min(value + 1, setupWizardSteps.length - 1))
@@ -108,11 +171,11 @@ export const SetupWizard = ({ open, settings, obsMessage, clipMessage, onClose, 
             <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
               <section className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
                 <div className="space-y-3">
-                  {step.actions.map((action) => (
-                    <div key={action} className="flex gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-zinc-300">
+                  {step.actions.map((action, index) => (
+                    <button key={action} type="button" className="flex w-full cursor-pointer gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-left text-sm text-zinc-300 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-zinc-100" onClick={() => void runStepAction(index)}>
                       <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-violet-300" />
                       <span>{action}</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
                 {step.id === 'obs-websocket' && (
@@ -124,8 +187,20 @@ export const SetupWizard = ({ open, settings, obsMessage, clipMessage, onClose, 
                 )}
                 {step.id === 'folders' && (
                   <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <label className="text-xs font-medium text-zinc-500 md:col-span-2">Папка OBS replay<input className={inputClass} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} /></label>
-                    <label className="text-xs font-medium text-zinc-500 md:col-span-2">Папка клипов<input className={inputClass} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} /></label>
+                    <div className="md:col-span-2">
+                      <div className="text-xs font-medium text-zinc-500">Папка OBS replay</div>
+                      <div className="mt-1 flex gap-2">
+                        <input className={inputClass.replace('mt-1 ', '')} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
+                        <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+                      </div>
+                    </div>
+                    <div className="md:col-span-2">
+                      <div className="text-xs font-medium text-zinc-500">Папка клипов</div>
+                      <div className="mt-1 flex gap-2">
+                        <input className={inputClass.replace('mt-1 ', '')} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
+                        <Button variant="ghost" onClick={() => void selectDirectory(outputDir, setOutputDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+                      </div>
+                    </div>
                     <label className="text-xs font-medium text-zinc-500">Секунд до входа<input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" /></label>
                     <label className="text-xs font-medium text-zinc-500">Секунд после выхода<input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" /></label>
                   </div>
@@ -145,7 +220,7 @@ export const SetupWizard = ({ open, settings, obsMessage, clipMessage, onClose, 
                   {step.id === 'welcome' && 'Вы поймёте весь путь настройки и сможете пройти его без поиска по интерфейсу.'}
                   {step.id === 'obs-websocket' && 'Приложение сможет безопасно подключаться к OBS и отправлять команду сохранения replay.'}
                   {step.id === 'obs-replay' && 'OBS начнет держать последние минуты записи в памяти и отдавать их по команде.'}
-                  {step.id === 'folders' && 'Trade Clipper будет знать, где найти исходный replay и куда положить готовый клип.'}
+                  {step.id === 'folders' && 'TradeCut будет знать, где найти исходный replay и куда положить готовый клип.'}
                   {step.id === 'trade-source' && 'Сейчас используем тестовую сделку, а позже сюда подключается дневник или биржа.'}
                   {step.id === 'test-clip' && 'В очереди проверки появится реальный локальный MP4 с metadata JSON.'}
                   {step.id === 'done' && 'Можно закрыть мастер и пользоваться основным экраном.'}

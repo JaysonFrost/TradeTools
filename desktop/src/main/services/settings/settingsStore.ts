@@ -19,6 +19,16 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
     ...current.obs,
     ...(patch.obs ?? {})
   },
+  exchange: {
+    binanceFutures: {
+      ...current.exchange.binanceFutures,
+      ...(patch.exchange?.binanceFutures ?? {})
+    }
+  },
+  youtube: {
+    ...current.youtube,
+    ...(patch.youtube ?? {})
+  },
   access: {
     ...current.access,
     ...(patch.access ?? {})
