@@ -2,11 +2,11 @@
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
-**Goal:** Build a polished cross-platform Electron desktop application for macOS and Windows that records trade videos via OBS, trims clips by trade lifecycle, uploads videos to YouTube, and sends YouTube links back to Trader Make Money trade journal entries.
+**Goal:** Build a polished cross-platform Electron desktop application for macOS and Windows that records trade videos via OBS, trims clips by trade lifecycle, keeps local review files, and prepares Trader Make Money journal sync.
 
-**Architecture:** The app uses Electron as the desktop shell, React/Vite/Tailwind for the renderer UI, and a typed Node.js main process for OS integrations, local database, OBS websocket, ffmpeg, exchange adapters, Google OAuth/YouTube upload, and Trader Make Money API sync. Business logic is split into small domain modules so files stay focused and the architecture remains easy to extend.
+**Architecture:** The app uses Electron as the desktop shell, React/Vite/Tailwind for the renderer UI, and a typed Node.js main process for OS integrations, local database, OBS websocket, ffmpeg, exchange adapters, Trader Make Money API sync. Business logic is split into small domain modules so files stay focused and the architecture remains easy to extend.
 
-**Tech Stack:** Electron, TypeScript, React, Vite, Tailwind CSS, Framer Motion, shadcn/radix primitives, SQLite, Drizzle ORM, obs-websocket-js, fluent-ffmpeg or direct ffmpeg CLI, Google OAuth2 + YouTube Data API v3, exchange APIs for Binance/OKX/Bybit, Trader Make Money API, electron-builder.
+**Tech Stack:** Electron, TypeScript, React, Vite, Tailwind CSS, Framer Motion, shadcn/radix primitives, SQLite, Drizzle ORM, obs-websocket-js, fluent-ffmpeg or direct ffmpeg CLI, exchange APIs for Binance/OKX/Bybit, Trader Make Money API, electron-builder.
 
 ---
 
@@ -60,13 +60,11 @@ Typography:
    - connect OBS;
    - choose Replay Buffer duration recommendation;
    - connect exchange accounts;
-   - connect Google/YouTube;
    - connect Trader Make Money API.
 3. App runs health checks:
    - OBS reachable;
    - Replay Buffer active;
    - ffmpeg installed or bundled;
-   - YouTube OAuth valid;
    - journal API reachable.
 4. Dashboard opens.
 
@@ -78,32 +76,28 @@ Typography:
 4. App saves OBS replay buffer.
 5. App trims exact segment with padding.
 6. App saves local clip and JSON metadata.
-7. If enabled, app uploads clip to YouTube.
-8. App gets YouTube URL.
-9. App sends URL to Trader Make Money journal entry.
-10. Dashboard shows completed trade card.
+7. Dashboard shows completed clip card.
+8. App can sync clip metadata to Trader Make Money when journal integration is ready.
 
-### Flow 3: Manual approval upload
+### Flow 3: Manual review
 
 1. Trade closes and clip is created locally.
 2. Clip appears in Review Queue.
 3. User previews video.
-4. User clicks Upload to YouTube.
-5. User optionally edits title/description/visibility.
-6. App uploads video.
-7. App syncs YouTube URL to Trader Make Money.
+4. User opens the local file or removes metadata from the queue.
+5. App keeps the MP4 on disk for manual journal attachment.
 
-### Flow 4: Fully automatic upload
+### Flow 4: Fully automatic local clipping
 
 1. User enables Auto Upload.
-2. For every completed clip, app uploads in background.
-3. Visibility can be:
-   - private by default;
-   - unlisted;
-   - public only if explicitly enabled.
-4. App updates journal automatically.
+2. For every completed trade, app creates a local clip in background.
+3. Queue rules can be:
+   - keep every clip for review;
+   - auto-remove queue metadata after manual archive;
+   - sync metadata to journal after review.
+4. App updates journal automatically after API docs are added.
 
-Recommended default: manual approval first, auto-upload optional.
+Recommended default: manual review first, automation optional.
 
 ---
 
@@ -115,7 +109,7 @@ Shows:
 - OBS status;
 - active trades;
 - recent completed clips;
-- upload queue;
+- review queue;
 - journal sync state;
 - storage usage;
 - warnings.
@@ -123,7 +117,7 @@ Shows:
 Cards:
 - Active Trade Card
 - Completed Clip Card
-- Upload Status Card
+- Review Status Card
 - Integration Health Card
 
 ### 2. Trades
@@ -136,33 +130,21 @@ Filters:
 - symbol;
 - date;
 - clip status;
-- upload status;
+- review status;
 - journal sync status.
 
 ### 3. Review Queue
 
-For clips waiting for manual upload.
+For clips waiting for local review.
 
 Actions:
 - preview video;
 - open file location;
-- upload to YouTube;
 - retry trim;
 - attach manually to journal;
 - delete clip.
 
-### 4. YouTube
-
-Shows:
-- connected Google account;
-- default visibility;
-- default title template;
-- default description template;
-- upload history;
-- quota status if available;
-- reconnect button.
-
-### 5. Trader Make Money
+### 4. Trader Make Money
 
 Shows:
 - API connection state;
@@ -183,7 +165,6 @@ Sections:
 - OBS
 - Exchanges
 - Video trimming
-- YouTube upload
 - Trader Make Money
 - Privacy/security
 - Logs/diagnostics
@@ -238,7 +219,6 @@ Windows:
 Secrets:
 - exchange API keys;
 - OBS password;
-- Google OAuth refresh token;
 - Trader Make Money API key.
 
 Database should only store references and non-sensitive metadata.
@@ -248,71 +228,6 @@ API key recommendations:
 - withdrawals disabled;
 - trading disabled where possible;
 - IP whitelist if possible.
-
-YouTube defaults:
-- first implementation should upload as `private` or `unlisted`;
-- public upload requires explicit user opt-in.
-
----
-
-## YouTube Integration
-
-Use YouTube Data API v3.
-
-Required OAuth scope:
-
-```text
-https://www.googleapis.com/auth/youtube.upload
-```
-
-Optional scope if later editing metadata/listing videos:
-
-```text
-https://www.googleapis.com/auth/youtube
-```
-
-Upload metadata template:
-
-Title:
-
-```text
-{{symbol}} {{side}} trade — {{entryTime}} — {{exchange}}
-```
-
-Description:
-
-```text
-Trade clip generated by TradeCut
-
-Exchange: {{exchange}}
-Market: {{marketType}}
-Symbol: {{symbol}}
-Side: {{side}}
-Entry: {{entryTime}}
-Exit: {{exitTime}}
-Duration: {{duration}}
-PnL: {{pnl}}
-
-Journal: {{journalUrl}}
-```
-
-Tags:
-
-```text
-trading, {{symbol}}, {{exchange}}, {{marketType}}, trade journal
-```
-
-Privacy options:
-- private;
-- unlisted;
-- public.
-
-Default: `private` or `unlisted`.
-
-Upload modes:
-- Manual: user reviews and clicks upload.
-- Automatic: app uploads right after clip creation.
-- Hybrid: auto-upload only for selected exchanges/symbols.
 
 ---
 
@@ -333,8 +248,8 @@ interface TradeJournalClient {
 Expected operations:
 - authenticate with API key/token;
 - search trade by exchange/symbol/time/order id;
-- attach external video URL to trade description or media field;
-- optionally create a comment/note with YouTube link;
+- attach local video reference to trade description or media field;
+- optionally create a comment or note with clip metadata;
 - retry failed syncs.
 
 Do not hardcode Trader Make Money API until docs/keys are provided. Build an adapter stub and contract tests first.
@@ -370,10 +285,6 @@ TradeCut/
           binanceAdapter.ts
           bybitAdapter.ts
           okxAdapter.ts
-        youtube/
-          googleOAuth.ts
-          youtubeUploader.ts
-          youtubeTemplates.ts
         journal/
           journalTypes.ts
           traderMakeMoneyClient.ts
@@ -400,7 +311,6 @@ TradeCut/
         Dashboard.tsx
         Trades.tsx
         ReviewQueue.tsx
-        YouTubeSettings.tsx
         JournalSettings.tsx
         Settings.tsx
       components/
@@ -433,7 +343,6 @@ TradeCut/
     unit/
       tradeStateMachine.test.ts
       trimPlanner.test.ts
-      youtubeTemplates.test.ts
       journalMatching.test.ts
 ```
 
@@ -456,8 +365,6 @@ window.tradeCut.obs.getStatus()
 window.tradeCut.obs.saveReplayTest()
 window.tradeCut.trades.list()
 window.tradeCut.clips.preview(id)
-window.tradeCut.youtube.connect()
-window.tradeCut.youtube.uploadClip(id, options)
 window.tradeCut.journal.testConnection()
 window.tradeCut.settings.get()
 window.tradeCut.settings.update(patch)
@@ -467,7 +374,7 @@ Renderer cannot:
 - read raw API secrets;
 - call arbitrary filesystem paths;
 - execute arbitrary shell commands;
-- upload without explicit IPC path.
+- write files outside validated IPC paths.
 
 ---
 
@@ -481,7 +388,6 @@ exchange_accounts
 trades
 executions
 clips
-youtube_uploads
 journal_links
 sync_jobs
 app_events
@@ -491,7 +397,6 @@ Important statuses:
 
 ```text
 clip.status: pending | trimming | ready | failed
-youtube.status: not_uploaded | queued | uploading | uploaded | failed
 journal.status: not_synced | queued | synced | failed
 trade.status: open | closed | ignored
 ```
@@ -541,30 +446,17 @@ Success criteria:
 - dry-run mode sees account events;
 - live mode creates clips on closed trades.
 
-### Phase 4: YouTube OAuth and upload
-
-Deliver:
-- Google OAuth desktop flow;
-- token storage in keychain;
-- manual upload from Review Queue;
-- upload progress;
-- uploaded URL saved in DB.
-
-Success criteria:
-- selected clip uploads to YouTube as private/unlisted;
-- YouTube URL is shown in app.
-
-### Phase 5: Trader Make Money sync
+### Phase 4: Trader Make Money sync
 
 Deliver after API docs are provided:
 - API client;
 - connection test;
 - trade matching;
-- attach YouTube link to video description/comment/media field;
+- attach clip metadata or local video reference to a trade entry;
 - retry queue.
 
 Success criteria:
-- uploaded clip URL appears in the correct Trader Make Money trade entry.
+- reviewed clip metadata appears in the correct Trader Make Money trade entry.
 
 ### Phase 6: Packaging for macOS and Windows
 
@@ -663,7 +555,7 @@ Design:
 Mock cards:
 - OBS connected;
 - Binance futures active;
-- YouTube not connected;
+- Journal adapter pending;
 - Trader Make Money waiting for API key;
 - recent BTCUSDT clip ready.
 
@@ -704,23 +596,7 @@ Functions:
 
 Add tests before implementation.
 
-### Task 9: Add YouTube OAuth shell
-
-**Objective:** Prepare Google account connection.
-
-Dependencies:
-
-```bash
-npm install googleapis keytar
-```
-
-Requirements:
-- use desktop OAuth flow;
-- store refresh token in keychain;
-- request YouTube upload scope;
-- show connected account in UI.
-
-### Task 10: Add Trader Make Money placeholder integration
+### Task 9: Add Trader Make Money placeholder integration
 
 **Objective:** Build UI/API abstraction before docs arrive.
 
@@ -746,16 +622,7 @@ Need answers later:
    - how to update video description/media/link;
    - rate limits.
 
-2. YouTube upload default:
-   - private, unlisted, or public?
-   - recommended default: unlisted or private.
-
-3. Upload mode:
-   - manual review first;
-   - automatic later;
-   - or automatic from day one?
-
-4. Should the app bundle ffmpeg or require system install?
+2. Should the app bundle ffmpeg or require system install?
    - recommended: bundle for Windows, allow bundled/system on macOS.
 
 5. Should there be a cloud/backend account?
@@ -770,13 +637,12 @@ Build this as a desktop-first local app with no backend in MVP.
 Reason:
 - OBS is local;
 - exchange keys are sensitive;
-- YouTube OAuth can be desktop OAuth;
 - Trader Make Money can be called directly from local app;
 - fewer servers and fewer security risks.
 
 Default behavior:
 - detect trades automatically;
 - create clips automatically;
-- upload manually at first;
-- sync to Trader Make Money manually or automatically after YouTube upload succeeds;
+- review clips manually at first;
+- sync to Trader Make Money manually or automatically after clip review;
 - add full automatic mode once the pipeline is trusted.

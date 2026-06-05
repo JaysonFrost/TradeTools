@@ -27,14 +27,9 @@ const api = {
     testFuturesConnection: (): Promise<BinanceFuturesConnectionStatus> => ipcRenderer.invoke('binance:test-futures-connection'),
     getWatchStatus: (): Promise<BinanceFuturesWatchStatus> => ipcRenderer.invoke('binance:get-watch-status')
   },
-  youtube: {
-    authorizeGoogle: (): Promise<AppSettings> => ipcRenderer.invoke('youtube:authorize-google'),
-    openStudioUpload: (): Promise<void> => ipcRenderer.invoke('youtube:open-studio-upload')
-  },
   clips: {
     listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),
     createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test'),
-    uploadToYouTube: (metadataPath: string): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:upload-youtube', metadataPath),
     deleteFromQueue: (metadataPath: string): Promise<DeleteClipFromQueueResult> => ipcRenderer.invoke('clips:delete-from-queue', metadataPath),
     openPreview: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:open-preview', videoPath),
     showInFolder: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:show-in-folder', videoPath)

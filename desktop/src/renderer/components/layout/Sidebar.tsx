@@ -1,11 +1,10 @@
 import { motion } from 'framer-motion'
-import { Clapperboard, CloudUpload, LayoutDashboard, Settings, WalletCards } from 'lucide-react'
+import { Clapperboard, LayoutDashboard, Settings, WalletCards } from 'lucide-react'
 import { clsx } from 'clsx'
 
 const items = [
   { label: 'Панель', icon: LayoutDashboard, active: true, targetId: 'dashboard-top' },
   { label: 'Очередь клипов', icon: Clapperboard, targetId: 'clip-queue' },
-  { label: 'YouTube', icon: CloudUpload, targetId: 'integrations-section' },
   { label: 'Дневник', icon: WalletCards, targetId: 'integrations-section' },
   { label: 'Настройки', icon: Settings, targetId: 'settings-section' }
 ]
@@ -22,7 +21,7 @@ export const Sidebar = () => (
       </div>
       <div>
         <div className="text-base font-semibold tracking-[-0.02em]">TradeCut</div>
-        <div className="mono text-[11px] text-zinc-500">OBS • YouTube • Дневник</div>
+        <div className="mono text-[11px] text-zinc-500">OBS • Binance • Дневник</div>
       </div>
     </div>
     <nav className="space-y-1.5">

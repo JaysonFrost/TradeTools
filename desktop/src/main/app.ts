@@ -9,9 +9,6 @@ import { type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTradeClipPipeline } from './services/trades/tradeClipPipeline'
-import { getGoogleOAuthCredentialsFromEnv } from './services/youtube/googleOAuthConfig'
-import { authorizeGoogleWithLoopback } from './services/youtube/googleOAuthClient'
-import { createYouTubeUploader } from './services/youtube/youtubeUploader'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -26,15 +23,12 @@ const getIconPath = (): string => join(__dirname, '../../build/icon.png')
 const binanceFuturesPollIntervalMs = 2_000
 const obsReplayEnsureIntervalMs = 30_000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
-const youtubeStudioUploadUrl = 'https://studio.youtube.com'
 
 const extractSettingsPatch = (input: SettingsUpdateInput): SettingsUpdateInput => {
   const {
     obsPassword: _obsPassword,
     binanceFuturesApiKey: _binanceFuturesApiKey,
     binanceFuturesApiSecret: _binanceFuturesApiSecret,
-    googleOAuthClientId: _googleOAuthClientId,
-    googleOAuthClientSecret: _googleOAuthClientSecret,
     ...patch
   } = input
   return patch
@@ -88,26 +82,6 @@ app.whenReady().then(() => {
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
     saveReplayBuffer: () => obsService.testReplaySave()
-  })
-  const getGoogleOAuthCredentials = async () => (await secretStore.getGoogleOAuthCredentials()) ?? getGoogleOAuthCredentialsFromEnv()
-  const loadSettingsWithRuntimeFlags = async () => {
-    const [settings, googleOAuthCredentials] = await Promise.all([
-      settingsStore.load(),
-      getGoogleOAuthCredentials()
-    ])
-
-    return {
-      ...settings,
-      youtube: {
-        ...settings.youtube,
-        oauthClientConfigured: Boolean(googleOAuthCredentials)
-      }
-    }
-  }
-  const youtubeUploader = createYouTubeUploader({
-    getCredentials: getGoogleOAuthCredentials,
-    getTokens: () => secretStore.getGoogleOAuthTokens(),
-    setTokens: (tokens) => secretStore.setGoogleOAuthTokens(tokens)
   })
   const getBinanceFuturesClient = async () => {
     const [settings, credentials] = await Promise.all([
@@ -256,13 +230,11 @@ app.whenReady().then(() => {
 
     return result.canceled ? undefined : result.filePaths[0]
   })
-  ipcMain.handle('settings:get', () => loadSettingsWithRuntimeFlags())
+  ipcMain.handle('settings:get', () => settingsStore.load())
   ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
     const obsPassword = input.obsPassword?.trim()
     const binanceFuturesApiKey = input.binanceFuturesApiKey?.trim()
     const binanceFuturesApiSecret = input.binanceFuturesApiSecret?.trim()
-    const googleOAuthClientId = input.googleOAuthClientId?.trim()
-    const googleOAuthClientSecret = input.googleOAuthClientSecret?.trim()
     let patch = extractSettingsPatch(input)
 
     if (obsPassword) {
@@ -299,24 +271,6 @@ app.whenReady().then(() => {
       }
     }
 
-    if (googleOAuthClientId || googleOAuthClientSecret) {
-      if (!googleOAuthClientId) {
-        throw new Error('Для Google OAuth укажите Client ID')
-      }
-
-      await secretStore.setGoogleOAuthCredentials({
-        clientId: googleOAuthClientId,
-        clientSecret: googleOAuthClientSecret
-      })
-      patch = {
-        ...patch,
-        youtube: {
-          ...(patch.youtube ?? {}),
-          oauthClientConfigured: true
-        }
-      }
-    }
-
     const updatedSettings = await settingsStore.update(patch)
     if (
       updatedSettings.exchange.binanceFutures.enabled &&
@@ -326,7 +280,7 @@ app.whenReady().then(() => {
       startBinanceFuturesPolling()
     }
 
-    return loadSettingsWithRuntimeFlags()
+    return settingsStore.load()
   })
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
@@ -353,33 +307,8 @@ app.whenReady().then(() => {
     }).testConnection()
   })
   ipcMain.handle('binance:get-watch-status', () => getBinanceFuturesWatchStatus())
-  ipcMain.handle('youtube:authorize-google', async () => {
-    const credentials = await getGoogleOAuthCredentials()
-    if (!credentials) throw new Error('Google OAuth не настроен в этой сборке приложения')
-
-    const tokens = await authorizeGoogleWithLoopback({
-      credentials,
-      openExternal: (url) => shell.openExternal(url)
-    })
-    await secretStore.setGoogleOAuthTokens(tokens)
-    await settingsStore.update({
-      youtube: {
-        oauthClientConfigured: true,
-        authorized: true
-      }
-    })
-    return loadSettingsWithRuntimeFlags()
-  })
-  ipcMain.handle('youtube:open-studio-upload', () => shell.openExternal(youtubeStudioUploadUrl))
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:create-test', () => clipPipeline.createClipForClosedTrade(createSimulatedClosedTrade(Date.now())))
-  ipcMain.handle('clips:upload-youtube', async (_event, metadataPath: string) => {
-    const settings = await settingsStore.load()
-    return clipPipeline.uploadClipToYouTube(metadataPath, (input) => youtubeUploader.uploadVideo({
-      ...input,
-      privacyStatus: settings.youtube.defaultPrivacyStatus
-    }))
-  })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:open-preview', async (_event, videoPath: string) => {
     await assertPreviewVideoPath(videoPath)

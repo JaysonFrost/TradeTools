@@ -1,15 +1,13 @@
-import { Copy, ExternalLink, FileText, FolderOpen, Play, Trash2 } from 'lucide-react'
+import { Copy, FolderOpen, Play, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import type { ClipQueueItem } from '../../../main/services/trades/tradeClipPipeline'
 import { getTradeCutApi } from '../../lib/tradeCutApi'
-import { buildManualYouTubeDescription } from '../../lib/youtubeManualUpload'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
 export type ClipCardProps = {
   clip: ClipQueueItem
-  onChanged?: (clip: ClipQueueItem) => void
   onDeleted?: (clip: ClipQueueItem) => void
 }
 
@@ -19,12 +17,10 @@ const formatDuration = (seconds: number): string => {
   return minutes > 0 ? `${minutes}м ${rest}с` : `${rest}с`
 }
 
-export const ClipCard = ({ clip, onChanged, onDeleted }: ClipCardProps) => {
+export const ClipCard = ({ clip, onDeleted }: ClipCardProps) => {
   const [previewing, setPreviewing] = useState(false)
-  const [uploading, setUploading] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [previewMessage, setPreviewMessage] = useState('')
-  const [uploadMessage, setUploadMessage] = useState('')
   const [deleteMessage, setDeleteMessage] = useState('')
   const [manualMessage, setManualMessage] = useState('')
 
@@ -40,20 +36,6 @@ export const ClipCard = ({ clip, onChanged, onDeleted }: ClipCardProps) => {
     }
   }
 
-  const uploadToYouTube = async () => {
-    setUploading(true)
-    setUploadMessage('')
-    try {
-      const updatedClip = await getTradeCutApi().clips.uploadToYouTube(clip.metadataPath)
-      onChanged?.(updatedClip)
-      setUploadMessage(updatedClip.youtubeUrl ? `Загружено: ${updatedClip.youtubeUrl}` : 'Клип загружен на YouTube')
-    } catch (error) {
-      setUploadMessage(error instanceof Error ? error.message : 'Не удалось загрузить клип на YouTube')
-    } finally {
-      setUploading(false)
-    }
-  }
-
   const deleteFromQueue = async () => {
     setDeleting(true)
     setDeleteMessage('')
@@ -64,16 +46,6 @@ export const ClipCard = ({ clip, onChanged, onDeleted }: ClipCardProps) => {
       setDeleteMessage(error instanceof Error ? error.message : 'Не удалось убрать клип из очереди')
     } finally {
       setDeleting(false)
-    }
-  }
-
-  const openYouTubeStudio = async () => {
-    setManualMessage('')
-    try {
-      await getTradeCutApi().youtube.openStudioUpload()
-      setManualMessage('YouTube Studio открыт. Перетащите файл клипа или выберите его вручную.')
-    } catch (error) {
-      setManualMessage(error instanceof Error ? error.message : 'Не удалось открыть YouTube Studio')
     }
   }
 
@@ -108,16 +80,9 @@ export const ClipCard = ({ clip, onChanged, onDeleted }: ClipCardProps) => {
             <h3 className="m-0 truncate text-base font-semibold">{clip.title}</h3>
             <Badge tone="warning">На проверке</Badge>
           </div>
-          <p className="mono mt-2 truncate text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath} • YouTube еще не загружен</p>
+          <p className="mono mt-2 truncate text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="ghost" onClick={() => void openPreview()} disabled={previewing}>{previewing ? 'Открываем...' : 'Предпросмотр'}</Button>
-            <Button
-              className="bg-red-600 shadow-[0_0_32px_rgba(220,38,38,0.28)] hover:bg-red-500"
-              onClick={() => void uploadToYouTube()}
-              disabled={uploading || Boolean(clip.youtubeUrl)}
-            >
-              <ExternalLink size={16} className="mr-2" />{clip.youtubeUrl ? 'Загружено на YouTube' : uploading ? 'Загружаем...' : 'Загрузить на YouTube'}
-            </Button>
             <Button
               variant="ghost"
               className="border-red-500/25 text-red-100 hover:bg-red-500/10"
@@ -128,21 +93,14 @@ export const ClipCard = ({ clip, onChanged, onDeleted }: ClipCardProps) => {
             </Button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => void openYouTubeStudio()}>
-              <ExternalLink size={16} className="mr-2" />Открыть YouTube Studio
-            </Button>
             <Button variant="ghost" onClick={() => void showInFolder()}>
               <FolderOpen size={16} className="mr-2" />Открыть файл
             </Button>
             <Button variant="ghost" onClick={() => void copyManualText(clip.title, 'Название скопировано')}>
               <Copy size={16} className="mr-2" />Скопировать название
             </Button>
-            <Button variant="ghost" onClick={() => void copyManualText(buildManualYouTubeDescription(clip), 'Описание скопировано')}>
-              <FileText size={16} className="mr-2" />Скопировать описание
-            </Button>
           </div>
           {previewMessage && <p className="mt-3 text-sm text-amber-200">{previewMessage}</p>}
-          {(uploadMessage || clip.youtubeUrl) && <p className="mt-3 text-sm text-red-100">{uploadMessage || `Загружено: ${clip.youtubeUrl}`}</p>}
           {deleteMessage && <p className="mt-3 text-sm text-amber-200">{deleteMessage}</p>}
           {manualMessage && <p className="mt-3 text-sm text-zinc-300">{manualMessage}</p>}
         </div>

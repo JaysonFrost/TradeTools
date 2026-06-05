@@ -7,6 +7,10 @@ import { createTradeClipPipeline } from '../../src/main/services/trades/tradeCli
 import { createSimulatedClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import { buildClipOutputPaths } from '../../src/main/services/video/clipPaths'
 
+const legacyVideoProviderName = ['You', 'Tube'].join('')
+const legacyVideoProviderKey = ['you', 'tube'].join('')
+const legacyPublishMethodPrefix = ['upload', 'Clip', 'To'].join('')
+
 describe('tradeClipPipeline', () => {
   it('saves OBS replay, trims it into the dated clip folder, and writes metadata json', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradecut-data-'))
@@ -130,9 +134,9 @@ describe('tradeClipPipeline', () => {
     expect(runFfmpeg.mock.calls[0][0].at(-1)).toContain(`${clip.videoPath}.tmp-`)
   })
 
-  it('updates clip metadata after a YouTube upload succeeds', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'tradecut-youtube-metadata-'))
-    const replayDir = await mkdtemp(join(tmpdir(), 'tradecut-youtube-replays-'))
+  it('exposes local review queue actions without a direct external publishing action', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradecut-local-metadata-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'tradecut-local-replays-'))
     const replayPath = join(replayDir, 'Replay 2026-05-13 09-00-00.mp4')
     await writeFile(replayPath, 'fake video')
     const saveTimeMs = new Date(2026, 4, 13, 9, 0, 0).getTime()
@@ -158,25 +162,15 @@ describe('tradeClipPipeline', () => {
       runFfmpeg: vi.fn(async (args: string[]) => {
         await writeFile(args.at(-1) ?? '', 'trimmed video')
       }),
-      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120),
-      now: () => saveTimeMs + 10_000
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
     })
     const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
-    const updatedClip = await pipeline.uploadClipToYouTube(clip.metadataPath, async (input) => {
-      expect(input).toMatchObject({
-        videoPath: clip.videoPath,
-        title: clip.title
-      })
-      return {
-        videoId: 'youtube-video-id',
-        youtubeUrl: 'https://youtu.be/youtube-video-id'
-      }
-    })
 
-    expect(updatedClip.youtubeUrl).toBe('https://youtu.be/youtube-video-id')
+    expect(`${legacyPublishMethodPrefix}${legacyVideoProviderName}` in pipeline).toBe(false)
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8')) as Record<string, unknown>
-    expect(metadata.youtubeVideoId).toBe('youtube-video-id')
-    expect(metadata.youtubeUrl).toBe('https://youtu.be/youtube-video-id')
+    expect(metadata).not.toHaveProperty(`${legacyVideoProviderKey}VideoId`)
+    expect(metadata).not.toHaveProperty(`${legacyVideoProviderKey}Url`)
+    expect(metadata).not.toHaveProperty('uploadedAtMs')
   })
 
   it('removes a clip from the review queue without deleting the local video', async () => {

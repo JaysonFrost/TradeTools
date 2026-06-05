@@ -16,7 +16,7 @@ export const TopBar = ({ appVersion, onRunHealthCheck = () => undefined, onOpenS
         <Badge tone="warning">Локальный режим</Badge>
         {appVersion && <Badge tone="neutral">v{appVersion}</Badge>}
       </div>
-      <p className="mt-2 text-sm text-zinc-400">Автоклипы по сделкам, очередь проверки, загрузка в YouTube и синхронизация с дневником.</p>
+      <p className="mt-2 text-sm text-zinc-400">Автоклипы по сделкам, локальная очередь проверки и синхронизация с дневником.</p>
     </div>
     <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
       <div className="hidden items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-500 2xl:flex">

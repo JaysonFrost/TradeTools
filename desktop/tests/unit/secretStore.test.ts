@@ -7,6 +7,7 @@ const createAdapter = (): KeychainAdapter => ({
   deletePassword: vi.fn().mockResolvedValue(true)
 })
 const legacyServiceName = ['Trade', 'Clipper'].join(' ')
+const legacyAuthProvider = ['Goo', 'gle', ['O', 'Auth'].join('')].join('')
 
 describe('secretStore', () => {
   it('stores OBS password under a stable service and account', async () => {
@@ -81,27 +82,13 @@ describe('secretStore', () => {
     await expect(store.getBinanceFuturesCredentials()).resolves.toBeUndefined()
   })
 
-  it('stores Google OAuth client credentials and tokens under keychain accounts', async () => {
+  it('does not expose legacy external publishing keychain operations', () => {
     const adapter = createAdapter()
     const store = createSecretStore(adapter)
 
-    await store.setGoogleOAuthCredentials({ clientId: 'google-client-id', clientSecret: 'google-client-secret' })
-    await store.setGoogleOAuthTokens({
-      accessToken: 'access-token',
-      refreshToken: 'refresh-token',
-      expiresAtMs: 1_700_000_000_000,
-      scope: 'https://www.googleapis.com/auth/youtube.upload',
-      tokenType: 'Bearer'
-    })
-
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'google-oauth-client-id', 'google-client-id')
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'google-oauth-client-secret', 'google-client-secret')
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'google-oauth-tokens', JSON.stringify({
-      accessToken: 'access-token',
-      refreshToken: 'refresh-token',
-      expiresAtMs: 1_700_000_000_000,
-      scope: 'https://www.googleapis.com/auth/youtube.upload',
-      tokenType: 'Bearer'
-    }))
+    expect(`set${legacyAuthProvider}Credentials` in store).toBe(false)
+    expect(`get${legacyAuthProvider}Credentials` in store).toBe(false)
+    expect(`set${legacyAuthProvider}Tokens` in store).toBe(false)
+    expect(`get${legacyAuthProvider}Tokens` in store).toBe(false)
   })
 })

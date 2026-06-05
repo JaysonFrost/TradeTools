@@ -8,7 +8,6 @@ import { TopBar } from '../components/layout/TopBar'
 import { SetupWizard } from '../components/setup/SetupWizard'
 import { BinanceFuturesSettingsPanel } from '../components/settings/BinanceFuturesSettingsPanel'
 import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
-import { YouTubeSettingsPanel } from '../components/settings/YouTubeSettingsPanel'
 import { ClipCard } from '../components/trade/ClipCard'
 import { getTradeCutApi } from '../lib/tradeCutApi'
 
@@ -149,16 +148,6 @@ export const Dashboard = () => {
       tone: settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured && !binanceWatch.lastError ? 'success' as const : 'warning' as const
     },
     {
-      name: 'YouTube загрузка',
-      description: settings?.youtube.authorized
-        ? 'Google OAuth подключён. Кнопка в очереди загружает клип на YouTube.'
-        : settings?.youtube.oauthClientConfigured
-          ? 'Google OAuth готов. Авторизуйтесь, чтобы включить экспорт.'
-          : 'Google OAuth не настроен в этой сборке приложения.',
-      status: settings?.youtube.authorized ? 'Готово' : 'Нужно настроить',
-      tone: settings?.youtube.authorized ? 'success' as const : 'warning' as const
-    },
-    {
       name: 'Trader Make Money',
       description: 'Граница адаптера готова. Ждём API-ключ и схему дневника.',
       status: 'Заглушка',
@@ -193,7 +182,7 @@ export const Dashboard = () => {
           <div className="mb-3 flex items-end justify-between">
             <div>
               <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
-              <p className="mt-1 text-sm text-zinc-500">Клипы остаются локально, пока вы вручную не подтвердите загрузку в YouTube.</p>
+              <p className="mt-1 text-sm text-zinc-500">Клипы остаются локально, пока вы проверяете файл и метаданные.</p>
               {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
             </div>
             <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25" onClick={createTestClip}>Создать тестовый клип</button>
@@ -203,7 +192,6 @@ export const Dashboard = () => {
               <ClipCard
                 key={clip.id}
                 clip={clip}
-                onChanged={(updatedClip) => setClips((current) => current.map((item) => item.id === updatedClip.id ? updatedClip : item))}
                 onDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
               />
             )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет локальных клипов на проверке.</div>}
@@ -213,10 +201,6 @@ export const Dashboard = () => {
           {integrations.map((integration) => <IntegrationStatusCard key={integration.name} {...integration} />)}
         </section>
         <section id="settings-section" className="col-span-12 scroll-mt-4 space-y-4">
-          <YouTubeSettingsPanel settings={settings} onSaved={(nextSettings) => {
-            setSettings(nextSettings)
-            void loadLocalState()
-          }} />
           <BinanceFuturesSettingsPanel settings={settings} onSaved={(nextSettings) => {
             setSettings(nextSettings)
             void loadLocalState()

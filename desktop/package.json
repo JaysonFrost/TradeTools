@@ -1,7 +1,7 @@
 {
   "name": "tradecut",
   "version": "0.1.0",
-  "description": "Cross-platform desktop app for automatic trade video clipping, YouTube upload, and journal sync.",
+  "description": "Cross-platform desktop app for automatic trade video clipping and journal sync.",
   "type": "module",
   "main": "out/main/app.js",
   "scripts": {
@@ -19,7 +19,6 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "framer-motion": "^12.38.0",
-    "googleapis": "^171.4.0",
     "keytar": "^7.9.0",
     "lucide-react": "^1.14.0",
     "obs-websocket-js": "^5.0.8",

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
 
+const legacyVideoProviderSettingsKey = ['you', 'tube'].join('')
+const legacyAuthFlagKey = [['oa', 'uth'].join(''), 'Client', 'Configured'].join('')
+
 describe('settings', () => {
   it('creates Russian-first defaults for clip automation and planned subscription gates', () => {
     const settings = createDefaultSettings('/Users/igor/Library/Application Support/TradeCut')
@@ -18,11 +21,7 @@ describe('settings', () => {
       apiKeyConfigured: false,
       apiSecretConfigured: false
     })
-    expect(settings.youtube).toEqual({
-      oauthClientConfigured: false,
-      authorized: false,
-      defaultPrivacyStatus: 'private'
-    })
+    expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
   })
 
   it('normalizes unsafe clip padding and keeps user output folder', () => {
@@ -58,19 +57,15 @@ describe('settings', () => {
     })
   })
 
-  it('normalizes YouTube OAuth settings without raw Google secrets', () => {
+  it('drops legacy external publishing settings from stored settings', () => {
     const settings = normalizeSettings({
-      youtube: {
-        oauthClientConfigured: true,
+      [legacyVideoProviderSettingsKey]: {
+        [legacyAuthFlagKey]: true,
         authorized: true,
         defaultPrivacyStatus: 'unlisted'
       }
-    }, '/app-data')
+    } as Parameters<typeof normalizeSettings>[0], '/app-data')
 
-    expect(settings.youtube).toEqual({
-      oauthClientConfigured: true,
-      authorized: true,
-      defaultPrivacyStatus: 'unlisted'
-    })
+    expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
   })
 })

@@ -5,7 +5,7 @@ Project: TradeCut desktop app
 
 ## Goal
 
-Add a small pre-upload video editor for clips in the review queue. The editor lets the user make privacy and framing edits before sending a clip to YouTube:
+Add a small local video editor for clips in the review queue. The editor lets the user make privacy and framing edits before keeping a final local clip:
 
 - Trim clip start and end.
 - Crop the frame to a square or free rectangle.
@@ -15,15 +15,15 @@ The feature should stay intentionally narrow. It is not a general-purpose video 
 
 ## Current Context
 
-TradeCut already creates local clips from OBS replay files, stores each clip with JSON metadata, and uploads the clip referenced by `metadata.videoPath` to YouTube. Video trimming is already performed through ffmpeg in the main process.
+TradeCut already creates local clips from OBS replay files and stores each clip with JSON metadata. Video trimming is already performed through ffmpeg in the main process.
 
-The editor should fit between clip creation and YouTube upload:
+The editor should fit inside local clip review:
 
 1. A clip appears in the review queue.
 2. The user opens the editor from the clip card.
 3. The user applies trim, crop, and blur zones.
 4. TradeCut renders an edited mp4.
-5. The clip metadata is updated so YouTube upload uses the edited file.
+5. The clip metadata is updated so the review queue uses the edited file.
 
 ## Recommended Approach
 
@@ -106,7 +106,7 @@ After a successful render, TradeCut updates the clip JSON:
 - `durationSeconds` reflects the edited output duration.
 - Add an `edit` block with trim, crop, blur zones, source path, edited path, and edited timestamp.
 
-The review queue continues to read the same metadata file. YouTube upload remains unchanged because it already uploads `metadata.videoPath`.
+The review queue continues to read the same metadata file and uses `metadata.videoPath`.
 
 ## Error Handling
 
@@ -144,7 +144,7 @@ Manual verification should include:
 - one blur zone;
 - multiple blur zones;
 - crop plus blur;
-- YouTube upload uses the edited file path after render.
+- Review queue uses the edited file path after render.
 
 ## Deferred Features
 
@@ -156,4 +156,4 @@ These are intentionally out of scope for the MVP:
 - audio edits;
 - captions;
 - multi-clip timelines;
-- YouTube metadata editing inside the video editor.
+- External publishing metadata editing inside the video editor.

@@ -102,7 +102,7 @@ Desktop-приложение не хранит платежные секреты
 
 ## Безопасность
 
-1. API keys бирж и YouTube хранить локально в OS keychain.
+1. API keys бирж хранить локально в OS keychain.
 2. Платежные и bot tokens хранить только на backend.
 3. Desktop получает только краткоживущий access token и refresh/device token.
 4. IPC в Electron остается узким: renderer не получает filesystem/secrets напрямую.

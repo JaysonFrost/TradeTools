@@ -22,11 +22,6 @@ export type AppSettings = {
       apiSecretConfigured: boolean
     }
   }
-  youtube: {
-    oauthClientConfigured: boolean
-    authorized: boolean
-    defaultPrivacyStatus: 'private' | 'unlisted' | 'public'
-  }
   access: {
     subscriptionRequired: boolean
     telegramBotRequired: boolean
@@ -42,7 +37,6 @@ export type PartialSettings = Partial<{
   exchange: {
     binanceFutures?: Partial<AppSettings['exchange']['binanceFutures']>
   }
-  youtube: Partial<AppSettings['youtube']>
   access: Partial<AppSettings['access']>
 }>
 
@@ -50,15 +44,9 @@ export type SettingsUpdateInput = PartialSettings & {
   obsPassword?: string
   binanceFuturesApiKey?: string
   binanceFuturesApiSecret?: string
-  googleOAuthClientId?: string
-  googleOAuthClientSecret?: string
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
-
-const normalizePrivacyStatus = (value: unknown, fallback: AppSettings['youtube']['defaultPrivacyStatus']): AppSettings['youtube']['defaultPrivacyStatus'] => {
-  return value === 'public' || value === 'unlisted' || value === 'private' ? value : fallback
-}
 
 export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   language: 'ru',
@@ -81,11 +69,6 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
       apiKeyConfigured: false,
       apiSecretConfigured: false
     }
-  },
-  youtube: {
-    oauthClientConfigured: false,
-    authorized: false,
-    defaultPrivacyStatus: 'private'
   },
   access: {
     subscriptionRequired: true,
@@ -119,11 +102,6 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
         apiKeyConfigured: settings.exchange?.binanceFutures?.apiKeyConfigured ?? defaults.exchange.binanceFutures.apiKeyConfigured,
         apiSecretConfigured: settings.exchange?.binanceFutures?.apiSecretConfigured ?? defaults.exchange.binanceFutures.apiSecretConfigured
       }
-    },
-    youtube: {
-      oauthClientConfigured: settings.youtube?.oauthClientConfigured ?? defaults.youtube.oauthClientConfigured,
-      authorized: settings.youtube?.authorized ?? defaults.youtube.authorized,
-      defaultPrivacyStatus: normalizePrivacyStatus(settings.youtube?.defaultPrivacyStatus, defaults.youtube.defaultPrivacyStatus)
     },
     access: {
       subscriptionRequired: settings.access?.subscriptionRequired ?? defaults.access.subscriptionRequired,

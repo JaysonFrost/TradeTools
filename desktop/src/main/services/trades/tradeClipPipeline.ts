@@ -25,9 +25,6 @@ export type ClipQueueItem = {
   exitTimeMs: number
   durationSeconds: number
   createdAtMs: number
-  youtubeVideoId?: string
-  youtubeUrl?: string
-  uploadedAtMs?: number
 }
 
 export type TradeClipMetadata = ClipQueueItem & {
@@ -51,17 +48,6 @@ export type SaveReplayBufferResult = {
   replayPath?: string
 }
 
-export type UploadClipToYouTubeInput = {
-  videoPath: string
-  title: string
-  description: string
-}
-
-export type UploadClipToYouTubeResult = {
-  videoId: string
-  youtubeUrl: string
-}
-
 export type DeleteClipFromQueueResult = {
   ok: true
   metadataPath: string
@@ -78,7 +64,6 @@ export type TradeClipPipelineDeps = {
 export type TradeClipPipeline = {
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem>
   listPendingClips: () => Promise<ClipQueueItem[]>
-  uploadClipToYouTube: (metadataPath: string, upload: (input: UploadClipToYouTubeInput) => Promise<UploadClipToYouTubeResult>) => Promise<ClipQueueItem>
   deleteClipFromQueue: (metadataPath: string) => Promise<DeleteClipFromQueueResult>
 }
 
@@ -95,16 +80,27 @@ const parseTradeClipMetadata = async (metadataPath: string): Promise<TradeClipMe
   }
 }
 
-const parseMetadata = async (metadataPath: string): Promise<ClipQueueItem | undefined> => parseTradeClipMetadata(metadataPath)
+const toClipQueueItem = (metadata: TradeClipMetadata): ClipQueueItem => ({
+  id: metadata.id,
+  status: metadata.status,
+  title: metadata.title,
+  fileName: metadata.fileName,
+  videoPath: metadata.videoPath,
+  metadataPath: metadata.metadataPath,
+  symbol: metadata.symbol,
+  side: metadata.side,
+  exchange: metadata.exchange,
+  marketType: metadata.marketType,
+  entryTimeMs: metadata.entryTimeMs,
+  exitTimeMs: metadata.exitTimeMs,
+  durationSeconds: metadata.durationSeconds,
+  createdAtMs: metadata.createdAtMs
+})
 
-const buildYouTubeDescription = (metadata: TradeClipMetadata): string => [
-  `${metadata.symbol} ${metadata.side}`,
-  `${metadata.exchange} ${metadata.marketType}`,
-  `Entry: ${new Date(metadata.entryTimeMs).toISOString()}`,
-  `Exit: ${new Date(metadata.exitTimeMs).toISOString()}`,
-  '',
-  'Exported by TradeCut'
-].join('\n')
+const parseMetadata = async (metadataPath: string): Promise<ClipQueueItem | undefined> => {
+  const metadata = await parseTradeClipMetadata(metadataPath)
+  return metadata ? toClipQueueItem(metadata) : undefined
+}
 
 const collectJsonFiles = async (directory: string): Promise<string[]> => {
   try {
@@ -230,25 +226,6 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       return items
         .filter((item): item is ClipQueueItem => item !== undefined)
         .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(a.videoPath)))
-    },
-    async uploadClipToYouTube(metadataPath, upload) {
-      const metadata = await parseTradeClipMetadata(metadataPath)
-      if (!metadata) throw new Error('Метаданные клипа не найдены')
-
-      const result = await upload({
-        videoPath: metadata.videoPath,
-        title: metadata.title,
-        description: buildYouTubeDescription(metadata)
-      })
-      const updatedMetadata: TradeClipMetadata = {
-        ...metadata,
-        youtubeVideoId: result.videoId,
-        youtubeUrl: result.youtubeUrl,
-        uploadedAtMs: now()
-      }
-
-      await writeFile(metadata.metadataPath, `${JSON.stringify(updatedMetadata, null, 2)}\n`, 'utf8')
-      return updatedMetadata
     },
     async deleteClipFromQueue(metadataPath) {
       const settings = await deps.getSettings()
