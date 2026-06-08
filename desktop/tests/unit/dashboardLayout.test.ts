@@ -53,7 +53,10 @@ describe('Dashboard layout', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(settingsPanelSource).toContain('Встроенная запись окна')
+    expect(settingsPanelSource).toContain('Встроенная запись')
+    expect(settingsPanelSource).toContain('sourceType')
+    expect(settingsPanelSource).toContain('Экран')
+    expect(appSource).toContain("types: ['window', 'screen']")
     expect(settingsPanelSource).toContain('listWindowSources')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
     expect(controllerSource).toContain('recording.appendSegment')

@@ -15,6 +15,7 @@ const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 p
 
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
   const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('obs')
+  const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
   const [frameRate, setFrameRate] = useState('30')
@@ -34,6 +35,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   useEffect(() => {
     if (!settings) return
     setRecordingMode(settings.recording.mode)
+    setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
     setFrameRate(String(settings.recording.frameRate))
@@ -65,6 +67,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     void refreshWindowSources()
   }, [recordingMode])
 
+  const filteredSources = windowSources.filter((source) => source.type === sourceType)
+
   const save = async () => {
     setSaving(true)
     setMessage('')
@@ -75,6 +79,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         obsPassword: obsPassword.trim() || undefined,
         recording: {
           mode: recordingMode,
+          sourceType,
           windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
           frameRate: Number(frameRate),
@@ -118,7 +123,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Запись видео</h2>
-          <p className="mt-1 text-sm text-zinc-500">Выберите OBS Replay Buffer или встроенную запись окна терминала.</p>
+          <p className="mt-1 text-sm text-zinc-500">Выберите OBS Replay Buffer или встроенную запись окна/экрана.</p>
         </div>
         <Button onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
       </div>
@@ -136,7 +141,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           onClick={() => setRecordingMode('window')}
           type="button"
         >
-          <Monitor size={16} className="mr-2" />Встроенная запись окна
+          <Monitor size={16} className="mr-2" />Встроенная запись
         </button>
       </div>
 
@@ -159,10 +164,34 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         ) : (
           <>
             <label className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
-              Окно терминала
-              <div className="mt-1 flex gap-2">
+              Источник записи
+              <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                  <button
+                    className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                    onClick={() => {
+                      setSourceType('window')
+                      setWindowSourceId('')
+                      setWindowSourceName('')
+                    }}
+                    type="button"
+                  >
+                    Окно
+                  </button>
+                  <button
+                    className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'screen' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                    onClick={() => {
+                      setSourceType('screen')
+                      setWindowSourceId('')
+                      setWindowSourceName('')
+                    }}
+                    type="button"
+                  >
+                    Экран
+                  </button>
+                </div>
                 <select
-                  className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`}
+                  className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1 appearance-none`}
                   value={windowSourceId}
                   onChange={(event) => {
                     const source = windowSources.find((candidate) => candidate.id === event.target.value)
@@ -170,8 +199,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                     setWindowSourceName(source?.name ?? '')
                   }}
                 >
-                  <option value="">{windowSourceName || 'Выберите окно'}</option>
-                  {windowSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+                  <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
+                  {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                 </select>
                 <Button variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
                   <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
@@ -186,7 +215,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               Интервал буфера, сек
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
             </label>
-            <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">Окно терминала должно оставаться открытым. На macOS может потребоваться разрешение записи экрана.</p>
+            <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>
           </>
         )}
         <label className="text-xs font-medium text-zinc-500">

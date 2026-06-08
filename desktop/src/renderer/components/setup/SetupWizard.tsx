@@ -62,6 +62,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [port, setPort] = useState('4455')
   const [obsPassword, setObsPassword] = useState('')
   const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('obs')
+  const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
   const [frameRate, setFrameRate] = useState('30')
@@ -136,6 +137,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   useEffect(() => {
     if (!settings) return
     setRecordingMode(settings.recording.mode)
+    setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
     setFrameRate(String(settings.recording.frameRate))
@@ -204,11 +206,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const step = steps[stepIndex]
   const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex, steps.length])
+  const filteredSources = windowSources.filter((source) => source.type === sourceType)
   const stepActionLabels = useMemo(() => {
     if (!step) return []
     if (mode === 'video' && step.id === 'obs-websocket') {
       return [
-        'Использовать встроенную запись окна терминала',
+        'Использовать встроенную запись окна или экрана',
         'Использовать OBS Replay Buffer',
         'Сохранить выбранный режим записи'
       ]
@@ -247,6 +250,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         obsPassword: obsPassword.trim() || undefined,
         recording: {
           mode: recordingMode,
+          sourceType,
           windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
           frameRate: Number(frameRate),
@@ -577,7 +581,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         return 'Вы пройдёте только видео-настройки, не смешивая их с прокси.'
       case 'obs-websocket':
         return recordingMode === 'window'
-          ? 'TradeTools будет писать выбранное окно терминала напрямую, без OBS.'
+          ? 'TradeTools будет писать выбранное окно или экран напрямую, без OBS.'
           : 'TradeTools сможет подключаться к OBS и отправлять команду сохранения replay.'
       case 'obs-replay':
         return recordingMode === 'window'
@@ -707,7 +711,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                         }}
                         type="button"
                       >
-                        <Monitor size={16} className="mr-2" />Встроенная запись окна
+                        <Monitor size={16} className="mr-2" />Встроенная запись
                       </button>
                       <button
                         className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
@@ -720,10 +724,34 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                     {recordingMode === 'window' ? (
                       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_120px_120px]">
                         <label className="text-xs font-medium text-zinc-500">
-                          Окно терминала
+                          Источник записи
                           <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                            <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                              <button
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                onClick={() => {
+                                  setSourceType('window')
+                                  setWindowSourceId('')
+                                  setWindowSourceName('')
+                                }}
+                                type="button"
+                              >
+                                Окно
+                              </button>
+                              <button
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'screen' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                onClick={() => {
+                                  setSourceType('screen')
+                                  setWindowSourceId('')
+                                  setWindowSourceName('')
+                                }}
+                                type="button"
+                              >
+                                Экран
+                              </button>
+                            </div>
                             <select
-                              className={`${compactInputClass} min-w-0 flex-1`}
+                              className={`${compactInputClass} min-w-0 flex-1 appearance-none`}
                               value={windowSourceId}
                               onChange={(event) => {
                                 const source = windowSources.find((candidate) => candidate.id === event.target.value)
@@ -731,8 +759,8 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                                 setWindowSourceName(source?.name ?? '')
                               }}
                             >
-                              <option value="">{windowSourceName || 'Выберите окно'}</option>
-                              {windowSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+                              <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
+                              {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                             </select>
                             <Button variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
                               <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить

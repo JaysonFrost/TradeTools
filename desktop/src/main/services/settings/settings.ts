@@ -20,6 +20,7 @@ export type AppSettings = {
   language: 'ru'
   recording: {
     mode: 'obs' | 'window'
+    sourceType: 'window' | 'screen'
     windowSourceId: string
     windowSourceName: string
     frameRate: number
@@ -132,6 +133,10 @@ const normalizeHttpUrl = (value: unknown): string => {
 }
 
 const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
+const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSettings['recording']['sourceType'] => {
+  if (value === 'screen') return 'screen'
+  return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
+}
 
 const normalizeProxyId = (value: unknown, fallbackIndex: number): string => {
   const id = normalizeString(value)
@@ -192,6 +197,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   language: 'ru',
   recording: {
     mode: 'obs',
+    sourceType: 'window',
     windowSourceId: '',
     windowSourceName: '',
     frameRate: 30,
@@ -242,6 +248,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
     language: 'ru',
     recording: {
       mode: normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode),
+      sourceType: normalizeRecordingSourceType(settings.recording?.sourceType ?? defaults.recording.sourceType, settings.recording?.windowSourceId),
       windowSourceId: normalizeString(settings.recording?.windowSourceId ?? defaults.recording.windowSourceId),
       windowSourceName: normalizeString(settings.recording?.windowSourceName ?? defaults.recording.windowSourceName),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),

@@ -812,7 +812,7 @@ app.whenReady().then(() => {
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   ipcMain.handle('recording:list-window-sources', async () => {
     const sources = await desktopCapturer.getSources({
-      types: ['window'],
+      types: ['window', 'screen'],
       thumbnailSize: { width: 1, height: 1 },
       fetchWindowIcons: false
     })
@@ -822,7 +822,8 @@ app.whenReady().then(() => {
       .map((source) => ({
         id: source.id,
         name: source.name,
-        displayId: source.display_id
+        displayId: source.display_id,
+        type: source.id.startsWith('screen:') ? 'screen' : 'window'
       }))
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))

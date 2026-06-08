@@ -31,6 +31,7 @@ describe('settingsStore', () => {
     const settings = await store.update({
       recording: {
         mode: 'window',
+        sourceType: 'screen',
         windowSourceId: 'terminal-source',
         windowSourceName: 'Trading terminal',
         frameRate: 24,
@@ -42,6 +43,7 @@ describe('settingsStore', () => {
 
     expect(settings.recording).toEqual({
       mode: 'window',
+      sourceType: 'screen',
       windowSourceId: 'terminal-source',
       windowSourceName: 'Trading terminal',
       frameRate: 24,

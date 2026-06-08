@@ -19,8 +19,8 @@ const chooseMimeType = (): string => {
 }
 
 const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource | undefined => (
-  sources.find((source) => source.id === settings.recording.windowSourceId) ??
-  sources.find((source) => source.name === settings.recording.windowSourceName)
+  sources.find((source) => source.type === settings.recording.sourceType && source.id === settings.recording.windowSourceId) ??
+  sources.find((source) => source.type === settings.recording.sourceType && source.name === settings.recording.windowSourceName)
 )
 
 const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => ({
@@ -71,7 +71,7 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
         return
       }
       if (!settings.recording.windowSourceId && !settings.recording.windowSourceName) {
-        onStatusChange(createLocalStatus(settings, 'Выберите окно терминала для встроенной записи'))
+        onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen' ? 'Выберите экран для встроенной записи' : 'Выберите окно терминала для встроенной записи'))
         return
       }
 
@@ -79,7 +79,9 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
       const sources = await api.recording.listWindowSources()
       const source = resolveSource(sources, settings)
       if (!source) {
-        onStatusChange(createLocalStatus(settings, 'Выбранное окно не найдено. Откройте терминал и обновите список окон.'))
+        onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen'
+          ? 'Выбранный экран не найден. Обновите список источников.'
+          : 'Выбранное окно не найдено. Откройте терминал и обновите список окон.'))
         return
       }
 
@@ -159,6 +161,7 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
     return cleanup
   }, [
     settings?.recording.mode,
+    settings?.recording.sourceType,
     settings?.recording.windowSourceId,
     settings?.recording.windowSourceName,
     settings?.recording.frameRate,

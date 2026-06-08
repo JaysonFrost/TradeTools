@@ -20,6 +20,7 @@ describe('settings', () => {
     expect(settings.clip.paddingAfterSeconds).toBe(2)
     expect(settings.recording).toEqual({
       mode: 'obs',
+      sourceType: 'window',
       windowSourceId: '',
       windowSourceName: '',
       frameRate: 30,
@@ -89,7 +90,8 @@ describe('settings', () => {
     const settings = normalizeSettings({
       recording: {
         mode: 'window',
-        windowSourceId: ' window:123 ',
+        sourceType: 'screen',
+        windowSourceId: ' screen:1 ',
         windowSourceName: ' Terminal ',
         frameRate: 999,
         segmentSeconds: 0
@@ -98,7 +100,8 @@ describe('settings', () => {
 
     expect(settings.recording).toEqual({
       mode: 'window',
-      windowSourceId: 'window:123',
+      sourceType: 'screen',
+      windowSourceId: 'screen:1',
       windowSourceName: 'Terminal',
       frameRate: 60,
       segmentSeconds: 1

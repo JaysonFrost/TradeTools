@@ -17,6 +17,8 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Video setup wizard now treats OBS as an optional alternative mode.
 - Binance watcher waits for the selected video source before creating clips.
 - Built-in recorder now uses continuous recording sessions to avoid freezes from restarting capture every few seconds.
+- Built-in recorder can capture either a window or a full screen, which helps bypass Windows Graphics Capture window freezes.
+- Native dropdowns now use a dark readable style.
 - README and user guide now document the no-OBS recording flow.
 
 ## [0.1.2] - 2026-06-08

@@ -10,6 +10,7 @@ export type WindowCaptureSource = {
   id: string
   name: string
   displayId: string
+  type: AppSettings['recording']['sourceType']
 }
 
 export type WindowRecordingSegmentInput = {
@@ -173,9 +174,9 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       message: settings.recording.mode !== 'window'
         ? 'Встроенная запись окна выключена'
         : !settings.recording.windowSourceId
-          ? 'Выберите окно терминала для встроенной записи'
+          ? 'Выберите источник для встроенной записи'
           : active
-            ? `Встроенная запись окна активна, накоплено ${Math.round(bufferedSeconds)}с`
+            ? `Встроенная запись активна, накоплено ${Math.round(bufferedSeconds)}с`
             : 'Ждём сегменты от встроенного рекордера'
     }
   }
