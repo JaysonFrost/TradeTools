@@ -25,6 +25,8 @@ describe('setupWizardSteps', () => {
       'proxy-check',
       'proxy-done'
     ])
+    expect(proxySetupWizardSteps.find((step) => step.id === 'proxy-server')?.title).toBe('Добавьте два сервера')
+    expect(proxySetupWizardSteps.find((step) => step.id === 'proxy-check')?.goal).toContain('поднимет локальный proxy')
   })
 
   it('keeps every screen self-contained with title, goal, and actions', () => {

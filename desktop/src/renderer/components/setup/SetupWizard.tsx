@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, CheckCircle2, FolderOpen, Route, Server, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
-import type { ProxyChainInstructionResult } from '../../../preload'
+import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -30,7 +30,29 @@ const proxyName = (settings: AppSettings | undefined, proxyId: string): string =
 
 const proxyPresetNames = ['Edgecenter', 'Vultr']
 const currentPaymentDueDay = (): string => String(new Date().getDate())
-const defaultProxyTitle = (settings?: AppSettings): string => proxyPresetNames[settings?.proxies.length ?? 0] ?? ''
+const defaultProxyTitle = (settings?: AppSettings, offset = 0): string => proxyPresetNames[(settings?.proxies.length ?? 0) + offset] ?? ''
+
+const progressStatusLabel = (status: ProxyChainSetupProgress['status']): string => {
+  if (status === 'success') return 'OK'
+  if (status === 'error') return 'ERR'
+  if (status === 'info') return 'INFO'
+  return '...'
+}
+
+const progressStatusClass = (status: ProxyChainSetupProgress['status']): string => {
+  if (status === 'success') return 'text-emerald-300'
+  if (status === 'error') return 'text-rose-300'
+  if (status === 'info') return 'text-amber-300'
+  return 'text-sky-300'
+}
+
+const userFacingErrorMessage = (error: unknown, fallback: string): string => {
+  if (!(error instanceof Error)) return fallback
+
+  return error.message
+    .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+    .replace(/^Error:\s*/i, '')
+}
 
 export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onClose, onSaved, onRunHealthCheck, onCreateTestClip }: SetupWizardProps) => {
   const steps = mode === 'video' ? videoSetupWizardSteps : proxySetupWizardSteps
@@ -53,8 +75,20 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [proxyPaymentDueDay, setProxyPaymentDueDay] = useState(currentPaymentDueDay())
   const [proxyLocalPort, setProxyLocalPort] = useState(String(defaultLocalProxyPort))
   const [proxyNotes, setProxyNotes] = useState('')
+  const [secondProxyTitle, setSecondProxyTitle] = useState(defaultProxyTitle(undefined, 1))
+  const [secondProxyServer, setSecondProxyServer] = useState('')
+  const [secondProxyLogin, setSecondProxyLogin] = useState('root')
+  const [secondProxyPassword, setSecondProxyPassword] = useState('')
+  const [secondProxyDashboardUrl, setSecondProxyDashboardUrl] = useState('')
+  const [secondProxyPaymentDueDay, setSecondProxyPaymentDueDay] = useState(currentPaymentDueDay())
+  const [secondProxyLocalPort, setSecondProxyLocalPort] = useState(String(defaultLocalProxyPort))
+  const [secondProxyNotes, setSecondProxyNotes] = useState('')
+  const [savedWizardProxyIds, setSavedWizardProxyIds] = useState<string[]>([])
   const [selectedProxyId, setSelectedProxyId] = useState('')
   const [chainResult, setChainResult] = useState<ProxyChainInstructionResult>()
+  const [chainSetupResult, setChainSetupResult] = useState<ProxyChainSetupResult>()
+  const [chainCheckProgress, setChainCheckProgress] = useState<ProxyChainSetupProgress[]>([])
+  const [chainSetupProgress, setChainSetupProgress] = useState<ProxyChainSetupProgress[]>([])
   const [saving, setSaving] = useState(false)
   const [checkingVideo, setCheckingVideo] = useState(false)
   const [testingBinance, setTestingBinance] = useState(false)
@@ -69,6 +103,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setProxyPaymentDueDay(currentPaymentDueDay())
     setProxyLocalPort(String(defaultLocalProxyPort))
     setProxyNotes('')
+    setSecondProxyTitle(defaultProxyTitle(nextSettings, 1))
+    setSecondProxyServer('')
+    setSecondProxyLogin('root')
+    setSecondProxyPassword('')
+    setSecondProxyDashboardUrl('')
+    setSecondProxyPaymentDueDay(currentPaymentDueDay())
+    setSecondProxyLocalPort(String(defaultLocalProxyPort))
+    setSecondProxyNotes('')
+    setSavedWizardProxyIds([])
   }
 
   useEffect(() => {
@@ -76,6 +119,9 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setStepIndex(0)
     setLocalMessage('')
     setChainResult(undefined)
+    setChainSetupResult(undefined)
+    setChainCheckProgress([])
+    setChainSetupProgress([])
     if (mode === 'proxy') resetProxyDraft(settings)
   }, [open, mode])
 
@@ -100,6 +146,29 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       setSelectedProxyId(settings.proxies[0]?.id ?? '')
     }
   }, [selectedProxyId, settings])
+
+  useEffect(() => {
+    if (!open || mode !== 'proxy') return undefined
+
+    let unsubscribeCheck: (() => void) | undefined
+    let unsubscribeSetup: (() => void) | undefined
+    try {
+      const api = getTradeToolsApi()
+      unsubscribeCheck = api.proxies.onConfigureChainProgress((progress) => {
+        setChainCheckProgress((current) => [...current.slice(-39), progress])
+      })
+      unsubscribeSetup = api.proxies.onSetupChainProgress((progress) => {
+        setChainSetupProgress((current) => [...current.slice(-39), progress])
+      })
+    } catch {
+      // The master can still save forms if progress events are unavailable.
+    }
+
+    return () => {
+      unsubscribeCheck?.()
+      unsubscribeSetup?.()
+    }
+  }, [mode, open])
 
   const step = steps[stepIndex]
   const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex, steps.length])
@@ -134,12 +203,26 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
   }
 
-  const saveProxyServer = async () => {
+  const saveProxyServers = async () => {
+    if (!proxyServer.trim() || !secondProxyServer.trim()) {
+      setLocalMessage('Укажите IP или домен для обоих серверов.')
+      return
+    }
+    if (!proxyPassword.trim() || !secondProxyPassword.trim()) {
+      setLocalMessage('Укажите SSH-пароль для обоих серверов.')
+      return
+    }
+
     setSaving(true)
     setLocalMessage('')
+    setChainResult(undefined)
+    setChainSetupResult(undefined)
+    setChainCheckProgress([])
+    setChainSetupProgress([])
     try {
       const api = getTradeToolsApi()
-      const updated = await api.proxies.save({
+      const initialSettings = settings
+      let updated = await api.proxies.save({
         name: proxyTitle,
         server: proxyServer,
         login: proxyLogin,
@@ -150,13 +233,38 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         localProxyPort: Number(proxyLocalPort) || defaultLocalProxyPort,
         notes: proxyNotes
       })
-      onSaved(updated)
-      const latestProxy = updated.proxies.at(-1)
-      setSelectedProxyId(latestProxy?.id ?? '')
-      resetProxyDraft(updated)
-      setLocalMessage('Сервер сохранён')
+      const firstProxy = updated.proxies.find((proxy) => !initialSettings?.proxies.some((existing) => existing.id === proxy.id)) ?? updated.proxies.at(-1)
+      const beforeSecondSave = updated
+      updated = await api.proxies.save({
+        name: secondProxyTitle,
+        server: secondProxyServer,
+        login: secondProxyLogin,
+        password: secondProxyPassword || undefined,
+        dashboardUrl: secondProxyDashboardUrl,
+        paymentDueDay: Number(secondProxyPaymentDueDay) || undefined,
+        nextProxyId: '',
+        localProxyPort: Number(secondProxyLocalPort) || defaultLocalProxyPort,
+        notes: secondProxyNotes
+      })
+      const secondProxy = updated.proxies.find((proxy) => !beforeSecondSave.proxies.some((existing) => existing.id === proxy.id)) ?? updated.proxies.at(-1)
+
+      if (!firstProxy || !secondProxy) throw new Error('Серверы сохранены, но мастер не смог определить связку')
+
+      const chainedSettings = await api.settings.update({
+        proxies: updated.proxies.map((proxy) => {
+          if (proxy.id === firstProxy.id) return { ...proxy, nextProxyId: secondProxy.id }
+          if (proxy.id === secondProxy.id) return { ...proxy, nextProxyId: '' }
+          return proxy
+        })
+      })
+      onSaved(chainedSettings)
+      setSelectedProxyId(firstProxy.id)
+      setSavedWizardProxyIds([firstProxy.id, secondProxy.id])
+      setProxyPassword('')
+      setSecondProxyPassword('')
+      setLocalMessage(`Сохранено: ${firstProxy.name || firstProxy.server} -> ${secondProxy.name || secondProxy.server}`)
     } catch (error) {
-      setLocalMessage(error instanceof Error ? error.message : 'Не удалось сохранить сервер')
+      setLocalMessage(userFacingErrorMessage(error, 'Не удалось сохранить серверы'))
     } finally {
       setSaving(false)
     }
@@ -221,12 +329,35 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setSaving(true)
     setLocalMessage('')
     setChainResult(undefined)
+    setChainCheckProgress([])
     try {
       const result = await getTradeToolsApi().proxies.configureChain(selectedProxyId)
       setChainResult(result)
       setLocalMessage('SSH-подключение проверено, инструкция готова')
     } catch (error) {
-      setLocalMessage(error instanceof Error ? error.message : 'Не удалось проверить связку')
+      setLocalMessage(userFacingErrorMessage(error, 'Не удалось проверить связку'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const setupProxyChain = async () => {
+    if (!selectedProxyId) {
+      setLocalMessage('Сначала добавьте или выберите первый сервер маршрута.')
+      return
+    }
+
+    setSaving(true)
+    setLocalMessage('')
+    setChainResult(undefined)
+    setChainSetupResult(undefined)
+    setChainSetupProgress([])
+    try {
+      const result = await getTradeToolsApi().proxies.setupChain({ proxyId: selectedProxyId })
+      setChainSetupResult(result)
+      setLocalMessage('Связка настроена, локальный proxy запущен')
+    } catch (error) {
+      setLocalMessage(userFacingErrorMessage(error, 'Не удалось настроить связку на серверах'))
     } finally {
       setSaving(false)
     }
@@ -310,17 +441,23 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
 
     if (step.id === 'proxy-server') {
-      setLocalMessage('Заполните форму ниже и нажмите «Сохранить сервер».')
+      setLocalMessage('Заполните оба сервера ниже и нажмите «Сохранить два сервера и связку».')
       return
     }
 
     if (step.id === 'proxy-chain') {
-      setLocalMessage('Добавьте все серверы, закройте мастер и перетащите их в нужном порядке в блоке «Порядок связки» на странице прокси.')
+      setLocalMessage(savedWizardProxyIds.length >= 2 ? 'Связка уже сохранена. Первый сервер пойдёт через второй.' : 'Сначала сохраните два сервера на предыдущем шаге.')
       return
     }
 
     if (step.id === 'proxy-check') {
-      await checkProxyChain()
+      if (actionIndex === 0) {
+        setLocalMessage('Выберите первый сервер маршрута в списке ниже. Обычно это первый из сохранённых в мастере серверов.')
+      } else if (actionIndex === step.actions.length - 1) {
+        await setupProxyChain()
+      } else {
+        await checkProxyChain()
+      }
       return
     }
 
@@ -365,15 +502,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       case 'test-clip':
         return 'В очереди проверки появится реальный локальный MP4 с metadata JSON.'
       case 'proxy-welcome':
-        return 'Вы пройдёте только прокси-настройки: серверы, связка, SSH-проверка, инструкция.'
+        return 'Вы пройдёте только прокси-настройки: два сервера, связка, SSH-проверка и запуск локального proxy.'
       case 'proxy-server':
-        return 'Сервер появится в хранилище, а пароль сохранится в системный keychain.'
+        return 'Оба сервера появятся в хранилище, пароли сохранятся в keychain, первый сервер будет связан со вторым.'
       case 'proxy-chain':
-        return 'После добавления серверов вы сможете собрать маршрут перетаскиванием: первый сервер -> следующий -> exit-сервер.'
+        return 'Маршрут будет сохранён внутри мастера: первый сервер -> второй сервер. Больше узлов можно переставить на странице прокси.'
       case 'proxy-check':
-        return 'TradeTools проверит SSH-доступ к каждому серверу и покажет настройки для торгового терминала.'
+        return 'TradeTools проверит SSH, установит Xray/VLESS на серверах и поднимет локальный HTTP proxy.'
       case 'proxy-done':
-        return 'Прокси-страница станет местом для оплаты, доступа и проверки маршрутов.'
+        return 'В торговом терминале останется указать HTTP proxy 127.0.0.1 и локальный порт.'
       default:
         return 'Можно закрыть мастер и пользоваться основным экраном.'
     }
@@ -485,15 +622,49 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                   </>
                 )}
                 {step.id === 'proxy-server' && (
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={proxyTitle} onChange={(event) => setProxyTitle(event.target.value)} placeholder="Tokyo exit / Hetzner #1" /></label>
-                    <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={proxyServer} onChange={(event) => setProxyServer(event.target.value)} placeholder="1.2.3.4" /></label>
-                    <label className="text-xs font-medium text-zinc-500">SSH-логин<input className={inputClass} value={proxyLogin} onChange={(event) => setProxyLogin(event.target.value)} /></label>
-                    <label className="text-xs font-medium text-zinc-500">SSH-пароль<input className={inputClass} value={proxyPassword} onChange={(event) => setProxyPassword(event.target.value)} type="password" /></label>
-                    <label className="text-xs font-medium text-zinc-500">Сайт хостинга<input className={inputClass} value={proxyDashboardUrl} onChange={(event) => setProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
-                    <label className="text-xs font-medium text-zinc-500">День оплаты в месяце<input className={inputClass} value={proxyPaymentDueDay} onChange={(event) => setProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
-                    <label className="text-xs font-medium text-zinc-500">Локальный порт терминала<input className={inputClass} value={proxyLocalPort} onChange={(event) => setProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
-                    <label className="text-xs font-medium text-zinc-500 md:col-span-2">Заметки<textarea className={`${inputClass} min-h-20 resize-none`} value={proxyNotes} onChange={(event) => setProxyNotes(event.target.value)} /></label>
+                  <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="mb-3 text-sm font-semibold text-zinc-100">1. Первый сервер</div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={proxyTitle} onChange={(event) => setProxyTitle(event.target.value)} placeholder="Edgecenter" /></label>
+                        <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={proxyServer} onChange={(event) => setProxyServer(event.target.value)} placeholder="1.2.3.4" /></label>
+                        <label className="text-xs font-medium text-zinc-500">SSH-логин<input className={inputClass} value={proxyLogin} onChange={(event) => setProxyLogin(event.target.value)} /></label>
+                        <label className="text-xs font-medium text-zinc-500">SSH-пароль<input className={inputClass} value={proxyPassword} onChange={(event) => setProxyPassword(event.target.value)} type="password" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Сайт хостинга<input className={inputClass} value={proxyDashboardUrl} onChange={(event) => setProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
+                        <label className="text-xs font-medium text-zinc-500">День оплаты<input className={inputClass} value={proxyPaymentDueDay} onChange={(event) => setProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Локальный порт<input className={inputClass} value={proxyLocalPort} onChange={(event) => setProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500 sm:col-span-2">Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={proxyNotes} onChange={(event) => setProxyNotes(event.target.value)} /></label>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <div className="mb-3 text-sm font-semibold text-zinc-100">2. Второй сервер</div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={secondProxyTitle} onChange={(event) => setSecondProxyTitle(event.target.value)} placeholder="Vultr" /></label>
+                        <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={secondProxyServer} onChange={(event) => setSecondProxyServer(event.target.value)} placeholder="5.6.7.8" /></label>
+                        <label className="text-xs font-medium text-zinc-500">SSH-логин<input className={inputClass} value={secondProxyLogin} onChange={(event) => setSecondProxyLogin(event.target.value)} /></label>
+                        <label className="text-xs font-medium text-zinc-500">SSH-пароль<input className={inputClass} value={secondProxyPassword} onChange={(event) => setSecondProxyPassword(event.target.value)} type="password" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Сайт хостинга<input className={inputClass} value={secondProxyDashboardUrl} onChange={(event) => setSecondProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
+                        <label className="text-xs font-medium text-zinc-500">День оплаты<input className={inputClass} value={secondProxyPaymentDueDay} onChange={(event) => setSecondProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Локальный порт<input className={inputClass} value={secondProxyLocalPort} onChange={(event) => setSecondProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500 sm:col-span-2">Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={secondProxyNotes} onChange={(event) => setSecondProxyNotes(event.target.value)} /></label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {step.id === 'proxy-chain' && (
+                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-zinc-300">
+                    {savedWizardProxyIds.length >= 2 ? (
+                      <>
+                        <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={16} />Связка сохранена</div>
+                        <div>{proxyName(settings, savedWizardProxyIds[0])} {'->'} {proxyName(settings, savedWizardProxyIds[1])}</div>
+                        <div className="mt-2 text-xs text-zinc-500">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается только локальный HTTP proxy.</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mb-2 font-semibold text-amber-100">Два сервера ещё не сохранены</div>
+                        <div>Вернитесь на предыдущий шаг, заполните оба сервера и нажмите сохранение. После этого мастер сам задаст порядок связки.</div>
+                      </>
+                    )}
                   </div>
                 )}
                 {step.id === 'proxy-check' && (
@@ -504,6 +675,32 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                         {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
                       </select>
                     </label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" onClick={() => void checkProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Работаем...' : 'Проверить SSH'}</Button>
+                      <Button onClick={() => void setupProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Настраиваем...' : 'Настроить и запустить связку'}</Button>
+                    </div>
+                    {chainCheckProgress.length > 0 && (
+                      <div className="max-h-48 overflow-y-auto rounded-2xl border border-sky-400/20 bg-sky-400/10 p-3 text-xs leading-5">
+                        <div className="mb-2 font-semibold text-sky-100">Проверка SSH</div>
+                        {chainCheckProgress.map((progress, index) => (
+                          <div key={`${progress.timestampMs}-${progress.step}-${index}`} className="grid grid-cols-[44px_minmax(0,1fr)] gap-2">
+                            <span className={`font-mono ${progressStatusClass(progress.status)}`}>{progressStatusLabel(progress.status)}</span>
+                            <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {chainSetupProgress.length > 0 && (
+                      <div className="max-h-56 overflow-y-auto rounded-2xl border border-violet-400/20 bg-violet-400/10 p-3 text-xs leading-5">
+                        <div className="mb-2 font-semibold text-violet-100">Настройка серверов</div>
+                        {chainSetupProgress.map((progress, index) => (
+                          <div key={`${progress.timestampMs}-${progress.step}-${index}`} className="grid grid-cols-[44px_minmax(0,1fr)] gap-2">
+                            <span className={`font-mono ${progressStatusClass(progress.status)}`}>{progressStatusLabel(progress.status)}</span>
+                            <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {chainResult && (
                       <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-xs leading-5 text-zinc-200">
                         <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={15} />{chainResult.route}</div>
@@ -512,12 +709,17 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                         ))}
                       </div>
                     )}
+                    {chainSetupResult && (
+                      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm leading-6 text-zinc-200">
+                        <div className="font-semibold text-emerald-100">Связка настроена и локальный proxy запущен</div>
+                        <div className="mt-2">Терминал: HTTP proxy, host <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.host}</span>, port <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.port}</span>. Логин и пароль пустые.</div>
+                      </div>
+                    )}
                   </div>
                 )}
                 {step.id === 'test-clip' && <Button className="mt-5" onClick={onCreateTestClip}>Создать тестовый клип</Button>}
                 {(step.id === 'obs-websocket' || step.id === 'folders') && <Button className="mt-5" onClick={saveVideoSettings} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить этот шаг'}</Button>}
-                {step.id === 'proxy-server' && <Button className="mt-5" onClick={saveProxyServer} disabled={saving}><Server size={16} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить сервер'}</Button>}
-                {step.id === 'proxy-check' && <Button className="mt-5" onClick={checkProxyChain} disabled={saving}>{saving ? 'Проверяем...' : 'Проверить SSH и собрать инструкцию'}</Button>}
+                {step.id === 'proxy-server' && <Button className="mt-5" onClick={saveProxyServers} disabled={saving}><Server size={16} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить два сервера и связку'}</Button>}
               </section>
               <aside className="hidden rounded-[24px] border border-violet-400/20 bg-violet-500/10 p-4 xl:block">
                 <div className="text-sm font-semibold text-violet-100">Что получится после шага</div>

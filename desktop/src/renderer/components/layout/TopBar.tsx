@@ -16,12 +16,12 @@ const pageCopy: Record<AppPage, { title: string, subtitle: string, setupLabel?: 
   video: {
     title: 'Видео сделок',
     subtitle: 'OBS Replay Buffer, Binance Futures и очередь проверки клипов.',
-    setupLabel: 'Настройка видео'
+    setupLabel: 'Мастер настройки видео'
   },
   proxy: {
     title: 'Прокси',
     subtitle: 'Серверы, SSH-доступы, оплаты, цепочки и инструкции для терминалов.',
-    setupLabel: 'Настройка прокси'
+    setupLabel: 'Мастер настройки прокси'
   },
   support: {
     title: 'Сказать спасибо',
