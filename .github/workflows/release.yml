@@ -114,13 +114,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           RELEASE_FILES: ${{ steps.assets.outputs.files }}
         run: |
           mapfile -t ASSETS <<< "$RELEASE_FILES"
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --clobber
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --repo "$GH_REPO" --clobber
           else
-            gh release create "$RELEASE_TAG" "${ASSETS[@]}" --title "TradeTools $RELEASE_TAG" --generate-notes
+            gh release create "$RELEASE_TAG" "${ASSETS[@]}" --repo "$GH_REPO" --title "TradeTools $RELEASE_TAG" --generate-notes
           fi
