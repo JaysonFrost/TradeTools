@@ -66,6 +66,11 @@
     "appId": "com.tradetools.desktop",
     "productName": "TradeTools",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "electronLanguages": [
+      "en-US",
+      "ru"
+    ],
+    "afterPack": "build/afterPack.cjs",
     "asarUnpack": [
       "node_modules/ffmpeg-static/**",
       "node_modules/ffprobe-static/**"
