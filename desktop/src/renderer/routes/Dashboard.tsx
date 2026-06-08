@@ -51,28 +51,43 @@ type ProxyPageProps = {
   onSettingsSaved: (settings: AppSettings) => void
 }
 
+const binanceWaitingMessagePrefixes = [
+  'Ждём видео:',
+  'Запись окна:',
+  'OBS:'
+]
+
+const isBinanceWaitingStatus = (status: BinanceFuturesWatchStatus): boolean => (
+  !status.lastError && binanceWaitingMessagePrefixes.some((prefix) => status.message.startsWith(prefix))
+)
+
 const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved }: VideoPageProps) => {
   const recordingMode = settings?.recording.mode ?? 'obs'
-  const videoStatuses = useMemo(() => [
-    {
-      name: recordingMode === 'window' ? 'Встроенная запись окна' : 'OBS Replay Buffer',
-      description: recordingMode === 'window' ? windowRecorder?.message ?? 'Выберите окно терминала и сохраните настройки.' : obs.message,
-      status: recordingMode === 'window'
-        ? windowRecorder?.active ? 'Пишет' : 'Нужно настроить'
-        : obs.status,
-      tone: recordingMode === 'window'
-        ? windowRecorder?.active ? 'success' as const : 'warning' as const
-        : obs.connected ? 'success' as const : 'warning' as const
-    },
-    {
-      name: 'Binance USDT-M Futures',
-      description: binanceWatch.message,
-      status: settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured
-        ? binanceWatch.lastError ? 'Ошибка' : binanceWatch.running ? 'Работает' : 'Готов'
-        : 'Нужно настроить',
-      tone: settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured && !binanceWatch.lastError ? 'success' as const : 'warning' as const
-    }
-  ], [obs, settings, windowRecorder, binanceWatch, recordingMode])
+  const videoStatuses = useMemo(() => {
+    const binanceConfigured = Boolean(settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured)
+    const binanceWaiting = isBinanceWaitingStatus(binanceWatch)
+
+    return [
+      {
+        name: recordingMode === 'window' ? 'Встроенная запись окна' : 'OBS Replay Buffer',
+        description: recordingMode === 'window' ? windowRecorder?.message ?? 'Выберите окно терминала и сохраните настройки.' : obs.message,
+        status: recordingMode === 'window'
+          ? windowRecorder?.active ? 'Пишет' : 'Нужно настроить'
+          : obs.status,
+        tone: recordingMode === 'window'
+          ? windowRecorder?.active ? 'success' as const : 'warning' as const
+          : obs.connected ? 'success' as const : 'warning' as const
+      },
+      {
+        name: 'Binance USDT-M Futures',
+        description: binanceWatch.message,
+        status: binanceConfigured
+          ? binanceWatch.lastError ? 'Ошибка' : binanceWaiting ? 'Ожидание' : binanceWatch.running ? 'Работает' : 'Готов'
+          : 'Нужно настроить',
+        tone: binanceConfigured && !binanceWatch.lastError && !binanceWaiting ? 'success' as const : 'warning' as const
+      }
+    ]
+  }, [obs, settings, windowRecorder, binanceWatch, recordingMode])
 
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">

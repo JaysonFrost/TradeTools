@@ -34,6 +34,14 @@ describe('main app lifecycle', () => {
     expect(source).toContain('message: `Ждём видео: ${message}`')
   })
 
+  it('does not surface built-in recorder segment warmup as a Binance error', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('message: `Запись окна: ${status.message}`')
+    expect(source).toContain("binanceFuturesWatchStatus.message.startsWith('Запись окна')")
+    expect(source).toContain('lastError: undefined')
+  })
+
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

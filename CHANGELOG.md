@@ -20,6 +20,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Built-in recorder can capture either a window or a full screen, which helps bypass Windows Graphics Capture window freezes.
 - Windows builds now disable Chromium WGC capture features to avoid stale-frame desktop capture errors.
 - Binance watcher now treats built-in recorder buffer warmup as a waiting state instead of a polling failure.
+- Binance status card now shows video warmup as "Ожидание" instead of switching between running and error states.
 - Native dropdowns now use a dark readable style.
 - README and user guide now document the no-OBS recording flow.
 

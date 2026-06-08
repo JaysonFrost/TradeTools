@@ -174,6 +174,16 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('binance:get-watch-status')")
   })
 
+  it('shows Binance video warmup as waiting instead of flipping between running and error', async () => {
+    const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+
+    expect(source).toContain('const isBinanceWaitingStatus')
+    expect(source).toContain("'Ждём видео:'")
+    expect(source).toContain("'Запись окна:'")
+    expect(source).toContain("binanceWaiting ? 'Ожидание'")
+    expect(source).toContain('!binanceWaiting')
+  })
+
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
 

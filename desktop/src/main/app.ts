@@ -691,13 +691,13 @@ app.whenReady().then(() => {
         ...binanceFuturesWatchStatus,
         configured: true,
         running: Boolean(binanceFuturesPollInterval),
-        lastError: status.message,
+        lastError: undefined,
         message: `Запись окна: ${status.message}`
       }
       return false
     }
 
-    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна')) {
+    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна') || binanceFuturesWatchStatus.message.startsWith('Запись окна')) {
       binanceFuturesWatchStatus = {
         ...binanceFuturesWatchStatus,
         lastError: undefined,
