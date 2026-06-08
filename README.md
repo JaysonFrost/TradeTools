@@ -9,14 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/JaysonFrost/TradeClipper/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JaysonFrost/TradeClipper/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/JaysonFrost/TradeClipper/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/JaysonFrost/TradeClipper?label=release"></a>
+  <a href="https://github.com/JaysonFrost/TradeTools/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JaysonFrost/TradeTools/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/JaysonFrost/TradeTools/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/JaysonFrost/TradeTools?label=release"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-22c55e.svg"></a>
 </p>
 
 ## Скачать
 
-Готовые сборки публикуются в [GitHub Releases](https://github.com/JaysonFrost/TradeClipper/releases).
+Готовые сборки публикуются в [GitHub Releases](https://github.com/JaysonFrost/TradeTools/releases).
 
 - **Windows:** скачайте `TradeTools-<version>-win-x64.exe`.
 - **macOS:** скачайте `.dmg` или `.zip` с `mac` в названии.
@@ -26,15 +26,43 @@
 
 ## Что умеет TradeTools
 
-- Записывает клипы сделок через **OBS Replay Buffer**.
-- Берёт сделки из **Binance USDT-M Futures read-only API**.
-- Обрезает replay через встроенный `ffmpeg` и кладёт готовый MP4 в выбранную папку.
-- Показывает очередь клипов, предпросмотр, открытие файла и переименование видео.
-- Хранит VPS/прокси: название, IP/домен, SSH-логин, пароль, день оплаты и ссылку на хостинг.
-- Помогает собрать цепочку серверов и автоматически настроить Xray/VLESS через SSH.
-- Поднимает локальный HTTP proxy для торгового терминала: `127.0.0.1:1083` по умолчанию.
-- Напоминает системными уведомлениями об оплате серверов и успешной записи сделки.
+<table>
+  <tr>
+    <th align="left">Видео сделок</th>
+    <th align="left">Прокси и VPS</th>
+  </tr>
+  <tr>
+    <td valign="top">
+      <ul>
+        <li>Записывает клипы сделок через <strong>OBS Replay Buffer</strong>.</li>
+        <li>Берёт сделки из <strong>Binance USDT-M Futures read-only API</strong>.</li>
+        <li>Обрезает replay через встроенный <code>ffmpeg</code>.</li>
+        <li>Кладёт готовый MP4 в выбранную папку.</li>
+        <li>Показывает очередь клипов, предпросмотр и открытие файла.</li>
+        <li>Позволяет переименовать видео прямо из приложения.</li>
+        <li>Отправляет системное уведомление, когда клип готов.</li>
+      </ul>
+    </td>
+    <td valign="top">
+      <ul>
+        <li>Хранит VPS/прокси: название, IP/домен, SSH-логин, пароль, день оплаты и ссылку на хостинг.</li>
+        <li>Сохраняет SSH-пароли в системный keychain, а не в JSON-файл.</li>
+        <li>Добавляет два сервера через <strong>Мастер настройки прокси</strong>.</li>
+        <li>Связывает серверы в маршрут <code>первый -&gt; второй</code>.</li>
+        <li>Автоматически настраивает Xray/VLESS через SSH.</li>
+        <li>Поднимает локальный HTTP proxy для терминала: <code>127.0.0.1:1083</code> по умолчанию.</li>
+        <li>Проверяет VPN/туннели и помогает обойти VPN для VPS, если пинг стал слишком высоким.</li>
+        <li>Напоминает системными уведомлениями о сроках оплаты серверов.</li>
+      </ul>
+    </td>
+  </tr>
+</table>
+
+Общее:
+
 - Работает локально: без подписки, без Telegram/Discord-gate и без загрузки клипов в облако.
+- Хранит чувствительные данные через системный keychain.
+- Даёт отдельные мастеры настройки для видео и прокси, чтобы пользователь не смешивал два сценария.
 
 ## Быстрый старт
 
@@ -51,12 +79,21 @@
 
 На странице `Прокси` можно открыть `Мастер настройки прокси`, добавить два сервера, сохранить связку и нажать `Настроить и запустить связку`. TradeTools подключится по SSH, установит Xray, свяжет серверы в маршрут и покажет, что указать в торговом терминале. Для трёх и более серверов используйте список `Порядок связки` на странице прокси.
 
+Если на компьютере включён VPN, антизапрет или другой TUN-клиент, он может отправить подключение локального Xray к VPS через лишний VPN-выход. Это часто выглядит как резкий рост пинга, например вместо 130-140 мс получается 250-300 мс. В этом случае:
+
+1. Нажмите `Проверить связку` и посмотрите блок `VPN и маршрут`.
+2. На Windows нажмите `Обойти VPN для VPS`, подтвердите UAC и дождитесь результата по каждому VPS IP. TradeTools добавит persistent `/32` маршруты до серверов через обычный Wi-Fi/Ethernet gateway.
+3. Перезапустите связку кнопкой `Настроить и запустить`, затем перезапустите торговый терминал.
+4. Если ваш VPN поддерживает split tunneling, дополнительно исключите TradeTools и локальный Xray core из туннеля.
+
+На macOS автоматическое добавление маршрутов пока не выполняется: используйте split tunneling в VPN-клиенте или добавьте host routes до VPS вручную.
+
 Важно:
 
 - используйте только свои VPS и свои доступы;
 - SSH-пароли и API-ключи сохраняются в системный keychain;
 - для биржи используйте ключи только с правами чтения, без торговли и вывода средств;
-- VPN, антизапреты и другие локальные туннели могут конфликтовать с локальным proxy.
+- не отправляйте торговый терминал одновременно через несколько proxy/VPN; в терминале должен быть указан HTTP proxy TradeTools `127.0.0.1:1083` или выбранный локальный порт.
 
 ## Для разработчиков
 
