@@ -43,10 +43,20 @@ const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcScreenCapturer',
   'AllowWgcScreenZeroHz'
 ]
+const recorderBufferPendingErrorPrefixes = [
+  'Встроенный рекордер ещё не накопил видео',
+  'Встроенный рекордер ещё не записал время после выхода'
+]
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(windowsAppUserModelId)
   app.commandLine.appendSwitch('disable-features', windowsDesktopCaptureFallbackFeatures.join(','))
+}
+
+const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'неизвестная ошибка'
+const isRecorderBufferPendingError = (error: unknown): boolean => {
+  const message = getErrorMessage(error)
+  return recorderBufferPendingErrorPrefixes.some((prefix) => message.startsWith(prefix))
 }
 
 type ProxySaveInput = {
@@ -712,7 +722,19 @@ app.whenReady().then(() => {
           : 'Binance watcher работает, новых закрытых сделок нет'
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'неизвестная ошибка'
+      const message = getErrorMessage(error)
+      if (isRecorderBufferPendingError(error)) {
+        binanceFuturesWatchStatus = {
+          ...binanceFuturesWatchStatus,
+          configured: true,
+          running: true,
+          lastPollAtMs: Date.now(),
+          lastError: undefined,
+          message: `Ждём видео: ${message}`
+        }
+        return
+      }
+
       binanceFuturesWatchStatus = {
         ...binanceFuturesWatchStatus,
         configured: true,

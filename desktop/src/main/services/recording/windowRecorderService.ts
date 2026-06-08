@@ -82,6 +82,7 @@ const sanitizeSegmentTime = (value: unknown): number => {
 }
 
 const toFileTimestamp = (timeMs: number): string => new Date(timeMs).toISOString().replace(/[:.]/g, '-')
+const formatRoundedSeconds = (seconds: number): string => `${Math.max(0, Math.ceil(seconds))}с`
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 
@@ -270,17 +271,24 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       segment.endedAtMs >= replayStartMs - exportToleranceMs &&
       segment.startedAtMs <= replayEndMs + exportToleranceMs
     ))
+    const firstSourceSegment = sourceSegments[0]
+    const lastSourceSegment = sourceSegments.at(-1)
+    const bufferedSeconds = firstSourceSegment && lastSourceSegment
+      ? (lastSourceSegment.endedAtMs - firstSourceSegment.startedAtMs) / 1000
+      : 0
+    const requiredSeconds = (replayEndMs - replayStartMs) / 1000
 
     const first = neededSegments[0]
     const last = neededSegments.at(-1)
     if (!first || !last) {
-      throw new Error('Встроенный рекордер ещё не накопил видео для этой сделки. Оставьте окно терминала открытым и дождитесь нескольких секунд записи.')
+      throw new Error(`Встроенный рекордер ещё не накопил видео для этой сделки. Накоплено ${formatRoundedSeconds(bufferedSeconds)}, нужно примерно ${formatRoundedSeconds(requiredSeconds)}. Оставьте окно терминала открытым.`)
     }
     if (first.startedAtMs > replayStartMs + exportToleranceMs) {
       throw new Error('Встроенный рекордер запущен слишком поздно: в буфере нет начала сделки.')
     }
     if (last.endedAtMs < replayEndMs - exportToleranceMs) {
-      throw new Error('Встроенный рекордер ещё не записал время после выхода из сделки. Попробуйте ещё раз через пару секунд.')
+      const remainingSeconds = (replayEndMs - last.endedAtMs) / 1000
+      throw new Error(`Встроенный рекордер ещё не записал время после выхода из сделки. Осталось примерно ${formatRoundedSeconds(remainingSeconds)}.`)
     }
 
     await mkdir(replaysDir, { recursive: true })

@@ -25,6 +25,15 @@ describe('main app lifecycle', () => {
     expect(source).toContain('if (!videoReady) return')
   })
 
+  it('treats recorder buffer warmup as waiting status instead of Binance polling failure', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const isRecorderBufferPendingError')
+    expect(source).toContain('if (isRecorderBufferPendingError(error))')
+    expect(source).toContain('lastError: undefined')
+    expect(source).toContain('message: `Ждём видео: ${message}`')
+  })
+
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
