@@ -4,6 +4,21 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.1.1] - 2026-06-08
+
+### Added
+
+- In-app update checks, downloads and install prompt from GitHub Releases.
+
+### Changed
+
+- Reduced packaged Windows installer size by pruning unused ffprobe binaries and Electron locales.
+- Release workflow now publishes updater metadata files for Windows and macOS.
+
+### Removed
+
+- Linux desktop release artifacts.
+
 ## [0.1.0] - 2026-06-08
 
 ### Added

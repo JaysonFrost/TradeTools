@@ -1,6 +1,6 @@
 {
   "name": "tradetools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TradeTools desktop app for automatic trade video clipping and proxy management.",
   "author": "JaysonFrost",
   "license": "MIT",
@@ -21,7 +21,6 @@
     "dist": "npm run build && electron-builder --publish never",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
-    "dist:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -34,6 +33,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "electron-updater": "^6.8.9",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
     "framer-motion": "^12.38.0",
@@ -66,6 +66,13 @@
     "appId": "com.tradetools.desktop",
     "productName": "TradeTools",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "JaysonFrost",
+        "repo": "TradeTools"
+      }
+    ],
     "electronLanguages": [
       "en-US",
       "ru"
@@ -101,10 +108,6 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "TradeTools"
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": "AppImage"
     }
   }
 }

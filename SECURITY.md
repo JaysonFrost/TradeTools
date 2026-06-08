@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Поддерживается последняя опубликованная версия из [GitHub Releases](https://github.com/JaysonFrost/TradeClipper/releases) и текущая ветка разработки.
+Поддерживается последняя опубликованная версия из [GitHub Releases](https://github.com/JaysonFrost/TradeTools/releases) и текущая ветка разработки.
 
 ## Reporting a Vulnerability
 

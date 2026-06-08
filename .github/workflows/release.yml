@@ -31,9 +31,6 @@ jobs:
           - name: macos
             os: macos-latest
             script: npm run dist:mac
-          - name: linux-x64
-            os: ubuntu-latest
-            script: npm run dist:linux
 
     steps:
       - name: Checkout
@@ -47,12 +44,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
-
-      - name: Install Linux packages
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
 
       - name: Install dependencies
         run: npm ci
@@ -74,7 +65,8 @@ jobs:
             desktop/dist/*.exe
             desktop/dist/*.dmg
             desktop/dist/*.zip
-            desktop/dist/*.AppImage
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
 
   publish:
     name: Publish GitHub Release
@@ -94,7 +86,7 @@ jobs:
         id: assets
         shell: bash
         run: |
-          mapfile -d '' ASSETS < <(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' \) -print0 | sort -z)
+          mapfile -d '' ASSETS < <(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest*.yml' \) -print0 | sort -z)
 
           if [ "${#ASSETS[@]}" -eq 0 ]; then
             echo "No release assets found" >&2

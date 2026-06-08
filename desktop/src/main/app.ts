@@ -18,6 +18,7 @@ import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTradeClipPipeline, type ClipQueueItem } from './services/trades/tradeClipPipeline'
+import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
 
 const isAllowedDevUrl = (url: string): boolean => {
@@ -403,6 +404,16 @@ app.whenReady().then(() => {
     getSettings: () => settingsStore.load(),
     saveReplayBuffer: () => obsService.testReplaySave()
   })
+  const appUpdateService = createAppUpdateService({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    broadcast: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('updates:status', status)
+      }
+    }
+  })
 
   const saveProxyRuntimeConfig = async (config: ProxyChainRuntimeConfig): Promise<void> => {
     await secretStore.setProxyRuntimeEntryUuid(config.entryUuid)
@@ -681,6 +692,10 @@ app.whenReady().then(() => {
 
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
+  ipcMain.handle('updates:check', () => appUpdateService.checkForUpdates())
+  ipcMain.handle('updates:download', () => appUpdateService.downloadUpdate())
+  ipcMain.handle('updates:install', () => appUpdateService.installUpdate())
   ipcMain.handle('dialog:select-directory', async (event, defaultPath?: string) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender)
     const options: OpenDialogOptions = {
@@ -1024,6 +1039,7 @@ app.whenReady().then(() => {
     shell.showItemInFolder(videoPath)
   })
   createMainWindow()
+  appUpdateService.startBackgroundCheck()
 
   void settingsStore.load().then((settings) => {
     applyLaunchAtLogin(settings)

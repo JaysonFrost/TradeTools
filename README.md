@@ -20,9 +20,10 @@
 
 - **Windows:** скачайте `TradeTools-<version>-win-x64.exe`.
 - **macOS:** скачайте `.dmg` или `.zip` с `mac` в названии.
-- **Linux:** скачайте `TradeTools-<version>-linux-x64.AppImage`.
 
 Пока сборки не подписаны платным сертификатом разработчика, Windows SmartScreen и macOS Gatekeeper могут показать предупреждение. Скачивайте приложение только из раздела Releases этого репозитория и сверяйте `SHA256SUMS.txt`, если сомневаетесь.
+
+После установки TradeTools сам проверяет новые версии при запуске. Если обновление найдено, приложение покажет плашку, предложит скачать новую версию и установит её после вашего подтверждения.
 
 ## Что умеет TradeTools
 
@@ -103,8 +104,7 @@
 
 - Node.js 22 LTS или новее;
 - npm 10 или новее;
-- OBS для ручной проверки видео-пайплайна;
-- на Linux для `keytar` может понадобиться `libsecret-1-dev`.
+- OBS для ручной проверки видео-пайплайна.
 
 Локальный запуск:
 
@@ -129,7 +129,6 @@ npm run build
 cd desktop
 npm run dist:win
 npm run dist:mac
-npm run dist:linux
 ```
 
 Артефакты появятся в `desktop/dist/`.
@@ -143,7 +142,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Workflow соберёт Windows/macOS/Linux, создаст GitHub Release и загрузит установщики вместе с `SHA256SUMS.txt`.
+Workflow соберёт Windows/macOS, создаст GitHub Release и загрузит установщики, updater-файлы и `SHA256SUMS.txt`.
 
 Подробный порядок выпуска: [desktop/docs/RELEASES_RU.md](desktop/docs/RELEASES_RU.md).
 

@@ -8,7 +8,7 @@ Release workflow собирает:
 
 - Windows NSIS installer: `TradeTools-<version>-win-x64.exe`;
 - macOS DMG/ZIP: `TradeTools-<version>-mac-<arch>.dmg` и `.zip`;
-- Linux AppImage: `TradeTools-<version>-linux-x64.AppImage`;
+- updater-файлы для автообновлений: `latest.yml`, `latest-mac.yml` и `.blockmap`;
 - `SHA256SUMS.txt` для проверки файлов.
 
 ## Перед релизом
@@ -48,7 +48,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-После push GitHub Actions запустит workflow `Release`, соберёт артефакты на Windows/macOS/Linux и создаст GitHub Release.
+После push GitHub Actions запустит workflow `Release`, соберёт артефакты на Windows/macOS и создаст GitHub Release.
 
 ## Ручной запуск
 
@@ -62,9 +62,18 @@ Workflow можно запустить вручную из GitHub UI:
 ## После релиза
 
 1. Откройте страницу GitHub Release.
-2. Проверьте, что загружены installer/app image файлы и `SHA256SUMS.txt`.
+2. Проверьте, что загружены installer-файлы, updater-файлы и `SHA256SUMS.txt`.
 3. Скачайте Windows installer и убедитесь, что приложение запускается.
 4. При необходимости отредактируйте auto-generated release notes вручную.
+
+## Автообновления
+
+TradeTools использует GitHub Releases как источник обновлений. Для корректной работы в релизе должны быть:
+
+- Windows: `.exe`, `.exe.blockmap`, `latest.yml`;
+- macOS: `.dmg`, `.zip`, `.dmg.blockmap`, `.zip.blockmap`, `latest-mac.yml`.
+
+Для каждой новой версии меняйте `desktop/package.json`, создавайте новый тег и не перевешивайте уже опубликованные теги. Например: `0.1.0` -> `v0.1.0`, затем `0.1.1` -> `v0.1.1`.
 
 ## Важно про подпись
 

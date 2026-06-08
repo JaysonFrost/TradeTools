@@ -6,6 +6,7 @@ import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networ
 import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
+import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 
 export type ProxySaveInput = {
   id?: string
@@ -89,6 +90,17 @@ const api = {
   },
   notifications: {
     test: (): Promise<SystemNotificationResult> => ipcRenderer.invoke('notifications:test')
+  },
+  updates: {
+    getStatus: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:get-status'),
+    check: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:check'),
+    download: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:download'),
+    install: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:install'),
+    onStatus: (callback: (status: AppUpdateStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, status: AppUpdateStatus) => callback(status)
+      ipcRenderer.on('updates:status', listener)
+      return () => ipcRenderer.removeListener('updates:status', listener)
+    }
   },
   proxies: {
     save: (input: ProxySaveInput): Promise<AppSettings> => ipcRenderer.invoke('proxies:save', input),

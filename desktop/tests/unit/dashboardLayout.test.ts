@@ -163,4 +163,23 @@ describe('Dashboard layout', () => {
     expect(source).toContain('void toggleClipSuccessNotifications(event.target.checked)')
     expect(source).toContain('void toggleProxyPaymentNotifications(event.target.checked)')
   })
+
+  it('wires in-app updates through Electron and release metadata', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appShellSource = await readFile(resolve('src/renderer/components/layout/AppShell.tsx'), 'utf8')
+    const systemSettingsSource = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
+    const releaseWorkflowSource = await readFile(resolve('../.github/workflows/release.yml'), 'utf8')
+
+    expect(appSource).toContain('createAppUpdateService')
+    expect(appSource).toContain("ipcMain.handle('updates:check'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('updates:download'")
+    expect(preloadSource).toContain("ipcRenderer.on('updates:status'")
+    expect(appShellSource).toContain('<UpdateBanner')
+    expect(systemSettingsSource).toContain('Проверить обновления')
+    expect(releaseWorkflowSource).toContain('desktop/dist/latest*.yml')
+    expect(releaseWorkflowSource).toContain("name '*.blockmap'")
+    expect(releaseWorkflowSource).not.toContain('dist:linux')
+    expect(releaseWorkflowSource).not.toContain('AppImage')
+  })
 })
