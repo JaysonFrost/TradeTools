@@ -1,4 +1,4 @@
-import { Bell, Clapperboard, Power, Save } from 'lucide-react'
+import { Bell, Clapperboard, Power, RefreshCw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -21,7 +21,9 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
   const [clipSuccessNotificationsEnabled, setClipSuccessNotificationsEnabled] = useState(true)
   const [paymentReminderDaysBefore, setPaymentReminderDaysBefore] = useState('5')
   const [saving, setSaving] = useState(false)
+  const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [message, setMessage] = useState('')
+  const [messageTone, setMessageTone] = useState<'success' | 'warning'>('success')
 
   useEffect(() => {
     if (!settings) return
@@ -44,6 +46,7 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
   const saveDraft = async (draft: SystemSettingsDraft, successMessage = 'Системные настройки сохранены'): Promise<boolean> => {
     setSaving(true)
     setMessage('')
+    setMessageTone('success')
     try {
       const updated = await getTradeToolsApi().settings.update({
         system: draft
@@ -53,6 +56,7 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
       return true
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось сохранить системные настройки')
+      setMessageTone('warning')
       return false
     } finally {
       setSaving(false)
@@ -84,6 +88,22 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
     if (!ok) setClipSuccessNotificationsEnabled(previous)
   }
 
+  const checkUpdates = async () => {
+    setCheckingUpdates(true)
+    setMessage('')
+    setMessageTone('success')
+    try {
+      const status = await getTradeToolsApi().updates.check()
+      setMessage(status.message)
+      setMessageTone(status.status === 'error' ? 'warning' : 'success')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось проверить обновления')
+      setMessageTone('warning')
+    } finally {
+      setCheckingUpdates(false)
+    }
+  }
+
   return (
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -95,7 +115,12 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
               : 'Автозапуск TradeTools и системные напоминания о сроках оплаты серверов.'}
           </p>
         </div>
-        <Button onClick={save} disabled={saving}><Save size={17} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => void checkUpdates()} disabled={checkingUpdates}>
+            <RefreshCw size={17} className={`mr-2 ${checkingUpdates ? 'animate-spin' : ''}`} />{checkingUpdates ? 'Проверяем...' : 'Проверить обновления'}
+          </Button>
+          <Button onClick={save} disabled={saving}><Save size={17} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr_220px]">
@@ -131,7 +156,7 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
         )}
       </div>
 
-      {message && <p className="mt-4 text-sm text-emerald-300">{message}</p>}
+      {message && <p className={`mt-4 text-sm ${messageTone === 'warning' ? 'text-amber-300' : 'text-emerald-300'}`}>{message}</p>}
     </Card>
   )
 }

@@ -17,6 +17,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Local HTTP proxy runtime on `127.0.0.1:1083` by default.
 - System notifications for completed clips and proxy payment reminders.
 - Autostart setting for launching TradeTools on system login.
+- In-app update checks, downloads and install prompt from GitHub Releases.
 - Donation page with USDT addresses and QR codes.
 - GitHub Actions CI and release workflows.
 
@@ -25,3 +26,4 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Subscription/access gate logic.
 - Telegram/Discord requirement logic.
 - TradeCut/TradeCut API naming in public app surface.
+- Linux desktop release artifacts.
