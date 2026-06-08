@@ -22,14 +22,23 @@ export type SecretStore = {
   setBinanceFuturesCredentials: (credentials: BinanceFuturesCredentials) => Promise<void>
   getBinanceFuturesCredentials: () => Promise<BinanceFuturesCredentials | undefined>
   clearBinanceFuturesCredentials: () => Promise<boolean>
+  setProxyPassword: (proxyId: string, password: string) => Promise<void>
+  getProxyPassword: (proxyId: string) => Promise<string | undefined>
+  clearProxyPassword: (proxyId: string) => Promise<boolean>
+  setProxyRuntimeEntryUuid: (uuid: string) => Promise<void>
+  getProxyRuntimeEntryUuid: () => Promise<string | undefined>
+  clearProxyRuntimeEntryUuid: () => Promise<boolean>
 }
 
-const serviceName = 'TradeCut'
+const serviceName = 'TradeTools'
+const legacyTradeCutServiceName = 'TradeCut'
 const legacyServiceName = ['Trade', 'Clipper'].join(' ')
-const keychainServiceNames = [serviceName, legacyServiceName]
+const keychainServiceNames = [serviceName, legacyTradeCutServiceName, legacyServiceName]
 const obsPasswordAccount = 'obs-websocket-password'
 const binanceFuturesApiKeyAccount = 'binance-futures-api-key'
 const binanceFuturesApiSecretAccount = 'binance-futures-api-secret'
+const proxyPasswordAccount = (proxyId: string): string => `proxy-password:${proxyId}`
+const proxyRuntimeEntryUuidAccount = 'proxy-runtime-entry-uuid'
 
 const isKeychainAdapter = (value: unknown): value is KeychainAdapter => {
   const adapter = value as Partial<KeychainAdapter> | undefined
@@ -101,6 +110,24 @@ export const createSecretStore = (adapterModule: KeychainAdapterModule = keytar)
         deletePassword(binanceFuturesApiSecretAccount)
       ])
       return apiKeyDeleted || apiSecretDeleted
+    },
+    async setProxyPassword(proxyId, password) {
+      await adapter.setPassword(serviceName, proxyPasswordAccount(proxyId), password)
+    },
+    async getProxyPassword(proxyId) {
+      return getPassword(proxyPasswordAccount(proxyId))
+    },
+    clearProxyPassword(proxyId) {
+      return deletePassword(proxyPasswordAccount(proxyId))
+    },
+    async setProxyRuntimeEntryUuid(uuid) {
+      await adapter.setPassword(serviceName, proxyRuntimeEntryUuidAccount, uuid)
+    },
+    async getProxyRuntimeEntryUuid() {
+      return getPassword(proxyRuntimeEntryUuidAccount)
+    },
+    clearProxyRuntimeEntryUuid() {
+      return deletePassword(proxyRuntimeEntryUuidAccount)
     }
   }
 }

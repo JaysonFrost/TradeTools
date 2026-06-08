@@ -29,9 +29,9 @@ describe('obsService', () => {
   })
 
   it('uses the OBS ReplayBufferSaved event path when folder scanning does not find the replay', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'tradecut-obs-service-data-'))
-    const configuredReplayDir = await mkdtemp(join(tmpdir(), 'tradecut-configured-replays-'))
-    const actualReplayDir = await mkdtemp(join(tmpdir(), 'tradecut-actual-replays-'))
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-obs-service-data-'))
+    const configuredReplayDir = await mkdtemp(join(tmpdir(), 'TradeTools-configured-replays-'))
+    const actualReplayDir = await mkdtemp(join(tmpdir(), 'TradeTools-actual-replays-'))
     const actualReplayPath = join(actualReplayDir, 'Replay 2026-05-13 04-05-00.mp4')
     const listeners = new Map<string, Array<(event: unknown) => void>>()
     const emit = (eventName: string, event: unknown) => {

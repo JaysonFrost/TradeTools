@@ -1,4 +1,20 @@
 import { join } from 'node:path'
+import { defaultLocalProxyPort } from '../../../shared/defaults'
+
+export type ProxyRecord = {
+  id: string
+  name: string
+  server: string
+  login: string
+  passwordConfigured: boolean
+  nextProxyId: string
+  localProxyPort: number
+  paymentDueDay: number
+  dashboardUrl: string
+  notes: string
+  lastPaymentReminderKey?: string
+  lastPaymentReminderAtMs?: number
+}
 
 export type AppSettings = {
   language: 'ru'
@@ -22,12 +38,28 @@ export type AppSettings = {
       apiSecretConfigured: boolean
     }
   }
-  access: {
-    subscriptionRequired: boolean
-    telegramBotRequired: boolean
-    discordGuildGateEnabled: boolean
-    adminPanelEnabled: boolean
+  system: {
+    launchAtLogin: boolean
+    proxyPaymentNotificationsEnabled: boolean
+    clipSuccessNotificationsEnabled: boolean
+    paymentReminderDaysBefore: number
   }
+  proxyRuntime: {
+    activeStartProxyId: string
+    route: string
+    entryHost: string
+    entryPort: number
+    localPort: number
+    entryUuidConfigured: boolean
+    configuredAtMs: number
+  }
+  proxies: ProxyRecord[]
+}
+
+export type PartialProxyRecord = Partial<ProxyRecord> & {
+  endpointHost?: string
+  localPort?: number
+  paymentDueDate?: string
 }
 
 export type PartialSettings = Partial<{
@@ -37,7 +69,9 @@ export type PartialSettings = Partial<{
   exchange: {
     binanceFutures?: Partial<AppSettings['exchange']['binanceFutures']>
   }
-  access: Partial<AppSettings['access']>
+  system: Partial<AppSettings['system']>
+  proxyRuntime: Partial<AppSettings['proxyRuntime']>
+  proxies: PartialProxyRecord[]
 }>
 
 export type SettingsUpdateInput = PartialSettings & {
@@ -46,13 +80,109 @@ export type SettingsUpdateInput = PartialSettings & {
   binanceFuturesApiSecret?: string
 }
 
-const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
+const clamp = (value: number, min: number, max: number): number => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min
+const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/
+
+const normalizeString = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+
+const normalizePort = (value: unknown, fallback = 0): number => {
+  const port = Number(value)
+  return Number.isFinite(port) && port > 0 && port <= 65535 ? Math.trunc(port) : fallback
+}
+
+const normalizePaymentDueDay = (value: unknown, legacyDate?: unknown): number => {
+  const day = Number(value)
+  if (Number.isFinite(day) && day >= 1 && day <= 31) return Math.trunc(day)
+
+  const date = normalizeString(value)
+  if (/^\d{1,2}$/.test(date)) {
+    const dateDay = Number(date)
+    return dateDay >= 1 && dateDay <= 31 ? dateDay : 0
+  }
+
+  const legacyDateText = normalizeString(legacyDate)
+  if (!dateOnlyPattern.test(legacyDateText)) return 0
+
+  const [yearText, monthText, dayText] = legacyDateText.split('-')
+  const year = Number(yearText)
+  const monthIndex = Number(monthText) - 1
+  const legacyDay = Number(dayText)
+  const parsed = new Date(year, monthIndex, legacyDay)
+  return parsed.getFullYear() === year && parsed.getMonth() === monthIndex && parsed.getDate() === legacyDay ? legacyDay : 0
+}
+
+const normalizeHttpUrl = (value: unknown): string => {
+  const url = normalizeString(value)
+  if (!url) return ''
+
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
+const normalizeProxyId = (value: unknown, fallbackIndex: number): string => {
+  const id = normalizeString(value)
+  return id.length > 0 ? id : `proxy-${fallbackIndex + 1}`
+}
+
+const normalizeProxyRecords = (records: unknown): ProxyRecord[] => {
+  if (!Array.isArray(records)) return []
+
+  const seenIds = new Set<string>()
+  return records.flatMap((record, index) => {
+    if (typeof record !== 'object' || record === null) return []
+
+    const candidate = record as Partial<ProxyRecord> & Record<string, unknown>
+    const id = normalizeProxyId(candidate.id, index)
+    if (seenIds.has(id)) return []
+    seenIds.add(id)
+
+    const server = normalizeString(candidate.server || candidate.endpointHost)
+    const lastPaymentReminderAtMs = Number(candidate.lastPaymentReminderAtMs)
+    return [{
+      id,
+      name: normalizeString(candidate.name),
+      server,
+      login: normalizeString(candidate.login) || 'root',
+      passwordConfigured: candidate.passwordConfigured === true,
+      nextProxyId: normalizeString(candidate.nextProxyId),
+      localProxyPort: normalizePort(candidate.localProxyPort ?? candidate.localPort, defaultLocalProxyPort),
+      paymentDueDay: normalizePaymentDueDay(candidate.paymentDueDay, candidate.paymentDueDate),
+      dashboardUrl: normalizeHttpUrl(candidate.dashboardUrl),
+      notes: normalizeString(candidate.notes),
+      ...(typeof candidate.lastPaymentReminderKey === 'string' && candidate.lastPaymentReminderKey.trim()
+        ? { lastPaymentReminderKey: candidate.lastPaymentReminderKey.trim() }
+        : {}),
+      ...(Number.isFinite(lastPaymentReminderAtMs) && lastPaymentReminderAtMs > 0
+        ? { lastPaymentReminderAtMs }
+        : {})
+    }]
+  })
+}
+
+const normalizeProxyRuntime = (value: unknown): AppSettings['proxyRuntime'] => {
+  const input = typeof value === 'object' && value !== null ? value as Partial<AppSettings['proxyRuntime']> : {}
+  const configuredAtMs = Number(input.configuredAtMs)
+
+  return {
+    activeStartProxyId: normalizeString(input.activeStartProxyId),
+    route: normalizeString(input.route),
+    entryHost: normalizeString(input.entryHost),
+    entryPort: normalizePort(input.entryPort, 443),
+    localPort: normalizePort(input.localPort, defaultLocalProxyPort),
+    entryUuidConfigured: input.entryUuidConfigured === true,
+    configuredAtMs: Number.isFinite(configuredAtMs) && configuredAtMs > 0 ? configuredAtMs : 0
+  }
+}
 
 export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   language: 'ru',
   clip: {
-    paddingBeforeSeconds: 3,
-    paddingAfterSeconds: 5,
+    paddingBeforeSeconds: 2,
+    paddingAfterSeconds: 2,
     replayBufferSeconds: 1800,
     replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
@@ -70,12 +200,22 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
       apiSecretConfigured: false
     }
   },
-  access: {
-    subscriptionRequired: true,
-    telegramBotRequired: true,
-    discordGuildGateEnabled: true,
-    adminPanelEnabled: true
-  }
+  system: {
+    launchAtLogin: false,
+    proxyPaymentNotificationsEnabled: true,
+    clipSuccessNotificationsEnabled: true,
+    paymentReminderDaysBefore: 5
+  },
+  proxyRuntime: {
+    activeStartProxyId: '',
+    route: '',
+    entryHost: '',
+    entryPort: 443,
+    localPort: defaultLocalProxyPort,
+    entryUuidConfigured: false,
+    configuredAtMs: 0
+  },
+  proxies: []
 })
 
 export const normalizeSettings = (settings: PartialSettings, appDataDir: string): AppSettings => {
@@ -103,11 +243,13 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
         apiSecretConfigured: settings.exchange?.binanceFutures?.apiSecretConfigured ?? defaults.exchange.binanceFutures.apiSecretConfigured
       }
     },
-    access: {
-      subscriptionRequired: settings.access?.subscriptionRequired ?? defaults.access.subscriptionRequired,
-      telegramBotRequired: settings.access?.telegramBotRequired ?? defaults.access.telegramBotRequired,
-      discordGuildGateEnabled: settings.access?.discordGuildGateEnabled ?? defaults.access.discordGuildGateEnabled,
-      adminPanelEnabled: settings.access?.adminPanelEnabled ?? defaults.access.adminPanelEnabled
-    }
+    system: {
+      launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,
+      proxyPaymentNotificationsEnabled: settings.system?.proxyPaymentNotificationsEnabled ?? defaults.system.proxyPaymentNotificationsEnabled,
+      clipSuccessNotificationsEnabled: settings.system?.clipSuccessNotificationsEnabled ?? defaults.system.clipSuccessNotificationsEnabled,
+      paymentReminderDaysBefore: clamp(settings.system?.paymentReminderDaysBefore ?? defaults.system.paymentReminderDaysBefore, 0, 30)
+    },
+    proxyRuntime: normalizeProxyRuntime(settings.proxyRuntime ?? defaults.proxyRuntime),
+    proxies: normalizeProxyRecords(settings.proxies)
   }
 }

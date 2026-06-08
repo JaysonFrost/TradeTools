@@ -41,21 +41,31 @@ const formatExchange = (value: string): string => {
     .join(' ')
 }
 
+export const toSafeClipFileBaseName = (value: string): string => {
+  return value
+    .replace(/\.mp4$/iu, '')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+}
+
 export const buildClipFileNames = (trade: ClipPathTrade): ClipFileNames => {
   const { titleTimestamp } = formatDateParts(trade.entryTimeMs)
   const title = `${formatSymbol(trade.symbol)} ${formatExchange(trade.exchange)} ${titleTimestamp}`
+  const safeFileName = toSafeClipFileBaseName(title)
 
   return {
     title,
-    videoFileName: `${title}.mp4`,
-    metadataFileName: `${title}.json`
+    videoFileName: `${safeFileName}.mp4`,
+    metadataFileName: `${safeFileName}.json`
   }
 }
 
 export const buildClipOutputPaths = (dataDir: string, trade: ClipPathTrade): ClipOutputPaths => {
   const { day } = formatDateParts(trade.entryTimeMs)
   const names = buildClipFileNames(trade)
-  const dayFolder = join(dataDir, 'clips', day)
+  const dayFolder = join(dataDir, day)
 
   return {
     dayFolder,

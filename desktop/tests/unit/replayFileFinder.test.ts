@@ -6,7 +6,7 @@ import { findNewestReplayFile, snapshotReplayFiles, waitForNewestReplayFile } fr
 
 describe('replayFileFinder', () => {
   it('finds the newest OBS replay video created after the save request', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tradecut-replays-'))
+    const dir = await mkdtemp(join(tmpdir(), 'TradeTools-replays-'))
     const oldReplay = join(dir, 'old.mp4')
     const newestReplay = join(dir, 'Replay 2026-05-13 03-51-10.mkv')
     const ignoredText = join(dir, 'notes.txt')
@@ -27,7 +27,7 @@ describe('replayFileFinder', () => {
   })
 
   it('returns undefined when OBS has not written a fresh replay yet', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tradecut-replays-empty-'))
+    const dir = await mkdtemp(join(tmpdir(), 'TradeTools-replays-empty-'))
     const oldReplay = join(dir, 'old.mp4')
     await writeFile(oldReplay, 'old')
     const oldTime = new Date(Date.parse('2026-05-13T03:51:00.000Z'))
@@ -40,7 +40,7 @@ describe('replayFileFinder', () => {
   })
 
   it('waits for OBS to finish writing a fresh replay file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tradecut-replays-wait-'))
+    const dir = await mkdtemp(join(tmpdir(), 'TradeTools-replays-wait-'))
     const replayPath = join(dir, 'Replay 2026-05-13 03-51-15.mp4')
     const afterMs = Date.parse('2026-05-13T03:51:10.000Z')
     let slept = false
@@ -61,7 +61,7 @@ describe('replayFileFinder', () => {
   })
 
   it('accepts OBS files whose filesystem timestamp is slightly before the save request', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tradecut-replays-rounded-mtime-'))
+    const dir = await mkdtemp(join(tmpdir(), 'TradeTools-replays-rounded-mtime-'))
     const replayPath = join(dir, 'Replay 2026-05-13 08-21-25.mp4')
     const afterMs = Date.parse('2026-05-13T08:21:25.800Z')
     await writeFile(replayPath, 'new replay')
@@ -72,7 +72,7 @@ describe('replayFileFinder', () => {
   })
 
   it('finds a new replay in a nested OBS folder even when its mtime is older than the save request', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tradecut-replays-nested-'))
+    const dir = await mkdtemp(join(tmpdir(), 'TradeTools-replays-nested-'))
     const nestedDir = join(dir, 'processed')
     await import('node:fs/promises').then(({ mkdir }) => mkdir(nestedDir))
     const beforeSnapshot = await snapshotReplayFiles(dir)

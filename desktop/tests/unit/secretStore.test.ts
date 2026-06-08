@@ -6,6 +6,7 @@ const createAdapter = (): KeychainAdapter => ({
   getPassword: vi.fn().mockResolvedValue('secret'),
   deletePassword: vi.fn().mockResolvedValue(true)
 })
+const legacyTradeCutServiceName = 'TradeCut'
 const legacyServiceName = ['Trade', 'Clipper'].join(' ')
 const legacyAuthProvider = ['Goo', 'gle', ['O', 'Auth'].join('')].join('')
 
@@ -16,7 +17,7 @@ describe('secretStore', () => {
 
     await store.setObsPassword('secret')
 
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'obs-websocket-password', 'secret')
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password', 'secret')
   })
 
   it('uses the default export when keytar is loaded as an ESM namespace', async () => {
@@ -25,7 +26,7 @@ describe('secretStore', () => {
 
     await store.setObsPassword('secret')
 
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'obs-websocket-password', 'secret')
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password', 'secret')
   })
 
   it('reads OBS password without exposing it through settings JSON', async () => {
@@ -33,10 +34,10 @@ describe('secretStore', () => {
     const store = createSecretStore(adapter)
 
     await expect(store.getObsPassword()).resolves.toBe('secret')
-    expect(adapter.getPassword).toHaveBeenCalledWith('TradeCut', 'obs-websocket-password')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
   })
 
-  it('can read existing secrets saved under the old keychain service', async () => {
+  it('can read existing secrets saved under the previous keychain service', async () => {
     const adapter = createAdapter()
     vi.mocked(adapter.getPassword)
       .mockResolvedValueOnce(null)
@@ -44,7 +45,21 @@ describe('secretStore', () => {
     const store = createSecretStore(adapter)
 
     await expect(store.getObsPassword()).resolves.toBe('legacy-secret')
-    expect(adapter.getPassword).toHaveBeenCalledWith('TradeCut', 'obs-websocket-password')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
+    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'obs-websocket-password')
+  })
+
+  it('can read existing secrets saved under the oldest keychain service', async () => {
+    const adapter = createAdapter()
+    vi.mocked(adapter.getPassword)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('legacy-secret')
+    const store = createSecretStore(adapter)
+
+    await expect(store.getObsPassword()).resolves.toBe('legacy-secret')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
+    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'obs-websocket-password')
     expect(adapter.getPassword).toHaveBeenCalledWith(legacyServiceName, 'obs-websocket-password')
   })
 
@@ -53,7 +68,7 @@ describe('secretStore', () => {
     const store = createSecretStore(adapter)
 
     await expect(store.clearObsPassword()).resolves.toBe(true)
-    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeCut', 'obs-websocket-password')
+    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
   })
 
   it('stores Binance Futures API credentials under separate keychain accounts', async () => {
@@ -62,8 +77,8 @@ describe('secretStore', () => {
 
     await store.setBinanceFuturesCredentials({ apiKey: 'binance-key', apiSecret: 'binance-secret' })
 
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'binance-futures-api-key', 'binance-key')
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeCut', 'binance-futures-api-secret', 'binance-secret')
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'binance-futures-api-key', 'binance-key')
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'binance-futures-api-secret', 'binance-secret')
   })
 
   it('reads Binance Futures API credentials only when both key and secret exist', async () => {
@@ -80,6 +95,32 @@ describe('secretStore', () => {
       apiSecret: 'binance-secret'
     })
     await expect(store.getBinanceFuturesCredentials()).resolves.toBeUndefined()
+  })
+
+  it('stores proxy passwords by proxy id without exposing them through settings', async () => {
+    const adapter = createAdapter()
+    const store = createSecretStore(adapter)
+
+    await store.setProxyPassword('proxy-1', 'proxy-secret')
+    await expect(store.getProxyPassword('proxy-1')).resolves.toBe('secret')
+    await expect(store.clearProxyPassword('proxy-1')).resolves.toBe(true)
+
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'proxy-password:proxy-1', 'proxy-secret')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'proxy-password:proxy-1')
+    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'proxy-password:proxy-1')
+  })
+
+  it('stores active proxy runtime uuid in keychain', async () => {
+    const adapter = createAdapter()
+    const store = createSecretStore(adapter)
+
+    await store.setProxyRuntimeEntryUuid('11111111-1111-4111-8111-111111111111')
+    await expect(store.getProxyRuntimeEntryUuid()).resolves.toBe('secret')
+    await expect(store.clearProxyRuntimeEntryUuid()).resolves.toBe(true)
+
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'proxy-runtime-entry-uuid', '11111111-1111-4111-8111-111111111111')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'proxy-runtime-entry-uuid')
+    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'proxy-runtime-entry-uuid')
   })
 
   it('does not expose legacy external publishing keychain operations', () => {

@@ -82,7 +82,7 @@ describe('binanceFuturesClient', () => {
 
     await expect(client.testConnection()).resolves.toEqual({
       ok: false,
-      message: 'Binance Futures недоступен: Binance.com Futures API недоступен для текущей локации или аккаунта. TradeCut не может получать сделки через этот API; используйте биржу/API, доступные в вашей юрисдикции.'
+      message: 'Binance Futures недоступен: Binance.com Futures API недоступен для текущей локации или аккаунта. TradeTools не может получать сделки через этот API; используйте биржу/API, доступные в вашей юрисдикции.'
     })
   })
 

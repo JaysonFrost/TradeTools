@@ -13,7 +13,7 @@ afterEach(async () => {
 
 describe('settingsStore', () => {
   it('loads defaults when settings file does not exist', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.load()
@@ -24,7 +24,7 @@ describe('settingsStore', () => {
   })
 
   it('persists normalized OBS and clip settings without storing raw password', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.update({
@@ -41,7 +41,7 @@ describe('settingsStore', () => {
   })
 
   it('persists Binance Futures configured flags without raw API credentials', async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'tradecut-settings-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.update({
@@ -66,5 +66,65 @@ describe('settingsStore', () => {
     expect(JSON.stringify(reloaded)).not.toContain('binance-key')
     expect(JSON.stringify(reloaded)).not.toContain('binance-secret')
     expect(reloaded).toEqual(settings)
+  })
+
+  it('persists proxy metadata and system preferences without raw proxy passwords', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-proxies-'))
+    const store = createSettingsStore(tempDir)
+
+    const settings = await store.update({
+      system: {
+        launchAtLogin: true,
+        paymentReminderDaysBefore: 2
+      },
+      proxies: [{
+        id: 'proxy-1',
+        name: 'London proxy',
+        server: 'gb.proxy.test:9000',
+        login: 'trader',
+        passwordConfigured: true,
+        paymentDueDay: 15,
+        dashboardUrl: 'https://proxy.example.com/account',
+        notes: 'main futures account'
+      }]
+    })
+
+    expect(settings.system.launchAtLogin).toBe(true)
+    expect(settings.system.paymentReminderDaysBefore).toBe(2)
+    expect(settings.proxies).toHaveLength(1)
+    expect(JSON.stringify(settings)).not.toContain('raw-proxy-password')
+
+    const reloaded = await store.load()
+    expect(reloaded).toEqual(settings)
+  })
+
+  it('keeps active proxy runtime when updating unrelated settings', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-runtime-'))
+    const store = createSettingsStore(tempDir)
+
+    await store.update({
+      proxyRuntime: {
+        activeStartProxyId: 'proxy-1',
+        route: 'Edgecenter -> Vultr',
+        entryHost: '92.38.129.126',
+        entryPort: 443,
+        localPort: 1083,
+        entryUuidConfigured: true,
+        configuredAtMs: 123
+      }
+    })
+
+    const settings = await store.update({
+      system: {
+        launchAtLogin: true
+      }
+    })
+
+    expect(settings.proxyRuntime).toMatchObject({
+      activeStartProxyId: 'proxy-1',
+      entryHost: '92.38.129.126',
+      localPort: 1083,
+      entryUuidConfigured: true
+    })
   })
 })

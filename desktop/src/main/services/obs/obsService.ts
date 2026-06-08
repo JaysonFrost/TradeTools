@@ -70,8 +70,18 @@ const savedReplayPathFromEvent = (value: unknown): string | undefined => {
     : undefined
 }
 
+const obsAuthenticationFailedMessage = 'OBS WebSocket отклонил пароль. Проверьте пароль в OBS -> Tools -> WebSocket Server Settings и заново сохраните его в TradeTools.'
+
 const errorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message.trim().length > 0) return error.message
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
+      ? error.message
+      : ''
+  const normalizedMessage = message.trim()
+
+  if (/authentication failed/i.test(normalizedMessage)) return obsAuthenticationFailedMessage
+  if (normalizedMessage.length > 0) return normalizedMessage
   return 'неизвестная ошибка'
 }
 
@@ -281,7 +291,7 @@ export const createObsService = (deps: ObsServiceDeps = {}): ObsService => {
           if (!replayPath) {
             return {
               ok: false,
-              message: `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. TradeCut ждёт до ${Math.round(replaySaveTimeoutMs / 1000)}с и ищет видео в подпапках. Проверьте, что OBS действительно создаёт новый replay-файл в этой папке.`,
+              message: `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. TradeTools ждёт до ${Math.round(replaySaveTimeoutMs / 1000)}с и ищет видео в подпапках. Проверьте, что OBS действительно создаёт новый replay-файл в этой папке.`,
               requestedAtMs
             }
           }

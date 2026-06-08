@@ -23,23 +23,37 @@ describe('simulatedTradePipeline', () => {
       trade
     })
 
-    expect(plan.videoPath).toContain('BTCUSDT Binance 13.05.26 03:49:21.mp4')
+    expect(plan.videoPath).toContain('BTCUSDT Binance 13.05.26 03-49-21.mp4')
     expect(plan.ffmpegArgs).toEqual([
       '-y',
+      '-fflags',
+      '+genpts',
       '-ss',
       '1686.000',
       '-t',
       '114.000',
       '-i',
       '/tmp/replay.mp4',
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a?',
       '-c:v',
       'libx264',
       '-preset',
       'veryfast',
       '-crf',
       '18',
+      '-pix_fmt',
+      'yuv420p',
+      '-fps_mode',
+      'cfr',
       '-c:a',
       'aac',
+      '-b:a',
+      '160k',
+      '-avoid_negative_ts',
+      'make_zero',
       '-movflags',
       '+faststart',
       plan.videoPath

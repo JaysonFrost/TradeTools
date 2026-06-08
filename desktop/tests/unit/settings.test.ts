@@ -1,20 +1,40 @@
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
+import { defaultLocalProxyPort } from '../../src/shared/defaults'
 
 const legacyVideoProviderSettingsKey = ['you', 'tube'].join('')
 const legacyAuthFlagKey = [['oa', 'uth'].join(''), 'Client', 'Configured'].join('')
+const legacyGateSettingsKey = ['ac', 'cess'].join('')
+const legacySubscriptionFlagKey = ['sub', 'scription', 'Required'].join('')
+const legacyTelegramGateFlagKey = ['telegram', 'Bot', 'Required'].join('')
+const legacyDiscordGateFlagKey = ['discord', 'Guild', 'Gate', 'Enabled'].join('')
+const legacyAdminPanelFlagKey = ['admin', 'Panel', 'Enabled'].join('')
 
 describe('settings', () => {
-  it('creates Russian-first defaults for clip automation and planned subscription gates', () => {
-    const settings = createDefaultSettings('/Users/igor/Library/Application Support/TradeCut')
+  it('creates Russian-first defaults for free local clip automation', () => {
+    const settings = createDefaultSettings('/Users/igor/Library/Application Support/TradeTools')
 
     expect(settings.language).toBe('ru')
-    expect(settings.clip.paddingBeforeSeconds).toBe(3)
-    expect(settings.clip.paddingAfterSeconds).toBe(5)
-    expect(settings.clip.outputDir).toBe('/Users/igor/Library/Application Support/TradeCut/clips')
-    expect(settings.access.subscriptionRequired).toBe(true)
-    expect(settings.access.telegramBotRequired).toBe(true)
-    expect(settings.access.discordGuildGateEnabled).toBe(true)
+    expect(settings.clip.paddingBeforeSeconds).toBe(2)
+    expect(settings.clip.paddingAfterSeconds).toBe(2)
+    expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
+    expect(settings.system).toEqual({
+      launchAtLogin: false,
+      proxyPaymentNotificationsEnabled: true,
+      clipSuccessNotificationsEnabled: true,
+      paymentReminderDaysBefore: 5
+    })
+    expect(settings.proxyRuntime).toEqual({
+      activeStartProxyId: '',
+      route: '',
+      entryHost: '',
+      entryPort: 443,
+      localPort: defaultLocalProxyPort,
+      entryUuidConfigured: false,
+      configuredAtMs: 0
+    })
+    expect(settings.proxies).toEqual([])
     expect(settings.exchange.binanceFutures).toEqual({
       enabled: false,
       testnet: false,
@@ -22,6 +42,7 @@ describe('settings', () => {
       apiSecretConfigured: false
     })
     expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
+    expect(settings).not.toHaveProperty(legacyGateSettingsKey)
   })
 
   it('normalizes unsafe clip padding and keeps user output folder', () => {
@@ -57,6 +78,100 @@ describe('settings', () => {
     })
   })
 
+  it('normalizes proxy records and system notification settings without raw proxy passwords', () => {
+    const settings = normalizeSettings({
+      system: {
+        launchAtLogin: true,
+        proxyPaymentNotificationsEnabled: false,
+        clipSuccessNotificationsEnabled: false,
+        paymentReminderDaysBefore: 99
+      },
+      proxies: [{
+        id: 'proxy-1',
+        name: ' Main proxy ',
+        server: ' 1.2.3.4:9000 ',
+        login: ' trader ',
+        passwordConfigured: true,
+        nextProxyId: 'proxy-2',
+        localProxyPort: 1081,
+        paymentDueDate: '2026-06-20',
+        dashboardUrl: 'https://proxy.example.com/cabinet',
+        notes: ' paid monthly '
+      }]
+    }, '/app-data')
+
+    expect(settings.system).toEqual({
+      launchAtLogin: true,
+      proxyPaymentNotificationsEnabled: false,
+      clipSuccessNotificationsEnabled: false,
+      paymentReminderDaysBefore: 30
+    })
+    expect(settings.proxies).toEqual([{
+      id: 'proxy-1',
+      name: 'Main proxy',
+      server: '1.2.3.4:9000',
+      login: 'trader',
+      passwordConfigured: true,
+      nextProxyId: 'proxy-2',
+      localProxyPort: 1081,
+      paymentDueDay: 20,
+      dashboardUrl: 'https://proxy.example.com/cabinet',
+      notes: 'paid monthly'
+    }])
+    expect(JSON.stringify(settings)).not.toContain('proxy-password')
+  })
+
+  it('uses root as the default SSH login for proxy records', () => {
+    const settings = normalizeSettings({
+      proxies: [{
+        id: 'proxy-1',
+        name: 'Edgecenter',
+        server: '1.2.3.4',
+        login: ''
+      }]
+    }, '/app-data')
+
+    expect(settings.proxies[0]?.login).toBe('root')
+  })
+
+  it('uses 1083 as the default local proxy port for proxy records', () => {
+    const settings = normalizeSettings({
+      proxies: [{
+        id: 'proxy-1',
+        name: 'Edgecenter',
+        server: '1.2.3.4',
+        localProxyPort: 0
+      }]
+    }, '/app-data')
+
+    expect(settings.proxies[0]?.localProxyPort).toBe(defaultLocalProxyPort)
+  })
+
+  it('normalizes active proxy runtime without storing the VLESS uuid', () => {
+    const settings = normalizeSettings({
+      proxyRuntime: {
+        activeStartProxyId: ' proxy-1 ',
+        route: ' Edgecenter -> Vultr ',
+        entryHost: ' 92.38.129.126 ',
+        entryPort: 443,
+        localPort: 1083,
+        entryUuidConfigured: true,
+        configuredAtMs: 123
+      }
+    }, '/app-data')
+
+    expect(settings.proxyRuntime).toEqual({
+      activeStartProxyId: 'proxy-1',
+      route: 'Edgecenter -> Vultr',
+      entryHost: '92.38.129.126',
+      entryPort: 443,
+      localPort: 1083,
+      entryUuidConfigured: true,
+      configuredAtMs: 123
+    })
+    expect(settings.proxyRuntime).not.toHaveProperty('entryUuid')
+  })
+
   it('drops legacy external publishing settings from stored settings', () => {
     const settings = normalizeSettings({
       [legacyVideoProviderSettingsKey]: {
@@ -67,5 +182,18 @@ describe('settings', () => {
     } as Parameters<typeof normalizeSettings>[0], '/app-data')
 
     expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
+  })
+
+  it('drops legacy gated settings from stored settings', () => {
+    const settings = normalizeSettings({
+      [legacyGateSettingsKey]: {
+        [legacySubscriptionFlagKey]: true,
+        [legacyTelegramGateFlagKey]: true,
+        [legacyDiscordGateFlagKey]: true,
+        [legacyAdminPanelFlagKey]: true
+      }
+    } as Parameters<typeof normalizeSettings>[0], '/app-data')
+
+    expect(settings).not.toHaveProperty(legacyGateSettingsKey)
   })
 })

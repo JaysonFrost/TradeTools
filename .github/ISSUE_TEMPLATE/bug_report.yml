@@ -1,0 +1,70 @@
+name: Bug report
+description: Сообщить о проблеме в TradeTools
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за репорт. Не прикладывайте API-ключи, SSH-пароли, OBS WebSocket пароль и приватные IP серверов.
+  - type: input
+    id: version
+    attributes:
+      label: Версия TradeTools
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Операционная система
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Где проблема?
+      options:
+        - Видео / OBS / клипы
+        - Binance API
+        - Прокси / VPS / SSH
+        - Уведомления
+        - Автозапуск
+        - UI
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Что нужно сделать, чтобы увидеть проблему?
+      placeholder: |
+        1. Открыть ...
+        2. Нажать ...
+        3. Получить ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что ожидалось?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Что произошло?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи или текст ошибки
+      description: Вставьте только очищенные от секретов логи.
+      render: text

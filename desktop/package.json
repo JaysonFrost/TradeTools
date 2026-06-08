@@ -1,12 +1,27 @@
 {
-  "name": "tradecut",
+  "name": "tradetools",
   "version": "0.1.0",
-  "description": "Cross-platform desktop app for automatic trade video clipping and journal sync.",
+  "description": "TradeTools desktop app for automatic trade video clipping and proxy management.",
+  "author": "JaysonFrost",
+  "license": "MIT",
+  "homepage": "https://github.com/JaysonFrost/TradeClipper#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaysonFrost/TradeClipper.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JaysonFrost/TradeClipper/issues"
+  },
   "type": "module",
   "main": "out/main/app.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "dist:linux": "npm run build && electron-builder --linux AppImage --x64",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -15,15 +30,20 @@
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@types/ssh2": "^1.15.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
     "framer-motion": "^12.38.0",
     "keytar": "^7.9.0",
     "lucide-react": "^1.14.0",
     "obs-websocket-js": "^5.0.8",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-qr-code": "^2.0.21",
+    "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0"
   },
@@ -43,8 +63,13 @@
     "vitest": "^2.1.9"
   },
   "build": {
-    "appId": "com.tradecut.desktop",
-    "productName": "TradeCut",
+    "appId": "com.tradetools.desktop",
+    "productName": "TradeTools",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
     "files": [
       "out/**",
       "package.json"
@@ -54,11 +79,23 @@
     },
     "mac": {
       "icon": "build/icon.icns",
-      "category": "public.app-category.video"
+      "category": "public.app-category.video",
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
       "icon": "build/icon.png",
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TradeTools"
     },
     "linux": {
       "icon": "build/icon.png",

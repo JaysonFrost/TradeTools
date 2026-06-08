@@ -92,7 +92,7 @@ const uniqueClosedTrades = (trades: ClosedTrade[]): ClosedTrade[] => {
   })
 }
 
-const restrictedLocationMessage = 'Binance.com Futures API недоступен для текущей локации или аккаунта. TradeCut не может получать сделки через этот API; используйте биржу/API, доступные в вашей юрисдикции.'
+const restrictedLocationMessage = 'Binance.com Futures API недоступен для текущей локации или аккаунта. TradeTools не может получать сделки через этот API; используйте биржу/API, доступные в вашей юрисдикции.'
 
 const normalizeBinanceErrorMessage = (message: string): string => {
   const normalized = message.toLowerCase()

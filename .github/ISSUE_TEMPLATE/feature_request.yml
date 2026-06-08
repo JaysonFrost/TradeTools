@@ -1,0 +1,44 @@
+name: Feature request
+description: Предложить улучшение TradeTools
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите задачу через пользовательский сценарий: что человек хочет сделать и почему сейчас это неудобно.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - Видео / OBS / клипы
+        - Биржи и API
+        - Прокси / VPS / SSH
+        - Уведомления
+        - Автозапуск
+        - UI
+        - Документация
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решаем?
+      placeholder: "Когда я ..., мне нужно ..., но сейчас ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Как должно работать?
+      placeholder: "Я ожидаю, что пользователь сможет ..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: Есть ли обходной путь или другой вариант реализации?

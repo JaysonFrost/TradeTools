@@ -3,13 +3,14 @@ import { createObsService, type ObsClient } from '../../src/main/services/obs/ob
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 const configuredSettings = () => ({
-  ...createDefaultSettings('/tmp/tradecut'),
+  ...createDefaultSettings('/tmp/TradeTools'),
   obs: {
     host: '127.0.0.1',
     port: 4455,
     passwordConfigured: true
   }
 })
+const configuredReplayDir = () => configuredSettings().clip.replaySourceDir
 
 const createFakeClient = (replayBufferActive: boolean, replayPath?: string): ObsClient => ({
   connect: vi.fn().mockResolvedValue(undefined),
@@ -44,8 +45,8 @@ describe('obsService real websocket boundary', () => {
   })
 
   it('requests SaveReplayBuffer through OBS when replay buffer is active', async () => {
-    const client = createFakeClient(true, '/tmp/tradecut/obs-replays/replay.mp4')
-    const waitForReplayFile = vi.fn().mockResolvedValue('/tmp/tradecut/obs-replays/replay.mp4')
+    const client = createFakeClient(true, '/tmp/TradeTools/obs-replays/replay.mp4')
+    const waitForReplayFile = vi.fn().mockResolvedValue('/tmp/TradeTools/obs-replays/replay.mp4')
     const service = createObsService({
       now: () => 2000,
       getSettings: async () => configuredSettings(),
@@ -58,15 +59,15 @@ describe('obsService real websocket boundary', () => {
       ok: true,
       message: 'OBS Replay Buffer сохранён, свежий файл найден',
       requestedAtMs: 2000,
-      replayPath: '/tmp/tradecut/obs-replays/replay.mp4'
+      replayPath: '/tmp/TradeTools/obs-replays/replay.mp4'
     })
     expect(client.call).toHaveBeenCalledWith('GetReplayBufferStatus')
     expect(client.call).toHaveBeenCalledWith('SaveReplayBuffer')
     expect(client.call).toHaveBeenCalledWith('GetLastReplayBufferReplay')
     expect(waitForReplayFile).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/tmp/tradecut/obs-replays',
+      directory: configuredReplayDir(),
       afterMs: 2000,
-      preferredPath: '/tmp/tradecut/obs-replays/replay.mp4',
+      preferredPath: '/tmp/TradeTools/obs-replays/replay.mp4',
       previousSnapshot: undefined,
       timeoutMs: 30000
     }))
@@ -82,12 +83,12 @@ describe('obsService real websocket boundary', () => {
           replayBufferActive = true
           return undefined
         }
-        if (requestType === 'GetLastReplayBufferReplay') return { savedReplayPath: '/tmp/tradecut/obs-replays/replay.mp4' }
+        if (requestType === 'GetLastReplayBufferReplay') return { savedReplayPath: '/tmp/TradeTools/obs-replays/replay.mp4' }
         return undefined
       }),
       disconnect: vi.fn().mockResolvedValue(undefined)
     }
-    const waitForReplayFile = vi.fn().mockResolvedValue('/tmp/tradecut/obs-replays/replay.mp4')
+    const waitForReplayFile = vi.fn().mockResolvedValue('/tmp/TradeTools/obs-replays/replay.mp4')
     const service = createObsService({
       now: () => 2100,
       getSettings: async () => configuredSettings(),
@@ -100,7 +101,7 @@ describe('obsService real websocket boundary', () => {
       ok: true,
       message: 'OBS Replay Buffer сохранён, свежий файл найден',
       requestedAtMs: 2100,
-      replayPath: '/tmp/tradecut/obs-replays/replay.mp4'
+      replayPath: '/tmp/TradeTools/obs-replays/replay.mp4'
     })
     expect(client.call).toHaveBeenCalledWith('StartReplayBuffer')
     expect(client.call).toHaveBeenCalledWith('SaveReplayBuffer')
@@ -150,7 +151,7 @@ describe('obsService real websocket boundary', () => {
 
     await expect(service.testReplaySave()).resolves.toEqual({
       ok: false,
-      message: 'OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: /tmp/tradecut/obs-replays. TradeCut ждёт до 30с и ищет видео в подпапках. Проверьте, что OBS действительно создаёт новый replay-файл в этой папке.',
+      message: `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${configuredReplayDir()}. TradeTools ждёт до 30с и ищет видео в подпапках. Проверьте, что OBS действительно создаёт новый replay-файл в этой папке.`,
       requestedAtMs: 2500
     })
   })
@@ -175,5 +176,26 @@ describe('obsService real websocket boundary', () => {
       message: 'OBS недоступен: ECONNREFUSED',
       checkedAtMs: 3000
     })
+  })
+
+  it('explains OBS websocket authentication failures during replay save', async () => {
+    const client: ObsClient = {
+      connect: vi.fn().mockRejectedValue(new Error('Authentication failed.')),
+      call: vi.fn(),
+      disconnect: vi.fn().mockResolvedValue(undefined)
+    }
+    const service = createObsService({
+      now: () => 3100,
+      getSettings: async () => configuredSettings(),
+      getPassword: async () => 'wrong-secret',
+      createClient: () => client
+    })
+
+    await expect(service.testReplaySave()).resolves.toEqual({
+      ok: false,
+      message: 'Не удалось сохранить OBS Replay Buffer: OBS WebSocket отклонил пароль. Проверьте пароль в OBS -> Tools -> WebSocket Server Settings и заново сохраните его в TradeTools.',
+      requestedAtMs: 3100
+    })
+    expect(client.call).not.toHaveBeenCalledWith('SaveReplayBuffer')
   })
 })

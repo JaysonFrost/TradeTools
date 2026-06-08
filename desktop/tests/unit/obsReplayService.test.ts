@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createObsReplayService } from '../../src/main/services/obs/obsReplayService'
 
@@ -23,7 +24,7 @@ describe('obsReplayService', () => {
     expect(result).toEqual({
       ok: true,
       mode: 'dry-run',
-      replayPath: '/Users/igor/TradeClips/replays/2026-05-13_03-51-12_OBS_REPLAY.mp4',
+      replayPath: join('/Users/igor/TradeClips/replays', '2026-05-13_03-51-12_OBS_REPLAY.mp4'),
       message: 'Тестовое сохранение OBS Replay Buffer спланировано'
     })
   })

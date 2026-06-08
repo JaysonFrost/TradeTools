@@ -25,10 +25,15 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
       ...(patch.exchange?.binanceFutures ?? {})
     }
   },
-  access: {
-    ...current.access,
-    ...(patch.access ?? {})
-  }
+  system: {
+    ...current.system,
+    ...(patch.system ?? {})
+  },
+  proxyRuntime: {
+    ...current.proxyRuntime,
+    ...(patch.proxyRuntime ?? {})
+  },
+  proxies: patch.proxies ?? current.proxies
 })
 
 export const createSettingsStore = (appDataDir: string): SettingsStore => {

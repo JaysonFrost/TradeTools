@@ -1,11 +1,12 @@
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
-import { basename, extname, isAbsolute, relative, resolve } from 'node:path'
+import { access, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
-import { buildClipFileNames, buildClipOutputPaths } from '../video/clipPaths'
+import { buildClipFileNames, buildClipOutputPaths, toSafeClipFileBaseName } from '../video/clipPaths'
+import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 import { waitForNewestReplayFile } from '../video/replayFileFinder'
 import { planReplayTrim } from '../video/trimPlanner'
-import { probeVideoDurationSeconds, type VideoDurationProbe } from '../video/videoProbe'
+import { probeVideoDetails, type VideoDetails, type VideoDetailsProbe, type VideoDurationProbe } from '../video/videoProbe'
 import type { ClosedTrade } from './simulatedTradePipeline'
 
 export type ClipReviewStatus = 'pending-review'
@@ -31,8 +32,14 @@ export type TradeClipMetadata = ClipQueueItem & {
   replayPath: string
   replaySavedAtMs: number
   replayDurationSeconds: number
+  replayFrameRate?: number
   outputDurationSeconds: number
+  outputFrameRate?: number
   outputSizeBytes: number
+  videoDiagnostics: {
+    replay: VideoDetails
+    output: VideoDetails
+  }
   trade: ClosedTrade
   trim: {
     startSeconds: number
@@ -53,17 +60,24 @@ export type DeleteClipFromQueueResult = {
   metadataPath: string
 }
 
+export type RenameClipFileResult = {
+  ok: true
+  clip: ClipQueueItem
+}
+
 export type TradeClipPipelineDeps = {
   getSettings: () => Promise<AppSettings>
   saveReplayBuffer: () => Promise<SaveReplayBufferResult>
   runFfmpeg?: (args: string[]) => Promise<void>
   getVideoDurationSeconds?: VideoDurationProbe
+  getVideoDetails?: VideoDetailsProbe
   now?: () => number
 }
 
 export type TradeClipPipeline = {
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem>
   listPendingClips: () => Promise<ClipQueueItem[]>
+  renameClipFile: (input: { metadataPath: string, fileName: string }) => Promise<RenameClipFileResult>
   deleteClipFromQueue: (metadataPath: string) => Promise<DeleteClipFromQueueResult>
 }
 
@@ -121,13 +135,50 @@ const isPathInside = (parentPath: string, childPath: string): boolean => {
   return Boolean(childRelativePath) && !childRelativePath.startsWith('..') && !isAbsolute(childRelativePath)
 }
 
+const assertClipMetadataPath = (settings: AppSettings, metadataPath: string): string => {
+  const queueRoot = resolve(settings.clip.outputDir)
+  const resolvedMetadataPath = resolve(metadataPath)
+  if (extname(resolvedMetadataPath).toLowerCase() !== '.json' || !isPathInside(queueRoot, resolvedMetadataPath)) {
+    throw new Error('Некорректный путь метаданных клипа')
+  }
+
+  return resolvedMetadataPath
+}
+
+const normalizeClipVideoFileName = (value: string): string => {
+  const baseName = toSafeClipFileBaseName(value)
+  if (!baseName) throw new Error('Укажите имя файла')
+  return `${baseName}.mp4`
+}
+
+const minimumUsableFrameRate = 12
+
+const usableTargetFrameRate = (details: VideoDetails): number | undefined => {
+  const frameRate = details.averageFrameRate ?? details.nominalFrameRate
+  if (!frameRate || frameRate < minimumUsableFrameRate || frameRate > 240) return undefined
+  return frameRate
+}
+
+const assertUsableFrameRate = (details: VideoDetails, sourceLabel: string): void => {
+  const frameRate = details.averageFrameRate ?? details.nominalFrameRate
+  if (!frameRate || frameRate >= minimumUsableFrameRate) return
+
+  throw new Error(`${sourceLabel} содержит только ${frameRate.toFixed(1)} fps. TradeTools не может восстановить кадры, которых нет в исходной записи. Проверьте в OBS: Settings > Video > Common FPS Values, Output > Encoder overload, Game/Display Capture и Replay Buffer output.`)
+}
+
 export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipPipeline => {
-  const getVideoDurationSeconds = deps.getVideoDurationSeconds ?? probeVideoDurationSeconds
+  const getVideoDetails = deps.getVideoDetails ?? (
+    deps.getVideoDurationSeconds
+      ? async (path: string): Promise<VideoDetails> => ({ durationSeconds: await deps.getVideoDurationSeconds?.(path) ?? 0 })
+      : probeVideoDetails
+  )
   const runFfmpeg = deps.runFfmpeg ?? (async (args) => {
     const { spawn } = await import('node:child_process')
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', args, { stdio: 'ignore' })
-      child.on('error', reject)
+      const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: 'ignore' })
+      child.on('error', (error) => {
+        reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error)
+      })
       child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code ?? 'unknown'}`)))
     })
   })
@@ -153,7 +204,9 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
 
       const replayStat = await stat(replayPath)
       const replaySavedAtMs = replayStat.mtimeMs
-      const replayDurationSeconds = await getVideoDurationSeconds(replayPath)
+      const replayDetails = await getVideoDetails(replayPath)
+      assertUsableFrameRate(replayDetails, 'OBS replay-файл')
+      const replayDurationSeconds = replayDetails.durationSeconds
       const paths = buildClipOutputPaths(settings.clip.outputDir, trade)
       const trim = planReplayTrim({
         tradeEntryTimeMs: trade.entryTimeMs,
@@ -168,16 +221,19 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
         outputPath: nextTemporaryClipPath(paths.videoPath),
         startSeconds: trim.startSeconds,
         endSeconds: trim.endSeconds,
-        mode: 'reencode'
+        mode: 'reencode',
+        targetFrameRate: usableTargetFrameRate(replayDetails)
       })
       const temporaryVideoPath = ffmpegArgs.at(-1)
       if (!temporaryVideoPath) throw new Error('Не удалось подготовить временный путь клипа')
 
       await mkdir(paths.dayFolder, { recursive: true })
-      let outputDurationSeconds: number
+      let outputDetails: VideoDetails
       try {
         await runFfmpeg(ffmpegArgs)
-        outputDurationSeconds = await getVideoDurationSeconds(temporaryVideoPath)
+        outputDetails = await getVideoDetails(temporaryVideoPath)
+        assertUsableFrameRate(outputDetails, 'Готовый клип')
+        const outputDurationSeconds = outputDetails.durationSeconds
         if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
           throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность OBS Replay Buffer.`)
         }
@@ -210,8 +266,14 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
         replayPath,
         replaySavedAtMs,
         replayDurationSeconds,
-        outputDurationSeconds,
+        ...(replayDetails.averageFrameRate ? { replayFrameRate: replayDetails.averageFrameRate } : {}),
+        outputDurationSeconds: outputDetails.durationSeconds,
+        ...(outputDetails.averageFrameRate ? { outputFrameRate: outputDetails.averageFrameRate } : {}),
         outputSizeBytes: outputStat.size,
+        videoDiagnostics: {
+          replay: replayDetails,
+          output: outputDetails
+        },
         trade,
         trim
       }
@@ -221,20 +283,67 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     },
     async listPendingClips() {
       const settings = await deps.getSettings()
-      const metadataFiles = await collectJsonFiles(`${settings.clip.outputDir}/clips`)
+      const metadataFiles = await collectJsonFiles(resolve(settings.clip.outputDir))
       const items = await Promise.all(metadataFiles.map(parseMetadata))
       return items
         .filter((item): item is ClipQueueItem => item !== undefined)
         .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(a.videoPath)))
     },
-    async deleteClipFromQueue(metadataPath) {
+    async renameClipFile(input) {
       const settings = await deps.getSettings()
-      const queueRoot = resolve(settings.clip.outputDir, 'clips')
-      const resolvedMetadataPath = resolve(metadataPath)
-      if (extname(resolvedMetadataPath).toLowerCase() !== '.json' || !isPathInside(queueRoot, resolvedMetadataPath)) {
-        throw new Error('Некорректный путь метаданных клипа')
+      const resolvedMetadataPath = assertClipMetadataPath(settings, input.metadataPath)
+      const metadata = await parseTradeClipMetadata(resolvedMetadataPath)
+      if (!metadata) throw new Error('Метаданные клипа не найдены')
+
+      const currentVideoPath = resolve(metadata.videoPath)
+      const videoDirectory = dirname(currentVideoPath)
+      const queueRoot = resolve(settings.clip.outputDir)
+      if (!isPathInside(queueRoot, currentVideoPath)) throw new Error('Некорректный путь видео клипа')
+
+      const nextFileName = normalizeClipVideoFileName(input.fileName)
+      const nextVideoPath = join(videoDirectory, nextFileName)
+      if (resolve(nextVideoPath) === currentVideoPath) {
+        const unchanged = {
+          ...metadata,
+          title: nextFileName.replace(/\.mp4$/i, ''),
+          fileName: nextFileName,
+          videoPath: currentVideoPath,
+          metadataPath: resolvedMetadataPath
+        }
+        await writeFile(resolvedMetadataPath, `${JSON.stringify(unchanged, null, 2)}\n`, 'utf8')
+        return {
+          ok: true,
+          clip: toClipQueueItem(unchanged)
+        }
       }
 
+      await access(currentVideoPath).catch(() => {
+        throw new Error('Файл видео не найден')
+      })
+      await access(nextVideoPath).then(() => {
+        throw new Error('Файл с таким именем уже существует')
+      }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+
+      await rename(currentVideoPath, nextVideoPath)
+      const nextMetadata: TradeClipMetadata = {
+        ...metadata,
+        title: nextFileName.replace(/\.mp4$/i, ''),
+        fileName: nextFileName,
+        videoPath: nextVideoPath,
+        metadataPath: resolvedMetadataPath
+      }
+      await writeFile(resolvedMetadataPath, `${JSON.stringify(nextMetadata, null, 2)}\n`, 'utf8')
+
+      return {
+        ok: true,
+        clip: toClipQueueItem(nextMetadata)
+      }
+    },
+    async deleteClipFromQueue(metadataPath) {
+      const settings = await deps.getSettings()
+      const resolvedMetadataPath = assertClipMetadataPath(settings, metadataPath)
       const metadata = await parseTradeClipMetadata(resolvedMetadataPath)
       if (!metadata) throw new Error('Метаданные клипа не найдены')
 

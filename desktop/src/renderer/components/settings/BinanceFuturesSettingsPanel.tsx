@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
-import { getTradeCutApi } from '../../lib/tradeCutApi'
+import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
@@ -28,7 +28,7 @@ export const BinanceFuturesSettingsPanel = ({ settings, onSaved }: BinanceFuture
     setSaving(true)
     setMessage('')
     try {
-      const api = getTradeCutApi()
+      const api = getTradeToolsApi()
       const updated = await api.settings.update({
         exchange: {
           binanceFutures: {
@@ -54,7 +54,7 @@ export const BinanceFuturesSettingsPanel = ({ settings, onSaved }: BinanceFuture
     setTesting(true)
     setMessage('')
     try {
-      const api = getTradeCutApi()
+      const api = getTradeToolsApi()
       const status = await api.binance.testFuturesConnection()
       setMessage(status.message)
     } catch (error) {

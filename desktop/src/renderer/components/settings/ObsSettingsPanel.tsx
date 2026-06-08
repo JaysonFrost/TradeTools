@@ -1,7 +1,7 @@
 import { FolderOpen } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
-import { getTradeCutApi } from '../../lib/tradeCutApi'
+import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
@@ -15,8 +15,8 @@ const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 p
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState('4455')
-  const [paddingBefore, setPaddingBefore] = useState('3')
-  const [paddingAfter, setPaddingAfter] = useState('5')
+  const [paddingBefore, setPaddingBefore] = useState('2')
+  const [paddingAfter, setPaddingAfter] = useState('2')
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
@@ -37,7 +37,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setSaving(true)
     setMessage('')
     try {
-      const api = getTradeCutApi()
+      const api = getTradeToolsApi()
       const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         obs: {
@@ -63,7 +63,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
     try {
-      const api = getTradeCutApi()
+      const api = getTradeToolsApi()
       const selectedPath = await api.dialog.selectDirectory(currentPath.trim() || undefined)
       if (!selectedPath) return
       setValue(selectedPath)
@@ -106,14 +106,14 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         <div className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
           Папка OBS replay
           <div className="mt-1 flex gap-2">
-            <input className={inputClass.replace('mt-1 ', '')} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
+            <input className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
             <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
           </div>
         </div>
         <div className="text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-3">
           Папка клипов
           <div className="mt-1 flex gap-2">
-            <input className={inputClass.replace('mt-1 ', '')} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
+            <input className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
             <Button variant="ghost" onClick={() => void selectDirectory(outputDir, setOutputDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
           </div>
         </div>

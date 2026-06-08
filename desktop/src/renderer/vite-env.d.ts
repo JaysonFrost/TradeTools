@@ -1,10 +1,10 @@
-import type { TradeCutApi } from '../../preload'
+import type { TradeToolsApi } from '../../preload'
 
 declare module '*.css'
 
 declare global {
   interface Window {
-    tradeCut: TradeCutApi
+    tradeTools: TradeToolsApi
   }
 }
 

@@ -17,6 +17,7 @@ export type ReplayFileSearchInput = {
 export type ReplayFileWaitInput = ReplayFileSearchInput & {
   timeoutMs?: number
   pollIntervalMs?: number
+  stablePollIntervalMs?: number
   sleep?: (durationMs: number) => Promise<void>
   signal?: AbortSignal
 }
@@ -24,6 +25,7 @@ export type ReplayFileWaitInput = ReplayFileSearchInput & {
 const replayExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const defaultFreshnessToleranceMs = 2_000
 const defaultSearchDepth = 3
+const defaultStablePollIntervalMs = 750
 
 const extensionOf = (fileName: string): string => {
   const index = fileName.lastIndexOf('.')
@@ -97,6 +99,24 @@ export const findNewestReplayFile = async (input: ReplayFileSearchInput): Promis
 
 const defaultSleep = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
+const waitForStableFile = async (path: string, input: ReplayFileWaitInput): Promise<boolean> => {
+  const sleep = input.sleep ?? defaultSleep
+  const stablePollIntervalMs = input.stablePollIntervalMs ?? defaultStablePollIntervalMs
+
+  try {
+    const first = await stat(path)
+    if (!first.isFile() || first.size <= 0) return false
+
+    await sleep(stablePollIntervalMs)
+    if (input.signal?.aborted) return false
+
+    const second = await stat(path)
+    return second.isFile() && second.size === first.size && second.mtimeMs === first.mtimeMs
+  } catch {
+    return false
+  }
+}
+
 export const waitForNewestReplayFile = async (input: ReplayFileWaitInput): Promise<string | undefined> => {
   const timeoutMs = input.timeoutMs ?? 30_000
   const pollIntervalMs = input.pollIntervalMs ?? 250
@@ -105,7 +125,7 @@ export const waitForNewestReplayFile = async (input: ReplayFileWaitInput): Promi
 
   while (!input.signal?.aborted && Date.now() - startedAtMs <= timeoutMs) {
     const replayPath = await findNewestReplayFile(input)
-    if (replayPath) return replayPath
+    if (replayPath && await waitForStableFile(replayPath, input)) return replayPath
 
     await sleep(pollIntervalMs)
   }

@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.png binary
+*.icns binary
+*.ico binary
+*.mp4 binary
+*.mov binary
+*.mkv binary
+*.exe binary
+*.dmg binary
+*.AppImage binary
