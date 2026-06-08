@@ -740,7 +740,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                           </div>
                         </label>
                         <label className="text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Сегмент, сек<input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Интервал буфера, сек<input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" /></label>
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">

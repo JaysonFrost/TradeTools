@@ -183,7 +183,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               <input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" />
             </label>
             <label className="text-xs font-medium text-zinc-500">
-              Сегмент, сек
+              Интервал буфера, сек
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
             </label>
             <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">Окно терминала должно оставаться открытым. На macOS может потребоваться разрешение записи экрана.</p>

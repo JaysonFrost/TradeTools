@@ -10,8 +10,8 @@ export type WindowRecorderControllerProps = {
 
 const chooseMimeType = (): string => {
   const candidates = [
-    'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
+    'video/webm;codecs=vp9',
     'video/webm'
   ]
 
@@ -29,7 +29,6 @@ const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): Me
     mandatory: {
       chromeMediaSource: 'desktop',
       chromeMediaSourceId: sourceId,
-      minFrameRate: frameRate,
       maxFrameRate: frameRate,
       maxWidth: 3840,
       maxHeight: 2160
@@ -56,11 +55,11 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
     let disposed = false
     let stream: MediaStream | undefined
     let recorder: MediaRecorder | undefined
-    let segmentTimer: number | undefined
+    let sessionTimer: number | undefined
 
     const cleanup = () => {
       disposed = true
-      if (segmentTimer !== undefined) window.clearTimeout(segmentTimer)
+      if (sessionTimer !== undefined) window.clearTimeout(sessionTimer)
       if (recorder?.state === 'recording') recorder.stop()
       stream?.getTracks().forEach((track) => track.stop())
     }
@@ -94,52 +93,63 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
 
       stream = mediaStream
       const mimeType = chooseMimeType()
-      const segmentDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
+      const chunkDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
+      const sessionDurationMs = Math.max(60_000, Math.min(300_000, settings.clip.replayBufferSeconds * 1000))
 
-      const startSegment = () => {
+      const startRecordingSession = () => {
         if (disposed || !stream) return
 
-        const chunks: Blob[] = []
-        const startedAtMs = Date.now()
+        const sessionId = `${source.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        let sequence = 0
+        let chunkStartedAtMs = Date.now()
         recorder = new MediaRecorder(stream, {
           ...(mimeType ? { mimeType } : {}),
-          videoBitsPerSecond: 4_000_000
+          videoBitsPerSecond: 6_000_000
         })
         recorder.ondataavailable = (event) => {
-          if (event.data.size > 0) chunks.push(event.data)
+          if (event.data.size <= 0) return
+
+          const endedAtMs = Date.now()
+          const startedAtMs = chunkStartedAtMs
+          chunkStartedAtMs = endedAtMs
+          const currentSequence = sequence
+          sequence += 1
+
+          void (async () => {
+            if (disposed) return
+
+            const status = await api.recording.appendSegment({
+              sourceId: source.id,
+              sourceName: source.name,
+              sessionId,
+              sequence: currentSequence,
+              startedAtMs,
+              endedAtMs,
+              mimeType: event.data.type || mimeType || 'video/webm',
+              data: await event.data.arrayBuffer()
+            })
+            onStatusChange(status)
+          })().catch((error) => {
+            onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось сохранить часть записи'))
+          })
         }
         recorder.onerror = () => {
           onStatusChange(createLocalStatus(settings, 'Встроенная запись окна остановилась с ошибкой'))
         }
         recorder.onstop = () => {
-          const endedAtMs = Date.now()
-          const blob = new Blob(chunks, { type: mimeType || 'video/webm' })
-
-          void (async () => {
-            if (!disposed && blob.size > 0) {
-              const status = await api.recording.appendSegment({
-                sourceId: source.id,
-                sourceName: source.name,
-                startedAtMs,
-                endedAtMs,
-                mimeType: blob.type,
-                data: await blob.arrayBuffer()
-              })
-              onStatusChange(status)
-            }
-          })().catch((error) => {
-            onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось сохранить сегмент записи'))
-          }).finally(() => {
-            if (!disposed) startSegment()
-          })
+          if (sessionTimer !== undefined) {
+            window.clearTimeout(sessionTimer)
+            sessionTimer = undefined
+          }
+          if (!disposed) startRecordingSession()
         }
-        recorder.start()
-        segmentTimer = window.setTimeout(() => {
+        recorder.start(chunkDurationMs)
+        sessionTimer = window.setTimeout(() => {
           if (recorder?.state === 'recording') recorder.stop()
-        }, segmentDurationMs)
+        }, sessionDurationMs)
       }
 
-      startSegment()
+      startRecordingSession()
     }
 
     void start().catch((error) => {

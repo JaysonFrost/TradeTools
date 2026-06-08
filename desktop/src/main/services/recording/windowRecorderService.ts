@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdir, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
@@ -15,6 +15,8 @@ export type WindowCaptureSource = {
 export type WindowRecordingSegmentInput = {
   sourceId: string
   sourceName: string
+  sessionId?: string
+  sequence?: number
   startedAtMs: number
   endedAtMs: number
   mimeType: string
@@ -55,6 +57,8 @@ type StoredSegment = {
   id: string
   sourceId: string
   sourceName: string
+  sessionId: string
+  sequence: number
   startedAtMs: number
   endedAtMs: number
   path: string
@@ -122,10 +126,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   const pruneSegments = async (settings: AppSettings, nowMs = Date.now()) => {
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const cutoffMs = nowMs - maxAgeMs
+    const sessionLastEndedAt = new Map<string, number>()
+
+    for (const segment of segments) {
+      sessionLastEndedAt.set(segment.sessionId, Math.max(sessionLastEndedAt.get(segment.sessionId) ?? 0, segment.endedAtMs))
+    }
 
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       const segment = segments[index]
-      if (!segment || segment.endedAtMs >= cutoffMs) continue
+      if (!segment || (sessionLastEndedAt.get(segment.sessionId) ?? segment.endedAtMs) >= cutoffMs) continue
 
       segments.splice(index, 1)
       await rm(segment.path, { force: true }).catch(() => undefined)
@@ -185,18 +194,84 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     return relevantSegments(settings)
   }
 
+  const buildSessionFiles = async (sourceSegments: StoredSegment[], neededSegments: StoredSegment[], replayId: string): Promise<string[]> => {
+    const lastNeededSequenceBySession = new Map<string, number>()
+    const sessionStartedAt = new Map<string, number>()
+
+    for (const segment of neededSegments) {
+      lastNeededSequenceBySession.set(segment.sessionId, Math.max(lastNeededSequenceBySession.get(segment.sessionId) ?? -1, segment.sequence))
+    }
+    for (const segment of sourceSegments) {
+      if (!lastNeededSequenceBySession.has(segment.sessionId)) continue
+      sessionStartedAt.set(segment.sessionId, Math.min(sessionStartedAt.get(segment.sessionId) ?? segment.startedAtMs, segment.startedAtMs))
+    }
+
+    const sessionIds = [...lastNeededSequenceBySession.keys()].sort((left, right) => (
+      (sessionStartedAt.get(left) ?? 0) - (sessionStartedAt.get(right) ?? 0)
+    ))
+    const sessionFiles: string[] = []
+
+    for (const sessionId of sessionIds) {
+      const lastSequence = lastNeededSequenceBySession.get(sessionId) ?? -1
+      const sessionSegments = sourceSegments
+        .filter((segment) => segment.sessionId === sessionId && segment.sequence <= lastSequence)
+        .sort((left, right) => left.sequence - right.sequence || left.startedAtMs - right.startedAtMs)
+      const firstSequence = sessionSegments[0]?.sequence
+      if (firstSequence !== 0) throw new Error('Встроенный рекордер уже очистил начало нужной сессии записи. Попробуйте увеличить длительность буфера записи.')
+
+      const sessionPath = join(replaysDir, `${toFileTimestamp(sessionSegments.at(-1)?.endedAtMs ?? Date.now())}-${replayId}-${sessionFiles.length}.webm`)
+      await rm(sessionPath, { force: true }).catch(() => undefined)
+      for (const segment of sessionSegments) {
+        await appendFile(sessionPath, await readFile(segment.path))
+      }
+      sessionFiles.push(sessionPath)
+    }
+
+    return sessionFiles
+  }
+
+  const encodeReplayFile = async (inputPath: string, outputPath: string, settings: AppSettings): Promise<void> => {
+    await runFfmpeg([
+      '-y',
+      '-fflags',
+      '+genpts',
+      '-i',
+      inputPath,
+      '-map',
+      '0:v:0',
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '18',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      String(settings.recording.frameRate),
+      '-fps_mode',
+      'cfr',
+      '-avoid_negative_ts',
+      'make_zero',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ])
+  }
+
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<string> => {
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
     const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs)
-    const exportSegments = sourceSegments.filter((segment) => (
+    const neededSegments = sourceSegments.filter((segment) => (
       segment.endedAtMs >= replayStartMs - exportToleranceMs &&
       segment.startedAtMs <= replayEndMs + exportToleranceMs
     ))
 
-    const first = exportSegments[0]
-    const last = exportSegments.at(-1)
+    const first = neededSegments[0]
+    const last = neededSegments.at(-1)
     if (!first || !last) {
       throw new Error('Встроенный рекордер ещё не накопил видео для этой сделки. Оставьте окно терминала открытым и дождитесь нескольких секунд записи.')
     }
@@ -210,20 +285,18 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     await mkdir(replaysDir, { recursive: true })
     const replayId = randomUUID()
     const listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
-    const copyReplayPath = join(replaysDir, `${toFileTimestamp(last.endedAtMs)}-${replayId}.webm`)
-    const encodedReplayPath = join(replaysDir, `${toFileTimestamp(last.endedAtMs)}-${replayId}.mp4`)
-    const concatList = exportSegments
-      .map((segment) => `file '${escapeConcatPath(segment.path)}'`)
-      .join('\n')
+    const replayPath = join(replaysDir, `${toFileTimestamp(last.endedAtMs)}-${replayId}.mp4`)
+    let sessionFiles: string[] = []
 
-    await writeFile(listPath, `${concatList}\n`, 'utf8')
     try {
-      let replayPath = copyReplayPath
-      try {
-        await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', copyReplayPath])
-      } catch {
-        replayPath = encodedReplayPath
-        await rm(copyReplayPath, { force: true }).catch(() => undefined)
+      sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
+      if (sessionFiles.length === 1 && sessionFiles[0]) {
+        await encodeReplayFile(sessionFiles[0], replayPath, settings)
+      } else {
+        const concatList = sessionFiles
+          .map((path) => `file '${escapeConcatPath(path)}'`)
+          .join('\n')
+        await writeFile(listPath, `${concatList}\n`, 'utf8')
         await runFfmpeg([
           '-y',
           '-fflags',
@@ -245,13 +318,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
           '18',
           '-pix_fmt',
           'yuv420p',
+          '-r',
+          String(settings.recording.frameRate),
           '-fps_mode',
           'cfr',
           '-avoid_negative_ts',
           'make_zero',
           '-movflags',
           '+faststart',
-          encodedReplayPath
+          replayPath
         ])
       }
       const savedAt = new Date(last.endedAtMs)
@@ -259,6 +334,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return replayPath
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
+      await Promise.all(sessionFiles.map((path) => rm(path, { force: true }).catch(() => undefined)))
     }
   }
 
@@ -268,6 +344,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
       const startedAtMs = sanitizeSegmentTime(input.startedAtMs)
       const endedAtMs = sanitizeSegmentTime(input.endedAtMs)
+      const sequence = Number(input.sequence)
       const data = Buffer.from(input.data)
       if (!input.sourceId || !input.sourceName || !startedAtMs || endedAtMs <= startedAtMs || data.length === 0) {
         throw new Error('Некорректный сегмент встроенной записи')
@@ -275,6 +352,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
       await mkdir(segmentsDir, { recursive: true })
       const id = randomUUID()
+      const sessionId = typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : id
       const path = join(segmentsDir, `${toFileTimestamp(startedAtMs)}-${toFileTimestamp(endedAtMs)}__${id}.webm`)
       await writeFile(path, data)
       const fileStat = await stat(path)
@@ -283,6 +361,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         id,
         sourceId: input.sourceId,
         sourceName: input.sourceName,
+        sessionId,
+        sequence: Number.isFinite(sequence) && sequence >= 0 ? Math.trunc(sequence) : 0,
         startedAtMs,
         endedAtMs,
         path,
