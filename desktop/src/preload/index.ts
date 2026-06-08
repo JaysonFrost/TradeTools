@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { BinanceFuturesConnectionStatus } from '../main/services/exchanges/binanceFuturesClient'
 import type { BinanceFuturesWatchStatus } from '../main/services/exchanges/binanceFuturesClipWatcher'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
+import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
+import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 
@@ -31,6 +33,7 @@ export type ProxySshCheckResult = {
 export type ProxyChainInstructionResult = {
   chain: Array<Pick<ProxyRecord, 'id' | 'name' | 'server' | 'login' | 'passwordConfigured'>>
   sshChecks: ProxySshCheckResult[]
+  network: NetworkEnvironmentSnapshot
   route: string
   terminal: string[]
 }
@@ -56,6 +59,7 @@ export type ProxyChainSetupResult = {
     authRequired: false
   }
   diagnostics: Array<{ name: string, ok: boolean, message: string }>
+  network: NetworkEnvironmentSnapshot
   configuredAtMs: number
 }
 
@@ -63,6 +67,8 @@ export type SystemNotificationResult = {
   ok: boolean
   message: string
 }
+
+export type { VpnBypassRouteResult }
 
 const api = {
   app: {
@@ -88,6 +94,7 @@ const api = {
     openDashboard: (proxyId: string): Promise<void> => ipcRenderer.invoke('proxies:open-dashboard', proxyId),
     configureChain: (proxyId: string): Promise<ProxyChainInstructionResult> => ipcRenderer.invoke('proxies:configure-chain', proxyId),
     setupChain: (input: { proxyId: string }): Promise<ProxyChainSetupResult> => ipcRenderer.invoke('proxies:setup-chain', input),
+    configureVpnBypass: (input: { proxyId: string }): Promise<VpnBypassRouteResult> => ipcRenderer.invoke('proxies:configure-vpn-bypass', input),
     onConfigureChainProgress: (callback: (progress: ProxyChainSetupProgress) => void): (() => void) => {
       const listener = (_event: IpcRendererEvent, progress: ProxyChainSetupProgress) => callback(progress)
       ipcRenderer.on('proxies:configure-chain-progress', listener)

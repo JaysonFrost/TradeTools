@@ -1,7 +1,7 @@
-import { ArrowDown, ArrowUp, CalendarClock, ExternalLink, GripVertical, KeyRound, Pencil, Plus, Route, Save, Server, Trash2, UserRound, Wrench } from 'lucide-react'
+import { ArrowDown, ArrowUp, CalendarClock, ExternalLink, GripVertical, KeyRound, Pencil, Plus, Route, Save, Server, ShieldAlert, Trash2, UserRound, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, ProxyRecord } from '../../../main/services/settings/settings'
-import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
+import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult, VpnBypassRouteResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { Badge } from '../ui/Badge'
@@ -20,7 +20,8 @@ export type ProxyVaultRuntimeState = {
   chainCheckProgress: ProxyChainSetupProgress[]
   chainSetupResult?: ProxyChainSetupResult
   chainSetupProgress: ProxyChainSetupProgress[]
-  activeOperation?: 'check' | 'setup'
+  vpnBypassResult?: VpnBypassRouteResult
+  activeOperation?: 'check' | 'setup' | 'vpn-bypass'
 }
 
 type ProxyFormState = {
@@ -178,6 +179,81 @@ const progressStatusClass = (status: ProxyChainSetupProgress['status']): string 
   return 'text-sky-300'
 }
 
+type NetworkDiagnosticsSnapshot = ProxyChainSetupResult['network']
+
+const networkStatusClass = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
+  if (status === 'ok') return 'text-emerald-200'
+  if (status === 'warning') return 'text-amber-200'
+  return 'text-sky-200'
+}
+
+const networkStatusBorderClass = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
+  if (status === 'ok') return 'border-emerald-400/20 bg-emerald-400/10'
+  if (status === 'warning') return 'border-amber-400/20 bg-amber-400/10'
+  return 'border-sky-400/20 bg-sky-400/10'
+}
+
+const networkStatusLabel = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
+  if (status === 'ok') return 'OK'
+  if (status === 'warning') return 'Внимание'
+  return 'Info'
+}
+
+const NetworkDiagnosticsBlock = ({ network }: { network?: NetworkDiagnosticsSnapshot }) => {
+  if (!network) return null
+
+  const hasWarning = network.likelyVpnActive || network.systemProxyEnabled || network.diagnostics.some((diagnostic) => diagnostic.status === 'warning')
+
+  return (
+    <div className={`mt-3 rounded-2xl border p-4 ${hasWarning ? 'border-amber-400/20 bg-amber-400/10' : 'border-white/10 bg-black/20'}`}>
+      <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+        <ShieldAlert size={16} className={hasWarning ? 'text-amber-200' : 'text-emerald-200'} />
+        <span>VPN и маршрут</span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        {network.diagnostics.map((diagnostic) => (
+          <div key={`${diagnostic.name}-${diagnostic.message}`} className={`rounded-xl border px-3 py-2 ${networkStatusBorderClass(diagnostic.status)}`}>
+            <div className={`text-[11px] font-semibold uppercase ${networkStatusClass(diagnostic.status)}`}>{networkStatusLabel(diagnostic.status)}</div>
+            <div className="mt-1 text-xs font-semibold text-zinc-100">{diagnostic.name}</div>
+            <div className="mt-1 break-words text-xs leading-5 text-zinc-400">{diagnostic.message}</div>
+          </div>
+        ))}
+      </div>
+      {network.advice.length > 0 && (
+        <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs leading-5 text-zinc-300">
+          {network.advice.map((item) => <li key={item}>{item}</li>)}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+const VpnBypassResultBlock = ({ result }: { result?: VpnBypassRouteResult }) => {
+  if (!result) return null
+
+  return (
+    <div className={`mt-4 rounded-2xl border p-4 text-xs leading-5 ${result.ok ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-amber-400/20 bg-amber-400/10'}`}>
+      <div className={`text-sm font-semibold ${result.ok ? 'text-emerald-100' : 'text-amber-100'}`}>Обход VPN для VPS</div>
+      <div className="mt-2 break-words text-zinc-300">{result.message}</div>
+      {result.gateway && (
+        <div className="mt-2 text-zinc-400">
+          Gateway: {result.gateway}{result.interfaceName ? `, интерфейс: ${result.interfaceName}` : ''}
+        </div>
+      )}
+      {result.routes.length > 0 && (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          {result.routes.map((route) => (
+            <div key={`${route.address}-${route.host}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+              <div className={route.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-amber-200'}>{route.address}</div>
+              <div className="mt-1 break-words text-zinc-400">{route.host}: {route.message}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const userFacingErrorMessage = (error: unknown, fallback: string): string => {
   if (!(error instanceof Error)) return fallback
 
@@ -210,7 +286,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     })
   }, [chainOrderIds, settings?.proxies])
   const busy = saving || runtimeState.activeOperation !== undefined
-  const { chainResult, chainCheckProgress, chainSetupResult, chainSetupProgress } = runtimeState
+  const { chainResult, chainCheckProgress, chainSetupResult, chainSetupProgress, vpnBypassResult } = runtimeState
 
   const updateRuntimeState = (patch: Partial<ProxyVaultRuntimeState>) => {
     onRuntimeStateChange((current) => ({ ...current, ...patch }))
@@ -432,6 +508,45 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     }
   }
 
+  const configureVpnBypass = async () => {
+    const firstProxyId = chainOrderIds[0]
+    const firstProxy = firstProxyId ? proxyById.get(firstProxyId) : undefined
+    if (!firstProxy) {
+      setMessage('Добавьте серверы, затем соберите связку')
+      return
+    }
+
+    setSaving(true)
+    setMessage('')
+    updateRuntimeState({
+      activeOperation: 'vpn-bypass',
+      vpnBypassResult: undefined
+    })
+    try {
+      let settingsForBypass = settings
+      if (chainOrderDirty) {
+        settingsForBypass = await saveChainOrder('Порядок связки сохранён, открываем настройку обхода VPN...')
+        if (!settingsForBypass) return
+        setSaving(true)
+      }
+
+      const latestFirstProxy = settingsForBypass?.proxies.find((proxy) => proxy.id === firstProxy.id) ?? firstProxy
+      const result = await getTradeToolsApi().proxies.configureVpnBypass({
+        proxyId: latestFirstProxy.id
+      })
+      updateRuntimeState({ vpnBypassResult: result })
+      setMessage(result.message)
+    } catch (error) {
+      setMessage(userFacingErrorMessage(error, 'Не удалось настроить обход VPN'))
+    } finally {
+      setSaving(false)
+      onRuntimeStateChange((current) => ({
+        ...current,
+        activeOperation: current.activeOperation === 'vpn-bypass' ? undefined : current.activeOperation
+      }))
+    }
+  }
+
   const deleteProxy = async (proxy: ProxyRecord) => {
     try {
       const updated = await getTradeToolsApi().proxies.delete(proxy.id)
@@ -453,6 +568,16 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           <p className="mt-1 text-sm text-zinc-500">Сохраняйте серверы, SSH-доступ, оплату и ссылки на хостинг. Серверы можно связать в маршрут.</p>
         </div>
         <Button variant="ghost" onClick={resetForm}><Plus size={17} className="mr-2" />Новый сервер</Button>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-xs leading-5 text-zinc-300">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
+          <ShieldAlert size={17} />
+          <span>Если пинг выше ожидаемого</span>
+        </div>
+        <p className="mt-2">
+          При проверке и настройке TradeTools автоматически смотрит VPN/антизапрет, системный proxy и маршрут к первому VPS. Если найден туннель, сначала нажмите `Обойти VPN для VPS`: на Windows приложение добавит прямые /32 маршруты до серверов через обычный gateway. Если ваш VPN поддерживает split tunneling, исключите TradeTools и локальный Xray core. После этого перезапустите связку и терминал.
+        </p>
       </div>
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -564,6 +689,10 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               <Wrench size={16} className="mr-2" />
               Проверить связку
             </Button>
+            <Button variant="ghost" onClick={() => void configureVpnBypass()} disabled={busy || orderedChainProxies.length === 0}>
+              <ShieldAlert size={16} className="mr-2" />
+              Обойти VPN для VPS
+            </Button>
             <Button onClick={() => void setupChainOnServers()} disabled={busy || orderedChainProxies.length === 0}>
               <Server size={16} className="mr-2" />
               Настроить и запустить
@@ -656,6 +785,8 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           </div>
         )}
 
+        <VpnBypassResultBlock result={vpnBypassResult} />
+
         {chainSetupResult && (
           <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-xs leading-5 text-zinc-200">
             <div className="text-sm font-semibold text-emerald-100">Связка настроена и локальный proxy запущен</div>
@@ -676,7 +807,8 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
                 ))}
               </div>
             )}
-            <div className="mt-3 text-zinc-400">В торговом терминале укажите HTTP proxy: Host 127.0.0.1, Port {chainSetupResult.entryProxy.port}, логин и пароль пустые. Shadowsocks и Throne для этой схемы не нужны.</div>
+            <NetworkDiagnosticsBlock network={chainSetupResult.network} />
+            <div className="mt-3 text-zinc-400">В торговом терминале укажите HTTP proxy: Host 127.0.0.1, Port {chainSetupResult.entryProxy.port}, логин и пароль пустые. Дополнительный proxy-клиент для этой схемы не нужен.</div>
           </div>
         )}
       </div>
@@ -696,6 +828,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               </div>
             ))}
           </div>
+          <NetworkDiagnosticsBlock network={chainResult.network} />
           <div className="mt-3 text-xs leading-5 text-zinc-300">
             <h4 className="m-0 text-sm font-semibold text-zinc-100">Терминал</h4>
             <ol className="mt-2 list-decimal space-y-1 pl-4">

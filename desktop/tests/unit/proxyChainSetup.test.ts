@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProxyRecord } from '../../src/main/services/settings/settings'
+import { createProxyNetworkAdvice, findLikelyTunnelInterfaces } from '../../src/main/services/proxies/networkEnvironment'
+import { createWindowsVpnBypassRouteScript } from '../../src/main/services/proxies/vpnBypassRoutes'
 import { createLocalPortBusyMessage, createLocalXrayConfig, createPowerShellExpandArchiveCommand, createXrayReleaseDownloadUrl } from '../../src/main/services/proxies/xrayLocalRuntime'
 import { createProxyChainRoute, createXrayServerConfig } from '../../src/main/services/proxies/proxyChainSetup'
 import { defaultLocalProxyPort } from '../../src/shared/defaults'
@@ -106,5 +108,47 @@ describe('proxyChainSetup', () => {
     expect(message).toContain('v2RayTun')
     expect(message).toContain('другой локальный proxy-клиент')
     expect(message).toContain('1083')
+  })
+
+  it('detects common VPN and tunnel interface names', () => {
+    const matches = findLikelyTunnelInterfaces([
+      { name: 'Ethernet', description: 'Intel(R) Ethernet Controller' },
+      { name: 'vEthernet (WireGuard Tunnel)', description: 'WireGuard Tunnel Adapter' },
+      { name: 'Wi-Fi', description: 'Realtek Wireless' }
+    ])
+
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.description).toContain('WireGuard')
+  })
+
+  it('suggests split tunneling when VPN is likely active', () => {
+    const advice = createProxyNetworkAdvice({
+      likelyVpnActive: true,
+      systemProxyEnabled: true,
+      entryHost: '45.77.31.20',
+      localPort: 1083
+    })
+
+    expect(advice.join('\n')).toContain('split tunneling')
+    expect(advice.join('\n')).toContain('45.77.31.20')
+    expect(advice.join('\n')).toContain('127.0.0.1:1083')
+  })
+
+  it('builds a Windows route script for persistent VPS bypass routes', () => {
+    const script = createWindowsVpnBypassRouteScript({
+      targets: [
+        { host: '92.38.129.126', address: '92.38.129.126' },
+        { host: '45.77.31.20', address: '45.77.31.20' }
+      ],
+      outputPath: 'C:\\Users\\Trader\\AppData\\Roaming\\TradeTools\\vpn-bypass\\result.json'
+    })
+
+    expect(script).toContain("Get-NetRoute -DestinationPrefix '0.0.0.0/0'")
+    expect(script).toContain('route.exe -p ADD')
+    expect(script).toContain('MASK 255.255.255.255')
+    expect(script).toContain('METRIC 1 IF $candidate.InterfaceIndex')
+    expect(script).toContain('Не перезаписываю чужой маршрут автоматически')
+    expect(script).toContain('92.38.129.126')
+    expect(script).toContain('45.77.31.20')
   })
 })

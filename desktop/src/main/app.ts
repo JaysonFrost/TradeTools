@@ -7,9 +7,11 @@ import { dirname, extname, isAbsolute, join } from 'node:path'
 import { createBinanceFuturesClient } from './services/exchanges/binanceFuturesClient'
 import { createBinanceFuturesClipWatcher, type BinanceFuturesWatchStatus } from './services/exchanges/binanceFuturesClipWatcher'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
+import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
 import { setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
-import { checkSshConnection, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
+import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
+import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
@@ -53,11 +55,16 @@ type ProxySaveInput = {
 type ProxyChainInstructionResult = {
   chain: Array<Pick<ProxyRecord, 'id' | 'name' | 'server' | 'login' | 'passwordConfigured'>>
   sshChecks: SshConnectionCheckResult[]
+  network: NetworkEnvironmentSnapshot
   route: string
   terminal: string[]
 }
 
 type ProxyChainSetupRequest = {
+  proxyId?: string
+}
+
+type ProxyVpnBypassRequest = {
   proxyId?: string
 }
 
@@ -300,7 +307,17 @@ const resolveProxyChain = (settings: AppSettings, startProxyId: string): ProxyRe
   return chain
 }
 
-const buildProxyChainInstructions = (chain: ProxyRecord[], sshChecks: SshConnectionCheckResult[]): ProxyChainInstructionResult => {
+const networkStatusToProgressStatus = (status: NetworkDiagnosticStatus): ProxyChainProgressInput['status'] => {
+  if (status === 'ok') return 'success'
+  if (status === 'warning') return 'info'
+  return 'info'
+}
+
+const buildProxyChainInstructions = (
+  chain: ProxyRecord[],
+  sshChecks: SshConnectionCheckResult[],
+  network: NetworkEnvironmentSnapshot
+): ProxyChainInstructionResult => {
   const firstProxy = chain[0]
   if (!firstProxy) throw new Error('Связка пустая')
 
@@ -316,13 +333,15 @@ const buildProxyChainInstructions = (chain: ProxyRecord[], sshChecks: SshConnect
       passwordConfigured: proxy.passwordConfigured
     })),
     sshChecks,
+    network,
     route,
     terminal: [
-      'Shadowsocks и Throne не нужны: TradeTools уже поднял локальный HTTP proxy.',
+      'TradeTools поднимает локальный HTTP proxy для торгового терминала.',
       'В терминале включите proxy для торгового подключения.',
       'Host: 127.0.0.1',
       `Port: ${localPort}`,
-      'Type: HTTP. Логин и пароль оставьте пустыми.'
+      'Type: HTTP. Логин и пароль оставьте пустыми.',
+      ...network.advice
     ]
   }
 }
@@ -868,6 +887,29 @@ app.whenReady().then(() => {
       message: 'Данные серверов заполнены'
     })
 
+    const firstProxy = chain[0]
+    const firstEndpoint = firstProxy ? parseSshEndpoint(firstProxy.server) : undefined
+    const localPort = firstProxy?.localProxyPort || defaultLocalProxyPort
+
+    progress({
+      step: 'network',
+      status: 'running',
+      message: 'Проверяем VPN, системный proxy и маршрут к первому VPS'
+    })
+    const network = await inspectProxyNetworkEnvironment({
+      entryHost: firstEndpoint?.host,
+      localPort
+    })
+    for (const diagnostic of network.diagnostics) {
+      progress({
+        proxyId: firstProxy?.id,
+        proxyName: firstProxy ? proxyDisplayName(firstProxy) : undefined,
+        step: 'network',
+        status: networkStatusToProgressStatus(diagnostic.status),
+        message: `${diagnostic.name}: ${diagnostic.message}`
+      })
+    }
+
     const sshChecks = []
     for (const proxy of chain) {
       const password = passwords.get(proxy.id)
@@ -909,7 +951,7 @@ app.whenReady().then(() => {
       status: 'success',
       message: 'SSH-проверка связки завершена, инструкция готова'
     })
-    return buildProxyChainInstructions(chain, sshChecks)
+    return buildProxyChainInstructions(chain, sshChecks, network)
   })
   ipcMain.handle('proxies:setup-chain', async (event, input: ProxyChainSetupRequest) => {
     const id = asString(input?.proxyId)
@@ -926,6 +968,17 @@ app.whenReady().then(() => {
       onProgress: (progress) => {
         event.sender.send('proxies:setup-chain-progress', progress)
       }
+    })
+  })
+  ipcMain.handle('proxies:configure-vpn-bypass', async (_event, input: ProxyVpnBypassRequest): Promise<VpnBypassRouteResult> => {
+    const id = asString(input?.proxyId)
+    if (!id) throw new Error('Некорректный ID сервера')
+
+    const settings = await settingsStore.load()
+    const chain = resolveProxyChain(settings, id)
+    return configureVpnBypassRoutes({
+      chain,
+      appDataDir: app.getPath('userData')
     })
   })
   ipcMain.handle('binance:test-futures-connection', async () => {
