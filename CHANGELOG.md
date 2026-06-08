@@ -4,6 +4,12 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.1.2] - 2026-06-08
+
+### Fixed
+
+- Fixed Windows startup crash caused by importing `electron-updater` as an ESM named export.
+
 ## [0.1.1] - 2026-06-08
 
 ### Added
