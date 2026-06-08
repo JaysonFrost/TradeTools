@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
 import { dirname, extname, isAbsolute, join } from 'node:path'
 import { createBinanceFuturesClient } from './services/exchanges/binanceFuturesClient'
 import { createBinanceFuturesClipWatcher, type BinanceFuturesWatchStatus } from './services/exchanges/binanceFuturesClipWatcher'
@@ -10,6 +10,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
 import { setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
+import { createWindowRecorderService, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
@@ -218,6 +219,8 @@ const assertHttpUrl = (url: string): string => {
   throw new Error('Ссылка должна начинаться с http:// или https://')
 }
 
+const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
+
 const normalizePaymentDueDay = (value: unknown, legacyDate?: unknown): number => {
   const directDay = Number(value)
   if (Number.isFinite(directDay) && directDay >= 1 && directDay <= 31) return Math.trunc(directDay)
@@ -400,9 +403,14 @@ app.whenReady().then(() => {
     getSettings: () => settingsStore.load(),
     getPassword: () => secretStore.getObsPassword()
   })
+  const windowRecorderService = createWindowRecorderService({
+    appDataDir: app.getPath('userData')
+  })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
-    saveReplayBuffer: () => obsService.testReplaySave()
+    saveReplayBuffer: (input) => input.settings.recording.mode === 'window'
+      ? windowRecorderService.saveReplayBuffer(input)
+      : obsService.testReplaySave()
   })
   const appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
@@ -623,9 +631,9 @@ app.whenReady().then(() => {
     }
   }
 
-  const ensureObsReplayBufferActive = async (force = false): Promise<void> => {
+  const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
-    if (!force && obsReplayBufferReady && checkedAtMs - lastObsReplayEnsureAtMs < obsReplayEnsureIntervalMs) return
+    if (!force && obsReplayBufferReady && checkedAtMs - lastObsReplayEnsureAtMs < obsReplayEnsureIntervalMs) return true
 
     lastObsReplayEnsureAtMs = checkedAtMs
     const status = await obsService.ensureReplayBufferActive()
@@ -639,7 +647,7 @@ app.whenReady().then(() => {
         lastError: status.message,
         message: `OBS: ${status.message}`
       }
-      return
+      return false
     }
 
     if (binanceFuturesWatchStatus.lastError?.startsWith('OBS')) {
@@ -649,11 +657,41 @@ app.whenReady().then(() => {
         message: status.message
       }
     }
+    return true
+  }
+
+  const ensureVideoRecordingReady = async (force = false): Promise<boolean> => {
+    const settings = await settingsStore.load()
+    if (settings.recording.mode === 'obs') {
+      return ensureObsReplayBufferActive(force)
+    }
+
+    const status = await windowRecorderService.getStatus(settings)
+    if (!status.active) {
+      binanceFuturesWatchStatus = {
+        ...binanceFuturesWatchStatus,
+        configured: true,
+        running: Boolean(binanceFuturesPollInterval),
+        lastError: status.message,
+        message: `Запись окна: ${status.message}`
+      }
+      return false
+    }
+
+    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна')) {
+      binanceFuturesWatchStatus = {
+        ...binanceFuturesWatchStatus,
+        lastError: undefined,
+        message: status.message
+      }
+    }
+    return true
   }
 
   const pollBinanceFuturesOnce = async () => {
     try {
-      await ensureObsReplayBufferActive()
+      const videoReady = await ensureVideoRecordingReady()
+      if (!videoReady) return
       const closedTrades = await binanceFuturesClipWatcher.pollOnce()
       binanceFuturesWatchStatus = {
         configured: true,
@@ -687,10 +725,18 @@ app.whenReady().then(() => {
       message: 'Binance watcher запускается'
     }
     binanceFuturesPollInterval = setInterval(() => void pollBinanceFuturesOnce(), binanceFuturesPollIntervalMs)
-    void ensureObsReplayBufferActive(true).finally(() => void pollBinanceFuturesOnce())
+    void ensureVideoRecordingReady(true).then((videoReady) => {
+      if (videoReady) void pollBinanceFuturesOnce()
+    }).catch((error) => {
+      console.error('Video recording readiness check failed:', error)
+      void pollBinanceFuturesOnce()
+    })
   }
 
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedCapturePermission = permission === 'media' || permission === 'display-capture'
+    callback(allowedCapturePermission && isTrustedRendererUrl(webContents.getURL()))
+  })
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
   ipcMain.handle('updates:check', () => appUpdateService.checkForUpdates())
@@ -764,6 +810,25 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
+  ipcMain.handle('recording:list-window-sources', async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 1, height: 1 },
+      fetchWindowIcons: false
+    })
+
+    return sources
+      .filter((source) => source.name.trim().length > 0)
+      .map((source) => ({
+        id: source.id,
+        name: source.name,
+        displayId: source.display_id
+      }))
+  })
+  ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
+  ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
+    windowRecorderService.appendSegment(input, await settingsStore.load())
+  ))
   ipcMain.handle('clipboard:write-text', (_event, text: string) => {
     if (typeof text !== 'string') throw new Error('Некорректный текст для буфера обмена')
     clipboard.writeText(text)
@@ -1019,7 +1084,10 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('binance:get-watch-status', () => getBinanceFuturesWatchStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
-  ipcMain.handle('clips:create-test', () => createClipAndNotify(createSimulatedClosedTrade(Date.now())))
+  ipcMain.handle('clips:create-test', async () => {
+    const settings = await settingsStore.load()
+    return createClipAndNotify(createSimulatedClosedTrade(Date.now(), settings.recording.mode === 'window' ? 5_000 : undefined))
+  })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
     const metadataPath = asString(input?.metadataPath)

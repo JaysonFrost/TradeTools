@@ -15,7 +15,7 @@ export type TopBarProps = {
 const pageCopy: Record<AppPage, { title: string, subtitle: string, setupLabel?: string }> = {
   video: {
     title: 'Видео сделок',
-    subtitle: 'OBS Replay Buffer, Binance Futures и очередь проверки клипов.',
+    subtitle: 'Встроенная запись окна или OBS, Binance Futures и очередь клипов.',
     setupLabel: 'Мастер настройки видео'
   },
   proxy: {

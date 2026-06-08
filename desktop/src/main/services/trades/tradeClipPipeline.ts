@@ -55,6 +55,11 @@ export type SaveReplayBufferResult = {
   replayPath?: string
 }
 
+export type SaveReplayBufferInput = {
+  settings: AppSettings
+  trade: ClosedTrade
+}
+
 export type DeleteClipFromQueueResult = {
   ok: true
   metadataPath: string
@@ -67,7 +72,7 @@ export type RenameClipFileResult = {
 
 export type TradeClipPipelineDeps = {
   getSettings: () => Promise<AppSettings>
-  saveReplayBuffer: () => Promise<SaveReplayBufferResult>
+  saveReplayBuffer: (input: SaveReplayBufferInput) => Promise<SaveReplayBufferResult>
   runFfmpeg?: (args: string[]) => Promise<void>
   getVideoDurationSeconds?: VideoDurationProbe
   getVideoDetails?: VideoDetailsProbe
@@ -193,19 +198,24 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
   return {
     async createClipForClosedTrade(trade) {
       const settings = await deps.getSettings()
-      const replaySave = await deps.saveReplayBuffer()
+      const replaySave = await deps.saveReplayBuffer({ settings, trade })
       if (!replaySave.ok) throw new Error(replaySave.message)
 
       const replayPath = replaySave.replayPath ?? await waitForNewestReplayFile({
         directory: settings.clip.replaySourceDir,
         afterMs: replaySave.requestedAtMs
       })
-      if (!replayPath) throw new Error(`OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`)
+      if (!replayPath) {
+        throw new Error(settings.recording.mode === 'window'
+          ? 'Встроенный рекордер не вернул replay-файл. Проверьте, что выбранное окно терминала открыто и запись активна.'
+          : `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`
+        )
+      }
 
       const replayStat = await stat(replayPath)
       const replaySavedAtMs = replayStat.mtimeMs
       const replayDetails = await getVideoDetails(replayPath)
-      assertUsableFrameRate(replayDetails, 'OBS replay-файл')
+      assertUsableFrameRate(replayDetails, settings.recording.mode === 'window' ? 'Встроенный replay-файл' : 'OBS replay-файл')
       const replayDurationSeconds = replayDetails.durationSeconds
       const paths = buildClipOutputPaths(settings.clip.outputDir, trade)
       const trim = planReplayTrim({
@@ -235,7 +245,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
         assertUsableFrameRate(outputDetails, 'Готовый клип')
         const outputDurationSeconds = outputDetails.durationSeconds
         if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
-          throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность OBS Replay Buffer.`)
+          throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
         }
         await rename(temporaryVideoPath, paths.videoPath)
       } catch (error) {

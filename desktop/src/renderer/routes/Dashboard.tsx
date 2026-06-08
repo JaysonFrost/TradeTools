@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { BinanceFuturesWatchStatus } from '../../main/services/exchanges/binanceFuturesClipWatcher'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
+import type { WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
@@ -9,6 +10,7 @@ import { SetupWizard } from '../components/setup/SetupWizard'
 import { BinanceFuturesSettingsPanel } from '../components/settings/BinanceFuturesSettingsPanel'
 import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
 import { ProxyVaultPanel, type ProxyVaultRuntimeState } from '../components/settings/ProxyVaultPanel'
+import { WindowRecorderController } from '../components/recording/WindowRecorderController'
 import { SystemSettingsPanel } from '../components/settings/SystemSettingsPanel'
 import { SupportDeveloperPage } from '../components/support/SupportDeveloperPage'
 import { ClipCard } from '../components/trade/ClipCard'
@@ -34,6 +36,7 @@ type VideoPageProps = {
   clips: ClipQueueItem[]
   clipMessage: string
   obs: ObsUiState
+  windowRecorder?: WindowRecorderStatus
   binanceWatch: BinanceFuturesWatchStatus
   onCreateTestClip: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
@@ -48,13 +51,18 @@ type ProxyPageProps = {
   onSettingsSaved: (settings: AppSettings) => void
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved }: VideoPageProps) => {
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved }: VideoPageProps) => {
+  const recordingMode = settings?.recording.mode ?? 'obs'
   const videoStatuses = useMemo(() => [
     {
-      name: 'OBS Replay Buffer',
-      description: obs.message,
-      status: obs.status,
-      tone: obs.connected ? 'success' as const : 'warning' as const
+      name: recordingMode === 'window' ? 'Встроенная запись окна' : 'OBS Replay Buffer',
+      description: recordingMode === 'window' ? windowRecorder?.message ?? 'Выберите окно терминала и сохраните настройки.' : obs.message,
+      status: recordingMode === 'window'
+        ? windowRecorder?.active ? 'Пишет' : 'Нужно настроить'
+        : obs.status,
+      tone: recordingMode === 'window'
+        ? windowRecorder?.active ? 'success' as const : 'warning' as const
+        : obs.connected ? 'success' as const : 'warning' as const
     },
     {
       name: 'Binance USDT-M Futures',
@@ -64,7 +72,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, binanceWatch, onCreateTe
         : 'Нужно настроить',
       tone: settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured && !binanceWatch.lastError ? 'success' as const : 'warning' as const
     }
-  ], [obs, settings, binanceWatch])
+  ], [obs, settings, windowRecorder, binanceWatch, recordingMode])
 
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
@@ -136,6 +144,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [clips, setClips] = useState<ClipQueueItem[]>([])
   const [lastCheck, setLastCheck] = useState<ObsTestReplayResult>()
   const [clipMessage, setClipMessage] = useState('')
+  const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
   const [proxyVaultRuntime, setProxyVaultRuntime] = useState<ProxyVaultRuntimeState>({
     chainCheckProgress: [],
@@ -156,17 +165,19 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextBinanceWatch] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextBinanceWatch, nextWindowRecorder] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
-        api.binance.getWatchStatus()
+        api.binance.getWatchStatus(),
+        api.recording.getStatus()
       ])
 
       setAppVersion(version)
       setSettings(nextSettings)
       setClips(pendingClips)
       setBinanceWatch(nextBinanceWatch)
+      setWindowRecorder(nextWindowRecorder)
       setObs((current) => {
         if (current.connected || current.status === 'Отключено') return current
 
@@ -191,6 +202,19 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
 
   const refreshObsStatus = async () => {
     const api = getTradeToolsApi()
+    const currentSettings = settings ?? await api.settings.get()
+    if (currentSettings.recording.mode === 'window') {
+      const status = await api.recording.getStatus()
+      setWindowRecorder(status)
+      setObs({
+        status: status.active ? 'Пишет' : 'Нужно настроить',
+        message: status.message,
+        connected: status.active,
+        replayBufferActive: status.active
+      })
+      return
+    }
+
     const status = await api.obs.getStatus()
 
     setObs({
@@ -230,6 +254,20 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const runHealthCheck = async (): Promise<string> => {
     try {
       const api = getTradeToolsApi()
+      const currentSettings = settings ?? await api.settings.get()
+      if (currentSettings.recording.mode === 'window') {
+        const status = await api.recording.getStatus()
+        setWindowRecorder(status)
+        setLastCheck({
+          ok: status.active,
+          message: status.message,
+          requestedAtMs: Date.now(),
+          replayPath: undefined
+        })
+        await loadLocalState()
+        return status.message
+      }
+
       const result = await api.obs.testReplaySave()
       setLastCheck(result)
       await Promise.all([refreshObsStatus(), loadLocalState()])
@@ -246,7 +284,10 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   }
 
   const createTestClip = async () => {
-    setClipMessage('Создаём тестовый клип: сохраняем OBS replay, ищем файл и режем ffmpeg...')
+    setClipMessage(settings?.recording.mode === 'window'
+      ? 'Создаём тестовый клип: собираем встроенный replay из окна и режем ffmpeg...'
+      : 'Создаём тестовый клип: сохраняем OBS replay, ищем файл и режем ffmpeg...'
+    )
     try {
       const api = getTradeToolsApi()
       const clip = await api.clips.createTest()
@@ -309,6 +350,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clips={clips}
           clipMessage={clipMessage}
           obs={obs}
+          windowRecorder={windowRecorder}
           binanceWatch={binanceWatch}
           onCreateTestClip={() => void createTestClip()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
@@ -325,6 +367,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       ) : (
         <SupportDeveloperPage />
       )}
+      <WindowRecorderController settings={settings} onStatusChange={setWindowRecorder} />
     </>
   )
 }

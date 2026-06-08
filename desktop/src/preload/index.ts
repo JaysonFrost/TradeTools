@@ -7,6 +7,7 @@ import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRou
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
+import type { WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
 
 export type ProxySaveInput = {
   id?: string
@@ -124,6 +125,11 @@ const api = {
   obs: {
     getStatus: (): Promise<ObsStatus> => ipcRenderer.invoke('obs:get-status'),
     testReplaySave: (): Promise<ObsTestReplayResult> => ipcRenderer.invoke('obs:test-replay-save')
+  },
+  recording: {
+    listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
+    getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
+    appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
   },
   binance: {
     testFuturesConnection: (): Promise<BinanceFuturesConnectionStatus> => ipcRenderer.invoke('binance:test-futures-connection'),

@@ -18,6 +18,13 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(2)
     expect(settings.clip.paddingAfterSeconds).toBe(2)
+    expect(settings.recording).toEqual({
+      mode: 'obs',
+      windowSourceId: '',
+      windowSourceName: '',
+      frameRate: 30,
+      segmentSeconds: 2
+    })
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
       launchAtLogin: false,
@@ -75,6 +82,26 @@ describe('settings', () => {
       testnet: true,
       apiKeyConfigured: true,
       apiSecretConfigured: true
+    })
+  })
+
+  it('normalizes built-in window recording settings', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        windowSourceId: ' window:123 ',
+        windowSourceName: ' Terminal ',
+        frameRate: 999,
+        segmentSeconds: 0
+      }
+    }, '/app-data')
+
+    expect(settings.recording).toEqual({
+      mode: 'window',
+      windowSourceId: 'window:123',
+      windowSourceName: 'Terminal',
+      frameRate: 60,
+      segmentSeconds: 1
     })
   })
 

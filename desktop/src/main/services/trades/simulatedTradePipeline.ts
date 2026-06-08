@@ -31,14 +31,14 @@ export type SimulatedClipPlan = {
   ffmpegArgs: string[]
 }
 
-export const createSimulatedClosedTrade = (exitTimeMs: number): ClosedTrade => ({
+export const createSimulatedClosedTrade = (exitTimeMs: number, durationMs = 109_000): ClosedTrade => ({
   id: `sim-${exitTimeMs}`,
   exchange: 'BINANCE',
   marketType: 'FUTURES',
   symbol: 'BTCUSDT',
   side: 'LONG',
   status: 'closed',
-  entryTimeMs: exitTimeMs - 109_000,
+  entryTimeMs: exitTimeMs - durationMs,
   exitTimeMs
 })
 

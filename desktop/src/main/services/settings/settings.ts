@@ -18,6 +18,13 @@ export type ProxyRecord = {
 
 export type AppSettings = {
   language: 'ru'
+  recording: {
+    mode: 'obs' | 'window'
+    windowSourceId: string
+    windowSourceName: string
+    frameRate: number
+    segmentSeconds: number
+  }
   clip: {
     paddingBeforeSeconds: number
     paddingAfterSeconds: number
@@ -64,6 +71,7 @@ export type PartialProxyRecord = Partial<ProxyRecord> & {
 
 export type PartialSettings = Partial<{
   language: string
+  recording: Partial<AppSettings['recording']>
   clip: Partial<AppSettings['clip']>
   obs: Partial<AppSettings['obs']>
   exchange: {
@@ -123,6 +131,8 @@ const normalizeHttpUrl = (value: unknown): string => {
   }
 }
 
+const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
+
 const normalizeProxyId = (value: unknown, fallbackIndex: number): string => {
   const id = normalizeString(value)
   return id.length > 0 ? id : `proxy-${fallbackIndex + 1}`
@@ -180,6 +190,13 @@ const normalizeProxyRuntime = (value: unknown): AppSettings['proxyRuntime'] => {
 
 export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   language: 'ru',
+  recording: {
+    mode: 'obs',
+    windowSourceId: '',
+    windowSourceName: '',
+    frameRate: 30,
+    segmentSeconds: 2
+  },
   clip: {
     paddingBeforeSeconds: 2,
     paddingAfterSeconds: 2,
@@ -223,6 +240,13 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
 
   return {
     language: 'ru',
+    recording: {
+      mode: normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode),
+      windowSourceId: normalizeString(settings.recording?.windowSourceId ?? defaults.recording.windowSourceId),
+      windowSourceName: normalizeString(settings.recording?.windowSourceName ?? defaults.recording.windowSourceName),
+      frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
+      segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10)
+    },
     clip: {
       paddingBeforeSeconds: clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, 60),
       paddingAfterSeconds: clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, 60),

@@ -4,6 +4,20 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.0] - 2026-06-08
+
+### Added
+
+- Added built-in terminal window recording mode, so trade clips can be created without OBS.
+- Added window source selection, FPS and segment settings to video setup.
+- Added IPC and main-process replay assembly for built-in window recording.
+
+### Changed
+
+- Video setup wizard now treats OBS as an optional alternative mode.
+- Binance watcher waits for the selected video source before creating clips.
+- README and user guide now document the no-OBS recording flow.
+
 ## [0.1.2] - 2026-06-08
 
 ### Fixed

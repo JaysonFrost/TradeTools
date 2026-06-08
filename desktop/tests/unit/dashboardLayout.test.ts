@@ -46,6 +46,23 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('clips:rename-file'")
   })
 
+  it('supports built-in terminal window recording without requiring OBS', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(settingsPanelSource).toContain('Встроенная запись окна')
+    expect(settingsPanelSource).toContain('listWindowSources')
+    expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
+    expect(controllerSource).toContain('recording.appendSegment')
+    expect(dashboardSource).toContain('<WindowRecorderController')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
+    expect(appSource).toContain("ipcMain.handle('recording:append-segment'")
+    expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
+  })
+
   it('opens clip preview from the preview artwork', async () => {
     const clipCardSource = await readFile(resolve('src/renderer/components/trade/ClipCard.tsx'), 'utf8')
 

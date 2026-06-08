@@ -11,6 +11,10 @@ const settingsFileName = 'settings.json'
 
 const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSettings => ({
   language: patch.language ?? current.language,
+  recording: {
+    ...current.recording,
+    ...(patch.recording ?? {})
+  },
   clip: {
     ...current.clip,
     ...(patch.clip ?? {})

@@ -3,13 +3,17 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('main app lifecycle', () => {
-  it('starts OBS Replay Buffer proactively when Binance watcher starts', async () => {
+  it('prepares the selected video recorder before Binance watcher polls trades', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const startWatcherIndex = source.indexOf('const startBinanceFuturesPolling')
-    const ensureObsIndex = source.indexOf('ensureObsReplayBufferActive(true)', startWatcherIndex)
+    const ensureVideoIndex = source.indexOf('ensureVideoRecordingReady(true)', startWatcherIndex)
+    const pollIndex = source.indexOf('pollBinanceFuturesOnce()', ensureVideoIndex)
 
     expect(source).toContain('const ensureObsReplayBufferActive')
-    expect(ensureObsIndex).toBeGreaterThan(startWatcherIndex)
+    expect(source).toContain('const ensureVideoRecordingReady')
+    expect(ensureVideoIndex).toBeGreaterThan(startWatcherIndex)
+    expect(pollIndex).toBeGreaterThan(ensureVideoIndex)
+    expect(source).toContain('if (!videoReady) return')
   })
 
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {

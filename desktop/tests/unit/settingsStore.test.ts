@@ -19,19 +19,34 @@ describe('settingsStore', () => {
     const settings = await store.load()
 
     expect(settings.language).toBe('ru')
+    expect(settings.recording.mode).toBe('obs')
     expect(settings.obs.host).toBe('127.0.0.1')
     expect(settings.clip.outputDir).toBe(join(tempDir, 'clips'))
   })
 
-  it('persists normalized OBS and clip settings without storing raw password', async () => {
+  it('persists normalized recording, OBS and clip settings without storing raw password', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
     const settings = await store.update({
+      recording: {
+        mode: 'window',
+        windowSourceId: 'terminal-source',
+        windowSourceName: 'Trading terminal',
+        frameRate: 24,
+        segmentSeconds: 3
+      },
       clip: { paddingBeforeSeconds: 99, outputDir: '/Users/igor/Clips' },
       obs: { host: 'localhost', port: 4455, passwordConfigured: true }
     })
 
+    expect(settings.recording).toEqual({
+      mode: 'window',
+      windowSourceId: 'terminal-source',
+      windowSourceName: 'Trading terminal',
+      frameRate: 24,
+      segmentSeconds: 3
+    })
     expect(settings.clip.paddingBeforeSeconds).toBe(60)
     expect(settings.clip.outputDir).toBe('/Users/igor/Clips')
     expect(settings.obs).toEqual({ host: 'localhost', port: 4455, passwordConfigured: true })
