@@ -84,6 +84,9 @@ const api = {
   clipboard: {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write-text', text)
   },
+  links: {
+    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('links:open-external', url)
+  },
   notifications: {
     test: (): Promise<SystemNotificationResult> => ipcRenderer.invoke('notifications:test')
   },

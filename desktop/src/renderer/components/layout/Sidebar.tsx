@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { Clapperboard, Heart, Network } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AppPage } from '../../lib/navigation'
+import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 
 export type SidebarProps = {
   activePage: AppPage
@@ -14,6 +15,7 @@ const items: Array<{ page: AppPage, label: string, description: string, icon: ty
 ]
 
 const supportItem = { page: 'support' as const, label: 'Сказать спасибо', description: 'USDT TRC20, TON, BSC', icon: Heart }
+const tradecoreUrl = 'https://t.me/tradekorr'
 
 export const Sidebar = ({ activePage, onNavigate }: SidebarProps) => (
   <aside className="glass-panel flex shrink-0 flex-col rounded-[24px] p-3 lg:h-full lg:w-72 lg:rounded-[28px] lg:p-4">
@@ -21,8 +23,18 @@ export const Sidebar = ({ activePage, onNavigate }: SidebarProps) => (
       <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600 shadow-[0_0_42px_rgba(113,50,245,0.45)]">
         <Clapperboard size={22} />
       </div>
-      <div>
-        <div className="text-base font-semibold tracking-[-0.02em]">TradeTools</div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-base font-semibold tracking-[-0.02em]">TradeTools</div>
+          <button
+            type="button"
+            className="text-[2px] leading-none text-zinc-500/55 transition hover:text-zinc-400"
+            title="Открыть Telegram-канал tradecore"
+            onClick={() => void getTradeToolsApi().links.openExternal(tradecoreUrl)}
+          >
+            by tradecore
+          </button>
+        </div>
         <div className="mono text-[11px] text-zinc-500">Video • Proxy</div>
       </div>
     </div>

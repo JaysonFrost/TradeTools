@@ -52,8 +52,12 @@ export const TopBar = ({ activePage, appVersion, onRunHealthCheck = () => undefi
     }
   }
 
+  const notificationMessageClass = notificationTone === 'warning'
+    ? 'border-amber-300/20 bg-amber-400/10 text-amber-200'
+    : 'border-white/10 bg-white/[0.04] text-zinc-300'
+
   return (
-    <header className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between xl:gap-6">
+    <header className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="m-0 text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">{copy.title}</h1>
@@ -61,11 +65,17 @@ export const TopBar = ({ activePage, appVersion, onRunHealthCheck = () => undefi
         </div>
         <p className="mt-2 text-sm text-zinc-400">{copy.subtitle}</p>
       </div>
-      <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:gap-3 xl:w-auto xl:justify-end">
-        <Button variant="ghost" className="px-3" title="Проверить системное уведомление" onClick={() => void testNotification()} disabled={testingNotification || !onTestNotification}><Bell size={17} /></Button>
-        {copy.setupLabel && onOpenSetupWizard && <Button variant="ghost" className="flex-1 sm:flex-none" onClick={onOpenSetupWizard}><Rocket size={17} className="mr-2" />{copy.setupLabel}</Button>}
-        {activePage === 'video' && <Button className="flex-1 sm:flex-none" onClick={onRunHealthCheck}><CircleCheck size={17} className="mr-2" />Проверить видео</Button>}
-        {notificationMessage && <span className={`w-full text-xs sm:w-auto ${notificationTone === 'warning' ? 'text-amber-300' : 'text-zinc-400'}`}>{notificationMessage}</span>}
+      <div className="flex min-w-0 flex-col gap-2 xl:items-end">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:gap-3 xl:w-auto xl:justify-end">
+          <Button variant="ghost" className="px-3" title="Проверить системное уведомление" onClick={() => void testNotification()} disabled={testingNotification || !onTestNotification}><Bell size={17} /></Button>
+          {copy.setupLabel && onOpenSetupWizard && <Button variant="ghost" className="flex-1 sm:flex-none" onClick={onOpenSetupWizard}><Rocket size={17} className="mr-2" />{copy.setupLabel}</Button>}
+          {activePage === 'video' && <Button className="flex-1 sm:flex-none" onClick={onRunHealthCheck}><CircleCheck size={17} className="mr-2" />Проверить видео</Button>}
+        </div>
+        {notificationMessage && (
+          <div className={`max-w-full break-words rounded-xl border px-3 py-2 text-xs leading-5 xl:max-w-[520px] ${notificationMessageClass}`}>
+            {notificationMessage}
+          </div>
+        )}
       </div>
     </header>
   )
