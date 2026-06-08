@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Client, type ConnectConfig } from 'ssh2'
 import type { ProxyRecord } from '../settings/settings'
+import { inspectProxyNetworkEnvironment, type NetworkEnvironmentSnapshot, type NetworkDiagnosticStatus } from './networkEnvironment'
 import { parseSshEndpoint } from './sshConnectionCheck'
 import { setupLocalXrayRuntime, type LocalProxyDiagnostic } from './xrayLocalRuntime'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
@@ -27,6 +28,7 @@ export type ProxyChainSetupResult = {
     authRequired: false
   }
   diagnostics: LocalProxyDiagnostic[]
+  network: NetworkEnvironmentSnapshot
   configuredAtMs: number
 }
 
@@ -209,6 +211,12 @@ const buildXrayInstallCommand = (config: Record<string, unknown>, listenPort: nu
 
 const redactSshPassword = (message: string, password: string): string => message.split(password).join('***')
 
+const networkStatusToProgressStatus = (status: NetworkDiagnosticStatus): ProxyChainSetupProgress['status'] => {
+  if (status === 'ok') return 'success'
+  if (status === 'warning') return 'info'
+  return 'info'
+}
+
 export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Promise<ProxyChainSetupResult> => {
   if (input.chain.length === 0) throw new Error('Связка пустая')
 
@@ -236,6 +244,31 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
       uuid: randomUUID()
     }
   })
+
+  const firstNode = nodes[0]
+  if (!firstNode) throw new Error('Связка пустая')
+  const localPort = input.chain[0]?.localProxyPort || defaultLocalProxyPort
+
+  progress({
+    proxyId: firstNode.proxy.id,
+    proxyName: proxyDisplayName(firstNode.proxy),
+    step: 'network',
+    status: 'running',
+    message: 'Проверяем VPN, системный proxy и маршрут к первому VPS'
+  })
+  const network = await inspectProxyNetworkEnvironment({
+    entryHost: firstNode.host,
+    localPort
+  })
+  for (const diagnostic of network.diagnostics) {
+    progress({
+      proxyId: firstNode.proxy.id,
+      proxyName: proxyDisplayName(firstNode.proxy),
+      step: 'network',
+      status: networkStatusToProgressStatus(diagnostic.status),
+      message: `${diagnostic.name}: ${diagnostic.message}`
+    })
+  }
 
   for (const node of [...nodes].reverse()) {
     const password = passwords.get(node.proxy.id)
@@ -289,9 +322,6 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
     }
   }
 
-  const firstNode = nodes[0]
-  if (!firstNode) throw new Error('Связка пустая')
-  const localPort = input.chain[0]?.localProxyPort || defaultLocalProxyPort
   progress({
     proxyId: firstNode.proxy.id,
     proxyName: proxyDisplayName(firstNode.proxy),
@@ -345,6 +375,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
     route: createProxyChainRoute(input.chain),
     entryProxy,
     diagnostics: entryProxy.diagnostics,
+    network,
     configuredAtMs
   }
 }
