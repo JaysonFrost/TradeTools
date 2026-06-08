@@ -4,13 +4,13 @@
   "description": "TradeTools desktop app for automatic trade video clipping and proxy management.",
   "author": "JaysonFrost",
   "license": "MIT",
-  "homepage": "https://github.com/JaysonFrost/TradeClipper#readme",
+  "homepage": "https://github.com/JaysonFrost/TradeTools#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JaysonFrost/TradeClipper.git"
+    "url": "git+https://github.com/JaysonFrost/TradeTools.git"
   },
   "bugs": {
-    "url": "https://github.com/JaysonFrost/TradeClipper/issues"
+    "url": "https://github.com/JaysonFrost/TradeTools/issues"
   },
   "type": "module",
   "main": "out/main/app.js",
