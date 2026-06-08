@@ -169,6 +169,7 @@ describe('Dashboard layout', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appShellSource = await readFile(resolve('src/renderer/components/layout/AppShell.tsx'), 'utf8')
     const systemSettingsSource = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
+    const updateServiceSource = await readFile(resolve('src/main/services/updates/appUpdateService.ts'), 'utf8')
     const releaseWorkflowSource = await readFile(resolve('../.github/workflows/release.yml'), 'utf8')
 
     expect(appSource).toContain('createAppUpdateService')
@@ -177,6 +178,9 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.on('updates:status'")
     expect(appShellSource).toContain('<UpdateBanner')
     expect(systemSettingsSource).toContain('Проверить обновления')
+    expect(updateServiceSource).toContain("import electronUpdater")
+    expect(updateServiceSource).toContain('const { autoUpdater } = electronUpdater')
+    expect(updateServiceSource).not.toContain('import { autoUpdater')
     expect(releaseWorkflowSource).toContain('desktop/dist/latest*.yml')
     expect(releaseWorkflowSource).toContain("name '*.blockmap'")
     expect(releaseWorkflowSource).not.toContain('dist:linux')

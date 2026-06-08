@@ -1,4 +1,6 @@
-import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater'
+
+const { autoUpdater } = electronUpdater
 
 export type AppUpdateStatusKind =
   | 'idle'
