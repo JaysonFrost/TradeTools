@@ -3,6 +3,15 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('main app lifecycle', () => {
+  it('disables Windows Graphics Capture to avoid stale desktop frames', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('windowsDesktopCaptureFallbackFeatures')
+    expect(source).toContain('AllowWgcWindowCapturer')
+    expect(source).toContain('AllowWgcScreenCapturer')
+    expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
+  })
+
   it('prepares the selected video recorder before Binance watcher polls trades', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const startWatcherIndex = source.indexOf('const startBinanceFuturesPolling')

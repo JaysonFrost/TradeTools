@@ -37,8 +37,17 @@ const obsReplayEnsureIntervalMs = 30_000
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const windowsAppUserModelId = 'com.tradetools.desktop'
+const windowsDesktopCaptureFallbackFeatures = [
+  'AllowWgcWindowCapturer',
+  'AllowWgcWindowZeroHz',
+  'AllowWgcScreenCapturer',
+  'AllowWgcScreenZeroHz'
+]
 
-if (process.platform === 'win32') app.setAppUserModelId(windowsAppUserModelId)
+if (process.platform === 'win32') {
+  app.setAppUserModelId(windowsAppUserModelId)
+  app.commandLine.appendSwitch('disable-features', windowsDesktopCaptureFallbackFeatures.join(','))
+}
 
 type ProxySaveInput = {
   id?: string
