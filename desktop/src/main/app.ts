@@ -753,6 +753,9 @@ app.whenReady().then(() => {
     if (typeof text !== 'string') throw new Error('Некорректный текст для буфера обмена')
     clipboard.writeText(text)
   })
+  ipcMain.handle('links:open-external', async (_event, url: string) => {
+    await shell.openExternal(assertHttpUrl(asString(url)))
+  })
   ipcMain.handle('notifications:test', () => showSystemNotification({
     title: 'TradeTools',
     body: 'Системные уведомления работают'

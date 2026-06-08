@@ -61,8 +61,22 @@ describe('Dashboard layout', () => {
     expect(topBarSource).toContain('Проверить системное уведомление')
     expect(topBarSource).toContain('Мастер настройки видео')
     expect(topBarSource).toContain('Мастер настройки прокси')
-    expect(topBarSource).toContain('text-amber-300')
+    expect(topBarSource).toContain('text-amber-200')
+    expect(topBarSource).toContain('break-words')
+    expect(topBarSource).toContain('xl:max-w-[520px]')
     expect(dashboardSource).toContain('notifications.test()')
+  })
+
+  it('shows the TradeCore Telegram badge in the app brand', async () => {
+    const sidebarSource = await readFile(resolve('src/renderer/components/layout/Sidebar.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(sidebarSource).toContain('by tradecore')
+    expect(sidebarSource).toContain('https://t.me/tradekorr')
+    expect(sidebarSource).toContain('links.openExternal')
+    expect(preloadSource).toContain("ipcRenderer.invoke('links:open-external'")
+    expect(appSource).toContain("ipcMain.handle('links:open-external'")
   })
 
   it('lets the proxy setup wizard save two servers and run the setup chain', async () => {
