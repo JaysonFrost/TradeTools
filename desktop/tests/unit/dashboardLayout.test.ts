@@ -59,8 +59,20 @@ describe('Dashboard layout', () => {
 
     expect(topBarSource).toContain('onTestNotification')
     expect(topBarSource).toContain('Проверить системное уведомление')
+    expect(topBarSource).toContain('Мастер настройки видео')
+    expect(topBarSource).toContain('Мастер настройки прокси')
     expect(topBarSource).toContain('text-amber-300')
     expect(dashboardSource).toContain('notifications.test()')
+  })
+
+  it('lets the proxy setup wizard save two servers and run the setup chain', async () => {
+    const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
+
+    expect(source).toContain('secondProxyServer')
+    expect(source).toContain('Сохранить два сервера и связку')
+    expect(source).toContain('setSavedWizardProxyIds([firstProxy.id, secondProxy.id])')
+    expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId })')
+    expect(source).toContain('Настроить и запустить связку')
   })
 
   it('keeps proxy controls on the proxy page', async () => {
@@ -89,7 +101,7 @@ describe('Dashboard layout', () => {
     expect(panelSource).not.toContain('VPN и антизапреты')
     expect(panelSource).not.toContain('chainResult.throne')
     expect(panelSource).not.toContain('Следующий сервер в связке')
-    expect(wizardSource).toContain('перетащите серверы')
+    expect(wizardSource).toContain('первым сервером через второй сервер')
     expect(wizardSource).not.toContain('Следующий сервер в связке')
   })
 
