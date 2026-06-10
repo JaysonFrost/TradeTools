@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource, WindowRecorderStatus } from '../../../main/services/recording/windowRecorderService'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
+import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 
 export type WindowRecorderControllerProps = {
   settings?: AppSettings
   onStatusChange: (status: WindowRecorderStatus) => void
+  onSettingsChange?: (settings: AppSettings) => void
 }
 
 type FixedFrameRateStream = {
@@ -113,7 +115,7 @@ const createFixedFrameRateStream = async (sourceStream: MediaStream, frameRate: 
   }
 }
 
-export const WindowRecorderController = ({ settings, onStatusChange }: WindowRecorderControllerProps) => {
+export const WindowRecorderController = ({ settings, onStatusChange, onSettingsChange }: WindowRecorderControllerProps) => {
   useEffect(() => {
     if (!settings) return
 
@@ -137,18 +139,30 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
         onStatusChange(await api.recording.getStatus())
         return
       }
-      if (!settings.recording.windowSourceId && !settings.recording.windowSourceName) {
-        onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen' ? 'Выберите экран для встроенной записи' : 'Выберите окно терминала для встроенной записи'))
-        return
-      }
 
       onStatusChange(createLocalStatus(settings, 'Запускаем встроенную запись окна...'))
       const sources = await api.recording.listWindowSources()
-      const source = resolveSource(sources, settings)
+      let source = resolveSource(sources, settings)
+      if (!source && !settings.recording.windowSourceId && !settings.recording.windowSourceName && settings.recording.sourceType === 'window') {
+        source = findPreferredTerminalSource(sources)
+        if (source) {
+          onStatusChange(createLocalStatus(settings, `Автоматически выбрали окно терминала: ${source.name}`))
+          const updated = await api.settings.update({
+            recording: {
+              ...settings.recording,
+              sourceType: source.type,
+              windowSourceId: source.id,
+              windowSourceName: source.name
+            }
+          })
+          if (!disposed) onSettingsChange?.(updated)
+          return
+        }
+      }
       if (!source) {
         onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen'
           ? 'Выбранный экран не найден. Обновите список источников.'
-          : 'Выбранное окно не найдено. Откройте терминал и обновите список окон.'))
+          : 'Откройте торговый терминал. TradeTools сам выберет подходящее окно и начнёт запись.'))
         return
       }
 
@@ -162,7 +176,7 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
 
       stream = mediaStream
       try {
-      fixedFrameRateStream = await createFixedFrameRateStream(mediaStream, settings.recording.frameRate)
+        fixedFrameRateStream = await createFixedFrameRateStream(mediaStream, settings.recording.frameRate)
       } catch (error) {
         mediaStream.getTracks().forEach((track) => track.stop())
         stream = undefined
@@ -246,7 +260,8 @@ export const WindowRecorderController = ({ settings, onStatusChange }: WindowRec
     settings?.recording.windowSourceName,
     settings?.recording.frameRate,
     settings?.recording.segmentSeconds,
-    onStatusChange
+    onStatusChange,
+    onSettingsChange
   ])
 
   return null

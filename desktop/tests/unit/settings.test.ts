@@ -50,6 +50,9 @@ describe('settings', () => {
       apiKeyConfigured: false,
       apiSecretConfigured: false
     })
+    expect(settings.tradeSource).toEqual({
+      mode: 'terminal-window'
+    })
     expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
     expect(settings).not.toHaveProperty(legacyGateSettingsKey)
   })
@@ -85,6 +88,24 @@ describe('settings', () => {
       apiKeyConfigured: true,
       apiSecretConfigured: true
     })
+    expect(settings.tradeSource.mode).toBe('binance-futures')
+  })
+
+  it('keeps terminal-window as the explicit no-API trade source', () => {
+    const settings = normalizeSettings({
+      exchange: {
+        binanceFutures: {
+          enabled: true,
+          apiKeyConfigured: true,
+          apiSecretConfigured: true
+        }
+      },
+      tradeSource: {
+        mode: 'terminal-window'
+      }
+    }, '/app-data')
+
+    expect(settings.tradeSource.mode).toBe('terminal-window')
   })
 
   it('normalizes built-in window recording settings', () => {

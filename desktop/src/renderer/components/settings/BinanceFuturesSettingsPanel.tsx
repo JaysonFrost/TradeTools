@@ -50,6 +50,28 @@ export const BinanceFuturesSettingsPanel = ({ settings, onSaved }: BinanceFuture
     }
   }
 
+  const disableBinanceSource = async () => {
+    setSaving(true)
+    setMessage('')
+    try {
+      const updated = await getTradeToolsApi().settings.update({
+        tradeSource: { mode: 'terminal-window' },
+        exchange: {
+          binanceFutures: {
+            enabled: false,
+            testnet
+          }
+        }
+      })
+      onSaved(updated)
+      setMessage('Включён режим без API: TradeTools пишет окно терминала локально')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось выключить Binance Futures')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const testConnection = async () => {
     setTesting(true)
     setMessage('')
@@ -65,6 +87,7 @@ export const BinanceFuturesSettingsPanel = ({ settings, onSaved }: BinanceFuture
   }
 
   const configured = settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured
+  const apiMode = settings?.tradeSource.mode === 'binance-futures'
 
   return (
     <Card className="border-violet-400/20 bg-violet-500/10" id="binance-settings">
@@ -72,10 +95,15 @@ export const BinanceFuturesSettingsPanel = ({ settings, onSaved }: BinanceFuture
         <div>
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Binance USDT-M Futures</h2>
           <p className="mt-1 text-sm text-zinc-400">
-            {configured ? 'Ключи сохранены. После перезапуска приложение будет отслеживать futures-позиции и создавать клип при закрытии.' : 'Вставьте Binance Futures API Key и Secret, чтобы клипы создавались по реальным сделкам.'}
+            {configured
+              ? apiMode
+                ? 'API-режим включён. TradeTools отслеживает futures-позиции и создаёт клип при закрытии.'
+                : 'Ключи сохранены, но сейчас включён режим без API: пишется окно терминала.'
+              : 'Опционально: вставьте Binance Futures API Key и Secret, чтобы клипы создавались по закрытым позициям.'}
           </p>
         </div>
         <div className="flex gap-2">
+          {apiMode && <Button variant="ghost" onClick={() => void disableBinanceSource()} disabled={saving}>Режим без API</Button>}
           <Button variant="ghost" onClick={testConnection} disabled={testing}>{testing ? 'Проверяем...' : 'Проверить Binance'}</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить ключи'}</Button>
         </div>

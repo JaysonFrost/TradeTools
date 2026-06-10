@@ -58,6 +58,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Экран')
     expect(appSource).toContain("types: ['window', 'screen']")
     expect(settingsPanelSource).toContain('listWindowSources')
+    expect(controllerSource).toContain('findPreferredTerminalSource')
+    expect(controllerSource).toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
     expect(controllerSource).toContain('createFixedFrameRateStream')
     expect(controllerSource).toContain('canvas.captureStream')
@@ -66,6 +68,21 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
     expect(appSource).toContain("ipcMain.handle('recording:append-segment'")
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
+  })
+
+  it('uses terminal window recording as the default no-API trade source', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const settingsSource = await readFile(resolve('src/main/services/settings/settings.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(settingsSource).toContain("mode: 'terminal-window'")
+    expect(dashboardSource).toContain('Локальная сделка без API')
+    expect(dashboardSource).toContain('terminalTrade.start')
+    expect(dashboardSource).toContain('terminalTrade.finish')
+    expect(preloadSource).toContain("ipcRenderer.invoke('terminal-trade:start'")
+    expect(appSource).toContain("ipcMain.handle('terminal-trade:finish'")
+    expect(appSource).toContain("settings.tradeSource.mode !== 'binance-futures'")
   })
 
   it('opens clip preview from the preview artwork', async () => {

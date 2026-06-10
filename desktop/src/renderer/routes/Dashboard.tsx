@@ -3,6 +3,7 @@ import type { BinanceFuturesWatchStatus, ClipProcessingStatus } from '../../main
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
+import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
 import type { ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
@@ -14,6 +15,7 @@ import { WindowRecorderController } from '../components/recording/WindowRecorder
 import { SystemSettingsPanel } from '../components/settings/SystemSettingsPanel'
 import { SupportDeveloperPage } from '../components/support/SupportDeveloperPage'
 import { ClipCard } from '../components/trade/ClipCard'
+import { Button } from '../components/ui/Button'
 import type { AppPage } from '../lib/navigation'
 import { getTradeToolsApi } from '../lib/tradeToolsApi'
 import type { ProxyChainSetupProgress } from '../../preload'
@@ -38,7 +40,11 @@ type VideoPageProps = {
   obs: ObsUiState
   windowRecorder?: WindowRecorderStatus
   binanceWatch: BinanceFuturesWatchStatus
+  terminalTrade: TerminalTradeRecordingStatus
   onCreateTestClip: () => void
+  onStartTerminalTrade: () => void
+  onFinishTerminalTrade: () => void
+  onCancelTerminalTrade: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
   onSettingsSaved: (settings: AppSettings) => void
@@ -70,9 +76,58 @@ const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
   </div>
 )
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+const TerminalTradeControls = ({
+  settings,
+  windowRecorder,
+  terminalTrade,
+  onStart,
+  onFinish,
+  onCancel
+}: {
+  settings?: AppSettings
+  windowRecorder?: WindowRecorderStatus
+  terminalTrade: TerminalTradeRecordingStatus
+  onStart: () => void
+  onFinish: () => void
+  onCancel: () => void
+}) => {
+  if ((settings?.tradeSource.mode ?? 'terminal-window') !== 'terminal-window') return null
+
+  const recorderActive = Boolean(windowRecorder?.active)
+  const startedAt = terminalTrade.startedAtMs ? new Date(terminalTrade.startedAtMs).toLocaleTimeString('ru-RU') : ''
+
+  return (
+    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <h2 className="m-0 text-base font-semibold">Локальная сделка без API</h2>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            {terminalTrade.active
+              ? `Идёт запись сделки с ${startedAt}. Окно терминала продолжает писаться.`
+              : recorderActive
+                ? 'Окно терминала пишется автоматически. Нажмите старт перед входом и завершите после выхода.'
+                : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {terminalTrade.active ? (
+            <>
+              <Button onClick={onFinish}>Завершить и сохранить</Button>
+              <Button variant="ghost" onClick={onCancel}>Отменить</Button>
+            </>
+          ) : (
+            <Button onClick={onStart} disabled={!recorderActive}>Начать запись сделки</Button>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, terminalTrade, onCreateTestClip, onStartTerminalTrade, onFinishTerminalTrade, onCancelTerminalTrade, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
   const recordingMode = settings?.recording.mode ?? 'window'
   const videoStatuses = useMemo(() => {
+    const tradeSourceMode = settings?.tradeSource.mode ?? 'terminal-window'
     const binanceConfigured = Boolean(settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured)
     const binanceProcessing = Boolean(clipProcessing?.active)
 
@@ -87,13 +142,20 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
           ? windowRecorder?.active ? 'success' as const : 'warning' as const
           : obs.connected ? 'success' as const : 'warning' as const
       },
-      {
+      tradeSourceMode === 'binance-futures' ? {
         name: 'Binance USDT-M Futures',
         description: binanceWatch.message,
         status: binanceConfigured
           ? binanceWatch.lastError ? 'Ошибка' : binanceProcessing ? 'Сохраняем' : binanceWatch.running ? 'Работает' : 'Готов'
           : 'Нужно настроить',
         tone: binanceConfigured && !binanceWatch.lastError && !binanceProcessing ? 'success' as const : binanceProcessing ? 'purple' as const : 'warning' as const
+      } : {
+        name: 'Источник сделок',
+        description: windowRecorder?.active
+          ? 'Режим без API: TradeTools автоматически пишет окно терминала.'
+          : windowRecorder?.message ?? 'Откройте терминал, чтобы TradeTools начал локальную запись.',
+        status: windowRecorder?.active ? 'Без API' : 'Ждём окно',
+        tone: windowRecorder?.active ? 'success' as const : 'warning' as const
       }
     ]
   }, [obs, settings, windowRecorder, binanceWatch, recordingMode, clipProcessing])
@@ -103,6 +165,14 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
       <section className="col-span-12 grid gap-4 lg:grid-cols-2">
         {videoStatuses.map((status) => <IntegrationStatusCard key={status.name} {...status} />)}
       </section>
+      <TerminalTradeControls
+        settings={settings}
+        windowRecorder={windowRecorder}
+        terminalTrade={terminalTrade}
+        onStart={onStartTerminalTrade}
+        onFinish={onFinishTerminalTrade}
+        onCancel={onCancelTerminalTrade}
+      />
       <section className="col-span-12">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -176,6 +246,11 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     progressPercent: 0
   })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
+  const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
+    active: false,
+    startedAtMs: 0,
+    message: 'Локальная запись сделки готова'
+  })
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
   const [proxyVaultRuntime, setProxyVaultRuntime] = useState<ProxyVaultRuntimeState>({
     chainCheckProgress: [],
@@ -196,12 +271,13 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextBinanceWatch, nextWindowRecorder] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextBinanceWatch, nextWindowRecorder, nextTerminalTrade] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.binance.getWatchStatus(),
-        api.recording.getStatus()
+        api.recording.getStatus(),
+        api.terminalTrade.getStatus()
       ])
 
       setAppVersion(version)
@@ -209,6 +285,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setClips(pendingClips)
       setBinanceWatch(nextBinanceWatch)
       setWindowRecorder(nextWindowRecorder)
+      setTerminalTrade(nextTerminalTrade)
       setObs((current) => {
         if (current.connected || current.status === 'Отключено') return current
 
@@ -353,6 +430,59 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
+  const startTerminalTrade = async () => {
+    setClipMessage('')
+    try {
+      const status = await getTradeToolsApi().terminalTrade.start()
+      setTerminalTrade(status)
+      setClipMessage(status.message)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось начать локальную запись сделки')
+    }
+  }
+
+  const finishTerminalTrade = async () => {
+    const startedAtMs = Date.now()
+    setLocalClipProcessing({
+      active: true,
+      title: 'Локальная сделка',
+      message: 'Сохраняем replay и собираем клип',
+      progressPercent: 35,
+      startedAtMs
+    })
+    try {
+      const clip = await getTradeToolsApi().terminalTrade.finish()
+      setLocalClipProcessing({
+        active: true,
+        title: clip.title,
+        message: 'Клип сохранён, обновляем очередь',
+        progressPercent: 95,
+        startedAtMs
+      })
+      setClipMessage(`Клип создан: ${clip.title}`)
+      await loadLocalState()
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось сохранить локальную сделку')
+    } finally {
+      setLocalClipProcessing({
+        active: false,
+        title: '',
+        message: '',
+        progressPercent: 0
+      })
+    }
+  }
+
+  const cancelTerminalTrade = async () => {
+    try {
+      const status = await getTradeToolsApi().terminalTrade.cancel()
+      setTerminalTrade(status)
+      setClipMessage('Локальная запись сделки отменена')
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось отменить локальную запись сделки')
+    }
+  }
+
   const testNotification = () => getTradeToolsApi().notifications.test()
 
   useEffect(() => {
@@ -411,8 +541,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           obs={obs}
           windowRecorder={windowRecorder}
           binanceWatch={binanceWatch}
+          terminalTrade={terminalTrade}
           clipProcessing={activeClipProcessing}
           onCreateTestClip={() => void createTestClip()}
+          onStartTerminalTrade={() => void startTerminalTrade()}
+          onFinishTerminalTrade={() => void finishTerminalTrade()}
+          onCancelTerminalTrade={() => void cancelTerminalTrade()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
           onSettingsSaved={onSettingsSaved}
@@ -427,7 +561,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       ) : (
         <SupportDeveloperPage />
       )}
-      <WindowRecorderController settings={settings} onStatusChange={setWindowRecorder} />
+      <WindowRecorderController settings={settings} onStatusChange={setWindowRecorder} onSettingsChange={setSettings} />
     </>
   )
 }

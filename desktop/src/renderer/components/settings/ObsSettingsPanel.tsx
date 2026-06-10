@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
+import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
@@ -54,6 +55,15 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     try {
       const sources = await getTradeToolsApi().recording.listWindowSources()
       setWindowSources(sources)
+      const preferredSource = recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
+        ? findPreferredTerminalSource(sources)
+        : undefined
+      if (preferredSource) {
+        setWindowSourceId(preferredSource.id)
+        setWindowSourceName(preferredSource.name)
+        setMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
+        return
+      }
       setMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')

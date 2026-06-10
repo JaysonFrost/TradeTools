@@ -179,7 +179,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       message: settings.recording.mode !== 'window'
         ? 'Встроенная запись окна выключена'
         : !settings.recording.windowSourceId
-          ? 'Выберите источник для встроенной записи'
+          ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
           : active
             ? `Встроенная запись активна, накоплено ${Math.round(bufferedSeconds)}с`
             : 'Ждём сегменты от встроенного рекордера'

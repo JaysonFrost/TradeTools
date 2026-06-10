@@ -29,6 +29,10 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
       ...(patch.exchange?.binanceFutures ?? {})
     }
   },
+  tradeSource: {
+    ...current.tradeSource,
+    ...(patch.tradeSource ?? {})
+  },
   system: {
     ...current.system,
     ...(patch.system ?? {})

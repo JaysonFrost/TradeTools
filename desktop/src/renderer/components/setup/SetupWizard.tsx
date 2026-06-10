@@ -6,6 +6,7 @@ import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSe
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
+import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { proxySetupWizardSteps, videoSetupWizardSteps } from './setupWizardSteps'
 import { Button } from '../ui/Button'
 
@@ -157,6 +158,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     try {
       const sources = await getTradeToolsApi().recording.listWindowSources()
       setWindowSources(sources)
+      const preferredSource = recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
+        ? findPreferredTerminalSource(sources)
+        : undefined
+      if (preferredSource) {
+        setWindowSourceId(preferredSource.id)
+        setWindowSourceName(preferredSource.name)
+        setLocalMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
+        return
+      }
       setLocalMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
     } catch (error) {
       setLocalMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
@@ -219,7 +229,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     if (mode === 'video' && step.id === 'obs-replay' && recordingMode === 'window') {
       return [
         'Откройте окно торгового терминала',
-        'Выберите это окно на предыдущем шаге и оставьте его открытым',
+        'Если окно не выбрано, TradeTools попробует выбрать его автоматически',
         'Нажмите проверку видео'
       ]
     }
@@ -236,22 +246,23 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   if (!open || !step) return null
 
   const saveVideoSettings = async () => {
-    if (recordingMode === 'window' && !windowSourceId && !windowSourceName) {
-      setLocalMessage('Выберите окно терминала для встроенной записи.')
-      return
-    }
-
     setSaving(true)
     setLocalMessage('')
     try {
       const api = getTradeToolsApi()
+      const latestSources = recordingMode === 'window' && !windowSourceId && !windowSourceName
+        ? await api.recording.listWindowSources()
+        : windowSources
+      if (latestSources !== windowSources) setWindowSources(latestSources)
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
+        ?? latestSources.find((source) => source.id === windowSourceId)
+        ?? (recordingMode === 'window' && sourceType === 'window' ? findPreferredTerminalSource(latestSources) : undefined)
       const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         recording: {
           mode: recordingMode,
-          sourceType,
-          windowSourceId,
+          sourceType: selectedSource?.type ?? sourceType,
+          windowSourceId: selectedSource?.id ?? windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
           frameRate: Number(frameRate),
           segmentSeconds: Number(segmentSeconds)
@@ -487,7 +498,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         return
       }
       setLocalMessage(recordingMode === 'window'
-        ? 'Выберите окно терминала ниже и нажмите «Сохранить этот шаг».'
+        ? 'Откройте терминал и нажмите «Сохранить этот шаг». Если окно найдено, TradeTools выберет его автоматически.'
         : 'Введите пароль OBS WebSocket ниже и нажмите «Сохранить этот шаг».')
       return
     }
@@ -522,8 +533,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     if (step.id === 'trade-source') {
       if (actionIndex === stepActionLabels.length - 1) {
         await testBinanceConnection()
+      } else if (actionIndex === 0) {
+        setLocalMessage('Режим без API уже выбран по умолчанию. TradeTools будет писать окно терминала локально.')
       } else {
-        setLocalMessage('Заполните API Key и API Secret ниже, затем нажмите «Сохранить ключи».')
+        setLocalMessage('Если нужна автонарезка по Binance, заполните API Key и API Secret ниже, затем нажмите «Сохранить ключи».')
       }
       return
     }
@@ -592,7 +605,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
           ? 'TradeTools будет складывать готовые клипы в выбранную папку.'
           : 'TradeTools будет знать, где найти исходный OBS replay и куда положить готовый клип.'
       case 'trade-source':
-        return 'Ключи сохранятся в системном keychain, а TradeTools сможет отслеживать Binance Futures.'
+        return 'Без API TradeTools пишет терминал локально. Если добавить Binance ключи, включится автонарезка по закрытым futures-позициям.'
       case 'test-clip':
         return 'В очереди проверки появится локальный клип с metadata JSON.'
       case 'proxy-welcome':

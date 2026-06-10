@@ -12,8 +12,8 @@ describe('setupWizardSteps', () => {
       'test-clip',
       'video-done'
     ])
-    expect(videoSetupWizardSteps[0].actions).toContain('Добавим read-only API ключи Binance Futures')
-    expect(videoSetupWizardSteps.find((step) => step.id === 'trade-source')?.title).toBe('API-ключи Binance Futures')
+    expect(videoSetupWizardSteps[0].actions).toContain('Включим встроенную запись открытого терминала без API')
+    expect(videoSetupWizardSteps.find((step) => step.id === 'trade-source')?.title).toBe('Источник сделок')
     expect(setupWizardSteps).toBe(videoSetupWizardSteps)
   })
 

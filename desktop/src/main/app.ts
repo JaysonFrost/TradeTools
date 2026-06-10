@@ -18,6 +18,7 @@ import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
+import { createIdleTerminalTradeStatus, createTerminalClosedTrade, type TerminalTradeRecordingStatus } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
@@ -644,13 +645,58 @@ app.whenReady().then(() => {
     }
   }
 
+  let terminalTradeStatus: TerminalTradeRecordingStatus = createIdleTerminalTradeStatus()
+
+  const protectTerminalTradeSegments = async (startedAtMs: number) => {
+    const settings = await settingsStore.load()
+    windowRecorderService.protectSince(startedAtMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
+  }
+
+  const startTerminalTradeRecording = async (): Promise<TerminalTradeRecordingStatus> => {
+    const settings = await settingsStore.load()
+    if (settings.recording.mode !== 'window') throw new Error('Локальная запись сделки работает только со встроенной записью окна терминала')
+
+    const status = await windowRecorderService.getStatus(settings)
+    if (!status.active) throw new Error(status.message || 'Встроенная запись окна терминала ещё не активна')
+
+    const startedAtMs = Date.now()
+    terminalTradeStatus = {
+      active: true,
+      startedAtMs,
+      message: 'Локальная сделка записывается'
+    }
+    await protectTerminalTradeSegments(startedAtMs)
+    return terminalTradeStatus
+  }
+
+  const finishTerminalTradeRecording = async (): Promise<ClipQueueItem> => {
+    if (!terminalTradeStatus.active || !terminalTradeStatus.startedAtMs) {
+      throw new Error('Локальная запись сделки ещё не запущена')
+    }
+
+    const startedAtMs = terminalTradeStatus.startedAtMs
+    await protectTerminalTradeSegments(startedAtMs)
+    try {
+      return await createClipAndNotify(createTerminalClosedTrade(startedAtMs, Date.now()))
+    } finally {
+      terminalTradeStatus = createIdleTerminalTradeStatus()
+      windowRecorderService.protectSince()
+    }
+  }
+
+  const cancelTerminalTradeRecording = (): TerminalTradeRecordingStatus => {
+    terminalTradeStatus = createIdleTerminalTradeStatus()
+    windowRecorderService.protectSince()
+    return terminalTradeStatus
+  }
+
   const getBinanceFuturesClient = async () => {
     const [settings, credentials] = await Promise.all([
       settingsStore.load(),
       secretStore.getBinanceFuturesCredentials()
     ])
 
-    if (!settings.exchange.binanceFutures.enabled || !credentials) return undefined
+    if (settings.tradeSource.mode !== 'binance-futures' || !settings.exchange.binanceFutures.enabled || !credentials) return undefined
 
     return createBinanceFuturesClient({
       credentials,
@@ -696,6 +742,7 @@ app.whenReady().then(() => {
     ])
 
     return Boolean(
+      settings.tradeSource.mode === 'binance-futures' &&
       settings.exchange.binanceFutures.enabled &&
       settings.exchange.binanceFutures.apiKeyConfigured &&
       settings.exchange.binanceFutures.apiSecretConfigured &&
@@ -704,6 +751,17 @@ app.whenReady().then(() => {
   }
 
   const getBinanceFuturesWatchStatus = async (): Promise<BinanceFuturesWatchStatus> => {
+    const settings = await settingsStore.load()
+    if (settings.tradeSource.mode !== 'binance-futures') {
+      return {
+        ...binanceFuturesWatchStatus,
+        configured: false,
+        running: false,
+        clipProcessing: clipProcessingStatus,
+        message: 'Режим без API: TradeTools пишет окно терминала напрямую'
+      }
+    }
+
     const configured = await isBinanceFuturesConfigured()
     const cleanMessage = isRecorderStatusMessage(binanceFuturesWatchStatus.message)
       ? binanceFuturesPollInterval ? 'Binance watcher работает, новых закрытых сделок нет' : 'Binance watcher запускается'
@@ -832,6 +890,19 @@ app.whenReady().then(() => {
     })
   }
 
+  const stopBinanceFuturesPolling = () => {
+    if (binanceFuturesPollInterval) {
+      clearInterval(binanceFuturesPollInterval)
+      binanceFuturesPollInterval = undefined
+    }
+    binanceFuturesWatchStatus = {
+      ...binanceFuturesWatchStatus,
+      running: false,
+      lastError: undefined,
+      message: 'Режим без API: TradeTools пишет окно терминала напрямую'
+    }
+  }
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedCapturePermission = permission === 'media' || permission === 'display-capture'
     callback(allowedCapturePermission && isTrustedRendererUrl(webContents.getURL()))
@@ -889,6 +960,10 @@ app.whenReady().then(() => {
             apiKeyConfigured: true,
             apiSecretConfigured: true
           }
+        },
+        tradeSource: {
+          ...(patch.tradeSource ?? {}),
+          mode: 'binance-futures'
         }
       }
     }
@@ -898,10 +973,13 @@ app.whenReady().then(() => {
     applyLaunchAtLogin(updatedSettings)
     if (
       updatedSettings.exchange.binanceFutures.enabled &&
+      updatedSettings.tradeSource.mode === 'binance-futures' &&
       updatedSettings.exchange.binanceFutures.apiKeyConfigured &&
       updatedSettings.exchange.binanceFutures.apiSecretConfigured
     ) {
       startBinanceFuturesPolling()
+    } else if (updatedSettings.tradeSource.mode !== 'binance-futures') {
+      stopBinanceFuturesPolling()
     }
 
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
@@ -1183,6 +1261,10 @@ app.whenReady().then(() => {
     }).testConnection()
   })
   ipcMain.handle('binance:get-watch-status', () => getBinanceFuturesWatchStatus())
+  ipcMain.handle('terminal-trade:get-status', () => terminalTradeStatus)
+  ipcMain.handle('terminal-trade:start', () => startTerminalTradeRecording())
+  ipcMain.handle('terminal-trade:finish', () => finishTerminalTradeRecording())
+  ipcMain.handle('terminal-trade:cancel', () => cancelTerminalTradeRecording())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
@@ -1221,6 +1303,7 @@ app.whenReady().then(() => {
     })
     if (
       settings.exchange.binanceFutures.enabled &&
+      settings.tradeSource.mode === 'binance-futures' &&
       settings.exchange.binanceFutures.apiKeyConfigured &&
       settings.exchange.binanceFutures.apiSecretConfigured
     ) {

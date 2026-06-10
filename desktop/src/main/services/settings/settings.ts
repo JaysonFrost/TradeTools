@@ -46,6 +46,9 @@ export type AppSettings = {
       apiSecretConfigured: boolean
     }
   }
+  tradeSource: {
+    mode: 'terminal-window' | 'binance-futures'
+  }
   system: {
     launchAtLogin: boolean
     proxyPaymentNotificationsEnabled: boolean
@@ -78,6 +81,7 @@ export type PartialSettings = Partial<{
   exchange: {
     binanceFutures?: Partial<AppSettings['exchange']['binanceFutures']>
   }
+  tradeSource: Partial<AppSettings['tradeSource']>
   system: Partial<AppSettings['system']>
   proxyRuntime: Partial<AppSettings['proxyRuntime']>
   proxies: PartialProxyRecord[]
@@ -133,6 +137,10 @@ const normalizeHttpUrl = (value: unknown): string => {
 }
 
 const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
+const normalizeTradeSourceMode = (value: unknown, fallback: AppSettings['tradeSource']['mode']): AppSettings['tradeSource']['mode'] => {
+  if (value === 'terminal-window' || value === 'binance-futures') return value
+  return fallback
+}
 const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSettings['recording']['sourceType'] => {
   if (value === 'screen') return 'screen'
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
@@ -223,6 +231,9 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
       apiSecretConfigured: false
     }
   },
+  tradeSource: {
+    mode: 'terminal-window'
+  },
   system: {
     launchAtLogin: false,
     proxyPaymentNotificationsEnabled: true,
@@ -245,6 +256,8 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
   const defaults = createDefaultSettings(appDataDir)
   const recordingMode = normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode)
   const maxReplayBufferSeconds = recordingMode === 'window' ? 30 : 7200
+  const legacyBinanceSourceEnabled = settings.exchange?.binanceFutures?.enabled === true
+  const defaultTradeSourceMode = legacyBinanceSourceEnabled ? 'binance-futures' : defaults.tradeSource.mode
 
   return {
     language: 'ru',
@@ -275,6 +288,9 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
         apiKeyConfigured: settings.exchange?.binanceFutures?.apiKeyConfigured ?? defaults.exchange.binanceFutures.apiKeyConfigured,
         apiSecretConfigured: settings.exchange?.binanceFutures?.apiSecretConfigured ?? defaults.exchange.binanceFutures.apiSecretConfigured
       }
+    },
+    tradeSource: {
+      mode: normalizeTradeSourceMode(settings.tradeSource?.mode, defaultTradeSourceMode)
     },
     system: {
       launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,

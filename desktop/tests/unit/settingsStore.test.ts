@@ -20,6 +20,7 @@ describe('settingsStore', () => {
 
     expect(settings.language).toBe('ru')
     expect(settings.recording.mode).toBe('window')
+    expect(settings.tradeSource.mode).toBe('terminal-window')
     expect(settings.obs.host).toBe('127.0.0.1')
     expect(settings.clip.outputDir).toBe(join(tempDir, 'clips'))
   })
@@ -69,7 +70,8 @@ describe('settingsStore', () => {
           apiKeyConfigured: true,
           apiSecretConfigured: true
         }
-      }
+      },
+      tradeSource: { mode: 'binance-futures' }
     })
 
     expect(settings.exchange.binanceFutures).toEqual({
@@ -78,6 +80,7 @@ describe('settingsStore', () => {
       apiKeyConfigured: true,
       apiSecretConfigured: true
     })
+    expect(settings.tradeSource.mode).toBe('binance-futures')
 
     const reloaded = await store.load()
     expect(JSON.stringify(reloaded)).not.toContain('binance-key')
