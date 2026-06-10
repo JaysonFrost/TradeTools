@@ -18,6 +18,14 @@ export type ProxyRecord = {
 
 export type AppSettings = {
   language: 'ru'
+  recording: {
+    mode: 'obs' | 'window'
+    sourceType: 'window' | 'screen'
+    windowSourceId: string
+    windowSourceName: string
+    frameRate: number
+    segmentSeconds: number
+  }
   clip: {
     paddingBeforeSeconds: number
     paddingAfterSeconds: number
@@ -37,6 +45,9 @@ export type AppSettings = {
       apiKeyConfigured: boolean
       apiSecretConfigured: boolean
     }
+  }
+  tradeSource: {
+    mode: 'terminal-window' | 'binance-futures'
   }
   system: {
     launchAtLogin: boolean
@@ -64,11 +75,13 @@ export type PartialProxyRecord = Partial<ProxyRecord> & {
 
 export type PartialSettings = Partial<{
   language: string
+  recording: Partial<AppSettings['recording']>
   clip: Partial<AppSettings['clip']>
   obs: Partial<AppSettings['obs']>
   exchange: {
     binanceFutures?: Partial<AppSettings['exchange']['binanceFutures']>
   }
+  tradeSource: Partial<AppSettings['tradeSource']>
   system: Partial<AppSettings['system']>
   proxyRuntime: Partial<AppSettings['proxyRuntime']>
   proxies: PartialProxyRecord[]
@@ -121,6 +134,16 @@ const normalizeHttpUrl = (value: unknown): string => {
   } catch {
     return ''
   }
+}
+
+const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
+const normalizeTradeSourceMode = (value: unknown, fallback: AppSettings['tradeSource']['mode']): AppSettings['tradeSource']['mode'] => {
+  if (value === 'terminal-window' || value === 'binance-futures') return value
+  return fallback
+}
+const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSettings['recording']['sourceType'] => {
+  if (value === 'screen') return 'screen'
+  return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
 }
 
 const normalizeProxyId = (value: unknown, fallbackIndex: number): string => {
@@ -180,10 +203,18 @@ const normalizeProxyRuntime = (value: unknown): AppSettings['proxyRuntime'] => {
 
 export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   language: 'ru',
+  recording: {
+    mode: 'window',
+    sourceType: 'window',
+    windowSourceId: '',
+    windowSourceName: '',
+    frameRate: 30,
+    segmentSeconds: 2
+  },
   clip: {
     paddingBeforeSeconds: 2,
     paddingAfterSeconds: 2,
-    replayBufferSeconds: 1800,
+    replayBufferSeconds: 30,
     replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
   },
@@ -199,6 +230,9 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
       apiKeyConfigured: false,
       apiSecretConfigured: false
     }
+  },
+  tradeSource: {
+    mode: 'terminal-window'
   },
   system: {
     launchAtLogin: false,
@@ -220,13 +254,25 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
 
 export const normalizeSettings = (settings: PartialSettings, appDataDir: string): AppSettings => {
   const defaults = createDefaultSettings(appDataDir)
+  const recordingMode = normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode)
+  const maxReplayBufferSeconds = recordingMode === 'window' ? 30 : 7200
+  const legacyBinanceSourceEnabled = settings.exchange?.binanceFutures?.enabled === true
+  const defaultTradeSourceMode = legacyBinanceSourceEnabled ? 'binance-futures' : defaults.tradeSource.mode
 
   return {
     language: 'ru',
+    recording: {
+      mode: recordingMode,
+      sourceType: normalizeRecordingSourceType(settings.recording?.sourceType ?? defaults.recording.sourceType, settings.recording?.windowSourceId),
+      windowSourceId: normalizeString(settings.recording?.windowSourceId ?? defaults.recording.windowSourceId),
+      windowSourceName: normalizeString(settings.recording?.windowSourceName ?? defaults.recording.windowSourceName),
+      frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
+      segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10)
+    },
     clip: {
       paddingBeforeSeconds: clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, 60),
       paddingAfterSeconds: clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, 60),
-      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, 120, 7200),
+      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, 10, maxReplayBufferSeconds),
       replaySourceDir: settings.clip?.replaySourceDir ?? defaults.clip.replaySourceDir,
       outputDir: settings.clip?.outputDir ?? defaults.clip.outputDir
     },
@@ -242,6 +288,9 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
         apiKeyConfigured: settings.exchange?.binanceFutures?.apiKeyConfigured ?? defaults.exchange.binanceFutures.apiKeyConfigured,
         apiSecretConfigured: settings.exchange?.binanceFutures?.apiSecretConfigured ?? defaults.exchange.binanceFutures.apiSecretConfigured
       }
+    },
+    tradeSource: {
+      mode: normalizeTradeSourceMode(settings.tradeSource?.mode, defaultTradeSourceMode)
     },
     system: {
       launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,

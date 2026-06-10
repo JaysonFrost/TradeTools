@@ -3,13 +3,53 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('main app lifecycle', () => {
-  it('starts OBS Replay Buffer proactively when Binance watcher starts', async () => {
+  it('disables Windows Graphics Capture to avoid stale desktop frames', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('windowsDesktopCaptureFallbackFeatures')
+    expect(source).toContain('AllowWgcWindowCapturer')
+    expect(source).toContain('AllowWgcScreenCapturer')
+    expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
+  })
+
+  it('prepares the selected video recorder before Binance watcher polls trades', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const startWatcherIndex = source.indexOf('const startBinanceFuturesPolling')
-    const ensureObsIndex = source.indexOf('ensureObsReplayBufferActive(true)', startWatcherIndex)
+    const ensureVideoIndex = source.indexOf('ensureVideoRecordingReady(true)', startWatcherIndex)
+    const pollIndex = source.indexOf('pollBinanceFuturesOnce()', ensureVideoIndex)
 
     expect(source).toContain('const ensureObsReplayBufferActive')
-    expect(ensureObsIndex).toBeGreaterThan(startWatcherIndex)
+    expect(source).toContain('const ensureVideoRecordingReady')
+    expect(ensureVideoIndex).toBeGreaterThan(startWatcherIndex)
+    expect(pollIndex).toBeGreaterThan(ensureVideoIndex)
+    expect(source).toContain('if (!videoReady) return')
+  })
+
+  it('treats recorder buffer warmup as waiting status instead of Binance polling failure', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const isRecorderBufferPendingError')
+    expect(source).toContain('if (isRecorderBufferPendingError(error))')
+    expect(source).toContain('lastError: undefined')
+    expect(source).not.toContain('message: `Ждём видео: ${message}`')
+  })
+
+  it('does not surface built-in recorder segment warmup as a Binance error', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const isRecorderStatusMessage')
+    expect(source).toContain("const recorderStatusMessagePrefixes")
+    expect(source).toContain("'Запись окна:'")
+    expect(source).toContain("'Встроенная запись'")
+    expect(source).toContain('lastError: undefined')
+  })
+
+  it('protects built-in recording segments while a Binance trade is open', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('async onActiveTradesChanged(trades)')
+    expect(source).toContain('windowRecorderService.protectSince()')
+    expect(source).toContain('earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
   })
 
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {

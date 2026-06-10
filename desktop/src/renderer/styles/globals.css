@@ -15,9 +15,19 @@ body {
   overflow: hidden;
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
+
+select {
+  color-scheme: dark;
+  background-color: rgba(0, 0, 0, 0.28);
+}
+
+select option {
+  background-color: #111218;
+  color: #f7f8f8;
+}
 
 .glass-panel {
   background: var(--panel);

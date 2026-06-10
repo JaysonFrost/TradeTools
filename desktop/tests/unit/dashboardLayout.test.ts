@@ -46,6 +46,45 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('clips:rename-file'")
   })
 
+  it('supports built-in terminal window recording without requiring OBS', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(settingsPanelSource).toContain('Встроенная запись')
+    expect(settingsPanelSource).toContain('sourceType')
+    expect(settingsPanelSource).toContain('Экран')
+    expect(appSource).toContain("types: ['window', 'screen']")
+    expect(settingsPanelSource).toContain('listWindowSources')
+    expect(controllerSource).toContain('findPreferredTerminalSource')
+    expect(controllerSource).toContain('Автоматически выбрали окно терминала')
+    expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
+    expect(controllerSource).toContain('createFixedFrameRateStream')
+    expect(controllerSource).toContain('canvas.captureStream')
+    expect(controllerSource).toContain('recording.appendSegment')
+    expect(dashboardSource).toContain('<WindowRecorderController')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
+    expect(appSource).toContain("ipcMain.handle('recording:append-segment'")
+    expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
+  })
+
+  it('uses terminal window recording as the default no-API trade source', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const settingsSource = await readFile(resolve('src/main/services/settings/settings.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(settingsSource).toContain("mode: 'terminal-window'")
+    expect(dashboardSource).toContain('Локальная сделка без API')
+    expect(dashboardSource).toContain('terminalTrade.start')
+    expect(dashboardSource).toContain('terminalTrade.finish')
+    expect(preloadSource).toContain("ipcRenderer.invoke('terminal-trade:start'")
+    expect(appSource).toContain("ipcMain.handle('terminal-trade:finish'")
+    expect(appSource).toContain("settings.tradeSource.mode !== 'binance-futures'")
+  })
+
   it('opens clip preview from the preview artwork', async () => {
     const clipCardSource = await readFile(resolve('src/renderer/components/trade/ClipCard.tsx'), 'utf8')
 
@@ -154,6 +193,17 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('binance:get-watch-status')")
   })
 
+  it('shows clip processing progress without using recorder messages as Binance status', async () => {
+    const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+
+    expect(source).toContain('ClipProcessingBar')
+    expect(source).toContain('clipProcessing?.active')
+    expect(source).toContain("binanceProcessing ? 'Сохраняем'")
+    expect(source).toContain('localClipProcessing')
+    expect(source).not.toContain('isBinanceWaitingStatus')
+    expect(source).not.toContain("binanceWaiting ? 'Ожидание'")
+  })
+
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
 
@@ -173,6 +223,8 @@ describe('Dashboard layout', () => {
     const releaseWorkflowSource = await readFile(resolve('../.github/workflows/release.yml'), 'utf8')
 
     expect(appSource).toContain('createAppUpdateService')
+    expect(appSource).toContain('hasPackagedUpdateConfig')
+    expect(appSource).toContain("app-update.yml")
     expect(appSource).toContain("ipcMain.handle('updates:check'")
     expect(preloadSource).toContain("ipcRenderer.invoke('updates:download'")
     expect(preloadSource).toContain("ipcRenderer.on('updates:status'")
@@ -180,6 +232,9 @@ describe('Dashboard layout', () => {
     expect(systemSettingsSource).toContain('Проверить обновления')
     expect(updateServiceSource).toContain("import electronUpdater")
     expect(updateServiceSource).toContain('const { autoUpdater } = electronUpdater')
+    expect(updateServiceSource).toContain('hasUpdateConfig')
+    expect(updateServiceSource).toContain('autoUpdater.forceDevUpdateConfig = true')
+    expect(updateServiceSource).toContain('autoUpdater.setFeedURL(githubFeed)')
     expect(updateServiceSource).not.toContain('import { autoUpdater')
     expect(releaseWorkflowSource).toContain('desktop/dist/latest*.yml')
     expect(releaseWorkflowSource).toContain("name '*.blockmap'")

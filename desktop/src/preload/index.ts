@@ -6,7 +6,9 @@ import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networ
 import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
+import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
+import type { WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
 
 export type ProxySaveInput = {
   id?: string
@@ -125,9 +127,20 @@ const api = {
     getStatus: (): Promise<ObsStatus> => ipcRenderer.invoke('obs:get-status'),
     testReplaySave: (): Promise<ObsTestReplayResult> => ipcRenderer.invoke('obs:test-replay-save')
   },
+  recording: {
+    listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
+    getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
+    appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
+  },
   binance: {
     testFuturesConnection: (): Promise<BinanceFuturesConnectionStatus> => ipcRenderer.invoke('binance:test-futures-connection'),
     getWatchStatus: (): Promise<BinanceFuturesWatchStatus> => ipcRenderer.invoke('binance:get-watch-status')
+  },
+  terminalTrade: {
+    getStatus: (): Promise<TerminalTradeRecordingStatus> => ipcRenderer.invoke('terminal-trade:get-status'),
+    start: (): Promise<TerminalTradeRecordingStatus> => ipcRenderer.invoke('terminal-trade:start'),
+    finish: (): Promise<ClipQueueItem> => ipcRenderer.invoke('terminal-trade:finish'),
+    cancel: (): Promise<TerminalTradeRecordingStatus> => ipcRenderer.invoke('terminal-trade:cancel')
   },
   clips: {
     listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),

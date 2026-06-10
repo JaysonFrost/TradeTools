@@ -10,7 +10,7 @@ export type SidebarProps = {
 }
 
 const items: Array<{ page: AppPage, label: string, description: string, icon: typeof Clapperboard }> = [
-  { page: 'video', label: 'Видео', description: 'OBS, сделки, клипы', icon: Clapperboard },
+  { page: 'video', label: 'Видео', description: 'Запись, сделки, клипы', icon: Clapperboard },
   { page: 'proxy', label: 'Прокси', description: 'Серверы, оплаты, цепочки', icon: Network }
 ]
 

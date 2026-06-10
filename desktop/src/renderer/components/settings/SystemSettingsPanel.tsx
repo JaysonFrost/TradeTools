@@ -136,7 +136,7 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
             <input className="mt-1 h-4 w-4 accent-violet-500" checked={clipSuccessNotificationsEnabled} disabled={saving} onChange={(event) => void toggleClipSuccessNotifications(event.target.checked)} type="checkbox" />
             <span>
               <span className="flex items-center gap-2 font-semibold text-zinc-100"><Clapperboard size={16} />Готовая запись сделки</span>
-              <span className="mt-1 block text-xs leading-5 text-zinc-500">После OBS replay и ffmpeg-нарезки появится системное уведомление с переходом в папку файла.</span>
+              <span className="mt-1 block text-xs leading-5 text-zinc-500">После сохранения replay и ffmpeg-нарезки появится системное уведомление с переходом в папку файла.</span>
             </span>
           </label>
         ) : (

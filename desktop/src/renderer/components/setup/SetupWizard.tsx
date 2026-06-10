@@ -1,10 +1,12 @@
-import { ArrowLeft, ArrowRight, CheckCircle2, FolderOpen, Route, Server, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
+import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { proxySetupWizardSteps, videoSetupWizardSteps } from './setupWizardSteps'
 import { Button } from '../ui/Button'
 
@@ -60,6 +62,14 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState('4455')
   const [obsPassword, setObsPassword] = useState('')
+  const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
+  const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
+  const [windowSourceId, setWindowSourceId] = useState('')
+  const [windowSourceName, setWindowSourceName] = useState('')
+  const [frameRate, setFrameRate] = useState('30')
+  const [segmentSeconds, setSegmentSeconds] = useState('2')
+  const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
+  const [loadingSources, setLoadingSources] = useState(false)
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [paddingBefore, setPaddingBefore] = useState('2')
@@ -127,6 +137,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   useEffect(() => {
     if (!settings) return
+    setRecordingMode(settings.recording.mode)
+    setSourceType(settings.recording.sourceType)
+    setWindowSourceId(settings.recording.windowSourceId)
+    setWindowSourceName(settings.recording.windowSourceName)
+    setFrameRate(String(settings.recording.frameRate))
+    setSegmentSeconds(String(settings.recording.segmentSeconds))
     setHost(settings.obs.host)
     setPort(String(settings.obs.port))
     setReplaySourceDir(settings.clip.replaySourceDir)
@@ -135,6 +151,34 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
     setBinanceTestnet(settings.exchange.binanceFutures.testnet)
   }, [settings])
+
+  const refreshWindowSources = async () => {
+    setLoadingSources(true)
+    setLocalMessage('')
+    try {
+      const sources = await getTradeToolsApi().recording.listWindowSources()
+      setWindowSources(sources)
+      const preferredSource = recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
+        ? findPreferredTerminalSource(sources)
+        : undefined
+      if (preferredSource) {
+        setWindowSourceId(preferredSource.id)
+        setWindowSourceName(preferredSource.name)
+        setLocalMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
+        return
+      }
+      setLocalMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
+    } catch (error) {
+      setLocalMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
+    } finally {
+      setLoadingSources(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!open || mode !== 'video' || recordingMode !== 'window') return
+    void refreshWindowSources()
+  }, [mode, open, recordingMode])
 
   useEffect(() => {
     if (!settings?.proxies.length) {
@@ -172,6 +216,32 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const step = steps[stepIndex]
   const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex, steps.length])
+  const filteredSources = windowSources.filter((source) => source.type === sourceType)
+  const stepActionLabels = useMemo(() => {
+    if (!step) return []
+    if (mode === 'video' && step.id === 'obs-websocket') {
+      return [
+        'Использовать встроенную запись окна или экрана',
+        'Использовать OBS Replay Buffer',
+        'Сохранить выбранный режим записи'
+      ]
+    }
+    if (mode === 'video' && step.id === 'obs-replay' && recordingMode === 'window') {
+      return [
+        'Откройте окно торгового терминала',
+        'Если окно не выбрано, TradeTools попробует выбрать его автоматически',
+        'Нажмите проверку видео'
+      ]
+    }
+    if (mode === 'video' && step.id === 'folders' && recordingMode === 'window') {
+      return [
+        'Выбрать папку готовых клипов',
+        'Поставить секунды до входа и после выхода'
+      ]
+    }
+
+    return step.actions
+  }, [mode, recordingMode, step])
 
   if (!open || !step) return null
 
@@ -180,8 +250,23 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setLocalMessage('')
     try {
       const api = getTradeToolsApi()
+      const latestSources = recordingMode === 'window' && !windowSourceId && !windowSourceName
+        ? await api.recording.listWindowSources()
+        : windowSources
+      if (latestSources !== windowSources) setWindowSources(latestSources)
+      const selectedSource = windowSources.find((source) => source.id === windowSourceId)
+        ?? latestSources.find((source) => source.id === windowSourceId)
+        ?? (recordingMode === 'window' && sourceType === 'window' ? findPreferredTerminalSource(latestSources) : undefined)
       const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
+        recording: {
+          mode: recordingMode,
+          sourceType: selectedSource?.type ?? sourceType,
+          windowSourceId: selectedSource?.id ?? windowSourceId,
+          windowSourceName: selectedSource?.name ?? windowSourceName,
+          frameRate: Number(frameRate),
+          segmentSeconds: Number(segmentSeconds)
+        },
         obs: {
           host,
           port: Number(port)
@@ -365,7 +450,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const runVideoHealthCheck = async () => {
     setCheckingVideo(true)
-    setLocalMessage('Проверяем OBS WebSocket и Replay Buffer...')
+    setLocalMessage(recordingMode === 'window' ? 'Проверяем встроенную запись окна...' : 'Проверяем OBS WebSocket и Replay Buffer...')
     try {
       const message = await onRunHealthCheck()
       setLocalMessage(message || 'Проверка видео завершена')
@@ -402,23 +487,37 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
 
     if (step.id === 'obs-websocket') {
-      setLocalMessage(actionIndex === 3 ? 'Введите пароль ниже и нажмите «Сохранить этот шаг».' : 'Выполните этот пункт в OBS, затем вернитесь в мастер.')
+      if (actionIndex === 0) {
+        setRecordingMode('window')
+        await refreshWindowSources()
+        return
+      }
+      if (actionIndex === 1) {
+        setRecordingMode('obs')
+        setLocalMessage('Для OBS введите WebSocket данные ниже и нажмите «Сохранить этот шаг».')
+        return
+      }
+      setLocalMessage(recordingMode === 'window'
+        ? 'Откройте терминал и нажмите «Сохранить этот шаг». Если окно найдено, TradeTools выберет его автоматически.'
+        : 'Введите пароль OBS WebSocket ниже и нажмите «Сохранить этот шаг».')
       return
     }
 
     if (step.id === 'obs-replay') {
-      if (actionIndex === step.actions.length - 1) {
+      if (actionIndex === stepActionLabels.length - 1) {
         await runVideoHealthCheck()
       } else {
-        setLocalMessage('Выполните этот пункт в OBS. После запуска Replay Buffer нажмите проверку видео.')
+        setLocalMessage(recordingMode === 'window'
+          ? 'Окно терминала должно быть открыто. После сохранения источника нажмите проверку видео.'
+          : 'Выполните этот пункт в OBS. После запуска Replay Buffer нажмите проверку видео.')
       }
       return
     }
 
     if (step.id === 'folders') {
-      if (actionIndex === 0) {
+      if (recordingMode === 'obs' && actionIndex === 0) {
         await selectDirectory(replaySourceDir, setReplaySourceDir)
-      } else if (actionIndex === 1) {
+      } else if ((recordingMode === 'obs' && actionIndex === 1) || (recordingMode === 'window' && actionIndex === 0)) {
         await selectDirectory(outputDir, setOutputDir)
       } else {
         setLocalMessage('Задайте отступы ниже и нажмите «Сохранить этот шаг».')
@@ -432,10 +531,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
 
     if (step.id === 'trade-source') {
-      if (actionIndex === step.actions.length - 1) {
+      if (actionIndex === stepActionLabels.length - 1) {
         await testBinanceConnection()
+      } else if (actionIndex === 0) {
+        setLocalMessage('Режим без API уже выбран по умолчанию. TradeTools будет писать окно терминала локально.')
       } else {
-        setLocalMessage('Заполните API Key и API Secret ниже, затем нажмите «Сохранить ключи».')
+        setLocalMessage('Если нужна автонарезка по Binance, заполните API Key и API Secret ниже, затем нажмите «Сохранить ключи».')
       }
       return
     }
@@ -453,7 +554,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     if (step.id === 'proxy-check') {
       if (actionIndex === 0) {
         setLocalMessage('Выберите первый сервер маршрута в списке ниже. Обычно это первый из сохранённых в мастере серверов.')
-      } else if (actionIndex === step.actions.length - 1) {
+      } else if (actionIndex === stepActionLabels.length - 1) {
         await setupProxyChain()
       } else {
         await checkProxyChain()
@@ -492,15 +593,21 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       case 'video-welcome':
         return 'Вы пройдёте только видео-настройки, не смешивая их с прокси.'
       case 'obs-websocket':
-        return 'Приложение сможет безопасно подключаться к OBS и отправлять команду сохранения replay.'
+        return recordingMode === 'window'
+          ? 'TradeTools будет писать выбранное окно или экран напрямую, без OBS.'
+          : 'TradeTools сможет подключаться к OBS и отправлять команду сохранения replay.'
       case 'obs-replay':
-        return 'OBS начнет держать последние минуты записи в памяти и отдавать их по команде.'
+        return recordingMode === 'window'
+          ? 'Встроенный рекордер будет держать локальный буфер сегментов и собирать replay сделки.'
+          : 'OBS начнет держать последние минуты записи в памяти и отдавать их по команде.'
       case 'folders':
-        return 'TradeTools будет знать, где найти исходный replay и куда положить готовый клип.'
+        return recordingMode === 'window'
+          ? 'TradeTools будет складывать готовые клипы в выбранную папку.'
+          : 'TradeTools будет знать, где найти исходный OBS replay и куда положить готовый клип.'
       case 'trade-source':
-        return 'Ключи сохранятся в системном keychain, а TradeTools сможет отслеживать Binance Futures.'
+        return 'Без API TradeTools пишет терминал локально. Если добавить Binance ключи, включится автонарезка по закрытым futures-позициям.'
       case 'test-clip':
-        return 'В очереди проверки появится реальный локальный MP4 с metadata JSON.'
+        return 'В очереди проверки появится локальный клип с metadata JSON.'
       case 'proxy-welcome':
         return 'Вы пройдёте только прокси-настройки: два сервера, связка, SSH-проверка и запуск локального proxy.'
       case 'proxy-server':
@@ -518,7 +625,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const actionButtons = (
     <div className="space-y-3">
-      {step.actions.map((action, index) => (
+      {stepActionLabels.map((action, index) => (
         <button key={action} type="button" className="flex w-full cursor-pointer gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-left text-sm text-zinc-300 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-zinc-100" onClick={() => void runStepAction(index)}>
           <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-violet-300" />
           <span>{action}</span>
@@ -529,13 +636,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const folderFields = step.id === 'folders' ? (
     <div className="grid gap-4 md:grid-cols-2">
-      <div className="md:col-span-2">
-        <div className="text-xs font-medium text-zinc-500">Папка OBS replay</div>
-        <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-          <input className={`${compactInputClass} min-w-0 flex-1`} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
-          <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+      {recordingMode === 'obs' && (
+        <div className="md:col-span-2">
+          <div className="text-xs font-medium text-zinc-500">Папка OBS replay</div>
+          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+            <input className={`${compactInputClass} min-w-0 flex-1`} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
+            <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
+          </div>
         </div>
-      </div>
+      )}
       <div className="md:col-span-2">
         <div className="text-xs font-medium text-zinc-500">Папка клипов</div>
         <div className="mt-1 flex flex-col gap-2 sm:flex-row">
@@ -605,10 +714,82 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                 </div>
                 {step.id === 'folders' ? folderFields : step.id === 'trade-source' ? binanceFields : actionButtons}
                 {step.id === 'obs-websocket' && (
-                  <div className="mt-5 grid gap-4 md:grid-cols-3">
-                    <label className="text-xs font-medium text-zinc-500">OBS host<input className={inputClass} value={host} onChange={(event) => setHost(event.target.value)} /></label>
-                    <label className="text-xs font-medium text-zinc-500">OBS port<input className={inputClass} value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" /></label>
-                    <label className="text-xs font-medium text-zinc-500">OBS пароль<input className={inputClass} value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} type="password" placeholder={settings?.obs.passwordConfigured ? 'Сохранён' : 'Не задан'} /></label>
+                  <div className="mt-5 space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'window' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
+                        onClick={() => {
+                          setRecordingMode('window')
+                          void refreshWindowSources()
+                        }}
+                        type="button"
+                      >
+                        <Monitor size={16} className="mr-2" />Встроенная запись
+                      </button>
+                      <button
+                        className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
+                        onClick={() => setRecordingMode('obs')}
+                        type="button"
+                      >
+                        <Radio size={16} className="mr-2" />OBS Replay Buffer
+                      </button>
+                    </div>
+                    {recordingMode === 'window' ? (
+                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_120px_120px]">
+                        <label className="text-xs font-medium text-zinc-500">
+                          Источник записи
+                          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                            <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                              <button
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                onClick={() => {
+                                  setSourceType('window')
+                                  setWindowSourceId('')
+                                  setWindowSourceName('')
+                                }}
+                                type="button"
+                              >
+                                Окно
+                              </button>
+                              <button
+                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'screen' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                onClick={() => {
+                                  setSourceType('screen')
+                                  setWindowSourceId('')
+                                  setWindowSourceName('')
+                                }}
+                                type="button"
+                              >
+                                Экран
+                              </button>
+                            </div>
+                            <select
+                              className={`${compactInputClass} min-w-0 flex-1 appearance-none`}
+                              value={windowSourceId}
+                              onChange={(event) => {
+                                const source = windowSources.find((candidate) => candidate.id === event.target.value)
+                                setWindowSourceId(event.target.value)
+                                setWindowSourceName(source?.name ?? '')
+                              }}
+                            >
+                              <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
+                              {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+                            </select>
+                            <Button variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
+                              <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
+                            </Button>
+                          </div>
+                        </label>
+                        <label className="text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">Интервал буфера, сек<input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" /></label>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <label className="text-xs font-medium text-zinc-500">OBS host<input className={inputClass} value={host} onChange={(event) => setHost(event.target.value)} /></label>
+                        <label className="text-xs font-medium text-zinc-500">OBS port<input className={inputClass} value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">OBS пароль<input className={inputClass} value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} type="password" placeholder={settings?.obs.passwordConfigured ? 'Сохранён' : 'Не задан'} /></label>
+                      </div>
+                    )}
                   </div>
                 )}
                 {step.id === 'folders' && <div className="mt-5">{actionButtons}</div>}

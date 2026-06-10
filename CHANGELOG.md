@@ -4,6 +4,31 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.0] - 2026-06-08
+
+### Added
+
+- Added built-in terminal window recording mode, so trade clips can be created without OBS.
+- Added window source selection, FPS and segment settings to video setup.
+- Added IPC and main-process replay assembly for built-in window recording.
+
+### Changed
+
+- Video setup wizard now treats OBS as an optional alternative mode.
+- Binance watcher waits for the selected video source before creating clips.
+- Built-in recorder now uses continuous recording sessions to avoid freezes from restarting capture every few seconds.
+- Built-in recorder can capture either a window or a full screen, which helps bypass Windows Graphics Capture window freezes.
+- Windows builds now disable Chromium WGC capture features to avoid stale-frame desktop capture errors.
+- Binance watcher now treats built-in recorder buffer warmup as a waiting state instead of a polling failure.
+- Binance status card no longer switches between running, waiting and recorder messages while the app is idle.
+- Built-in recording is now the default video mode and records through a fixed-FPS canvas stream before MediaRecorder encoding.
+- Built-in recording now uses a 30-second idle replay window, while active trades keep their full segment history.
+- Built-in recording now protects segments for open Binance trades and exports the whole trade from entry to exit.
+- Clip creation now shows an in-app progress bar while replay saving and ffmpeg processing are running.
+- Binance status no longer displays built-in recorder segment messages, preventing idle status flicker.
+- Native dropdowns now use a dark readable style.
+- README and user guide now document the no-OBS recording flow.
+
 ## [0.1.2] - 2026-06-08
 
 ### Fixed

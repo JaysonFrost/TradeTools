@@ -18,6 +18,15 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(2)
     expect(settings.clip.paddingAfterSeconds).toBe(2)
+    expect(settings.clip.replayBufferSeconds).toBe(30)
+    expect(settings.recording).toEqual({
+      mode: 'window',
+      sourceType: 'window',
+      windowSourceId: '',
+      windowSourceName: '',
+      frameRate: 30,
+      segmentSeconds: 2
+    })
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
       launchAtLogin: false,
@@ -41,6 +50,9 @@ describe('settings', () => {
       apiKeyConfigured: false,
       apiSecretConfigured: false
     })
+    expect(settings.tradeSource).toEqual({
+      mode: 'terminal-window'
+    })
     expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
     expect(settings).not.toHaveProperty(legacyGateSettingsKey)
   })
@@ -54,7 +66,7 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(0)
     expect(settings.clip.paddingAfterSeconds).toBe(60)
-    expect(settings.clip.replayBufferSeconds).toBe(120)
+    expect(settings.clip.replayBufferSeconds).toBe(30)
     expect(settings.clip.outputDir).toBe('/clips')
   })
 
@@ -75,6 +87,46 @@ describe('settings', () => {
       testnet: true,
       apiKeyConfigured: true,
       apiSecretConfigured: true
+    })
+    expect(settings.tradeSource.mode).toBe('binance-futures')
+  })
+
+  it('keeps terminal-window as the explicit no-API trade source', () => {
+    const settings = normalizeSettings({
+      exchange: {
+        binanceFutures: {
+          enabled: true,
+          apiKeyConfigured: true,
+          apiSecretConfigured: true
+        }
+      },
+      tradeSource: {
+        mode: 'terminal-window'
+      }
+    }, '/app-data')
+
+    expect(settings.tradeSource.mode).toBe('terminal-window')
+  })
+
+  it('normalizes built-in window recording settings', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        windowSourceId: ' screen:1 ',
+        windowSourceName: ' Terminal ',
+        frameRate: 999,
+        segmentSeconds: 0
+      }
+    }, '/app-data')
+
+    expect(settings.recording).toEqual({
+      mode: 'window',
+      sourceType: 'screen',
+      windowSourceId: 'screen:1',
+      windowSourceName: 'Terminal',
+      frameRate: 60,
+      segmentSeconds: 1
     })
   })
 

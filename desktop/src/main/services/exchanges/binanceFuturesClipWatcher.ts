@@ -1,12 +1,13 @@
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import type { ClipQueueItem } from '../trades/tradeClipPipeline'
-import { createBinanceFuturesTradeState, type BinanceFuturesPosition } from './binanceFuturesTradeState'
+import { createBinanceFuturesTradeState, type BinanceFuturesPosition, type OpenBinanceFuturesTrade } from './binanceFuturesTradeState'
 
 export type BinanceFuturesClipWatcherDeps = {
   listPositions: () => Promise<BinanceFuturesPosition[]>
   listRecentClosedTrades?: (input: { startTimeMs: number, endTimeMs: number }) => Promise<ClosedTrade[]>
   getHistoryLookbackMs?: () => Promise<number>
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
+  onActiveTradesChanged?: (trades: OpenBinanceFuturesTrade[]) => void | Promise<void>
   now?: () => number
 }
 
@@ -21,6 +22,27 @@ export type BinanceFuturesWatchStatus = {
   lastPollAtMs?: number
   lastClosedTradeAtMs?: number
   lastError?: string
+  clipProcessing?: ClipProcessingStatus
+}
+
+export type ClipProcessingStatus = {
+  active: boolean
+  title: string
+  message: string
+  progressPercent: number
+  startedAtMs?: number
+}
+
+const toProtectedOpenTrade = (trade: ClosedTrade): OpenBinanceFuturesTrade => {
+  return {
+    id: trade.id,
+    exchange: trade.exchange,
+    marketType: trade.marketType,
+    symbol: trade.symbol,
+    side: trade.side,
+    status: 'open',
+    entryTimeMs: trade.entryTimeMs
+  }
 }
 
 export const createBinanceFuturesClipWatcher = (deps: BinanceFuturesClipWatcherDeps): BinanceFuturesClipWatcher => {
@@ -52,6 +74,10 @@ export const createBinanceFuturesClipWatcher = (deps: BinanceFuturesClipWatcherD
         : []
       const closedTrades = uniqueNewTrades([...closedTradesFromPositions, ...closedTradesFromHistory])
       for (const trade of closedTrades) renderingTradeIds.add(trade.id)
+      await deps.onActiveTradesChanged?.([
+        ...state.getActiveTrades(),
+        ...closedTrades.map(toProtectedOpenTrade)
+      ])
 
       for (const trade of closedTrades) {
         try {
@@ -61,6 +87,7 @@ export const createBinanceFuturesClipWatcher = (deps: BinanceFuturesClipWatcherD
           renderingTradeIds.delete(trade.id)
         }
       }
+      await deps.onActiveTradesChanged?.(state.getActiveTrades())
       return closedTrades
     }
   }
