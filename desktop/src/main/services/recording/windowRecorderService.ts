@@ -51,6 +51,7 @@ export type WindowReplaySaveResult = {
 export type WindowRecorderService = {
   appendSegment: (input: WindowRecordingSegmentInput, settings: AppSettings) => Promise<WindowRecorderStatus>
   getStatus: (settings: AppSettings) => Promise<WindowRecorderStatus>
+  protectSince: (timeMs?: number) => void
   saveReplayBuffer: (input: WindowReplaySaveInput) => Promise<WindowReplaySaveResult>
 }
 
@@ -112,6 +113,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   const segmentsDir = join(appDataDir, 'window-recording', 'segments')
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
+  let protectedSinceMs = 0
 
   const pruneDiskFiles = async (keepIds: Set<string>) => {
     const entries = await readdir(segmentsDir, { withFileTypes: true }).catch(() => [])
@@ -127,7 +129,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
   const pruneSegments = async (settings: AppSettings, nowMs = Date.now()) => {
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
-    const cutoffMs = nowMs - maxAgeMs
+    const replayCutoffMs = nowMs - maxAgeMs
+    const cutoffMs = protectedSinceMs > 0 ? Math.min(replayCutoffMs, protectedSinceMs) : replayCutoffMs
     const sessionLastEndedAt = new Map<string, number>()
 
     for (const segment of segments) {
@@ -265,9 +268,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<string> => {
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
-    const requestedReplayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
-    const maxReplayWindowMs = settings.clip.replayBufferSeconds * 1000
-    const replayStartMs = Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)
+    const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
     const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs)
     const neededSegments = sourceSegments.filter((segment) => (
@@ -351,6 +352,10 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   return {
+    protectSince(timeMs) {
+      const parsed = Number(timeMs)
+      protectedSinceMs = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
+    },
     async appendSegment(input, settings) {
       if (settings.recording.mode !== 'window') return buildStatus(settings)
 
@@ -394,6 +399,14 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         }
       }
 
+      const previousProtectedSinceMs = protectedSinceMs
+      protectedSinceMs = Math.max(1, Math.min(
+        previousProtectedSinceMs > 0 ? previousProtectedSinceMs : Number.MAX_SAFE_INTEGER,
+        settings.clip.paddingBeforeSeconds > 0
+          ? trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
+          : trade.entryTimeMs
+      ))
+
       try {
         const replayPath = await exportReplay(settings, trade)
         return {
@@ -408,6 +421,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
           requestedAtMs,
           message: error instanceof Error ? error.message : 'Не удалось сохранить встроенный replay'
         }
+      } finally {
+        protectedSinceMs = previousProtectedSinceMs
       }
     }
   }

@@ -13,4 +13,14 @@ describe('windowRecorderService', () => {
     expect(source).toContain('нужно примерно ${formatRoundedSeconds(requiredSeconds)}')
     expect(source).toContain('Осталось примерно ${formatRoundedSeconds(remainingSeconds)}')
   })
+
+  it('keeps active trade segments and exports the full trade range instead of capping to the idle buffer', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('protectSince')
+    expect(source).toContain('protectedSinceMs')
+    expect(source).toContain('const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
+    expect(source).not.toContain('maxReplayWindowMs')
+    expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
+  })
 })

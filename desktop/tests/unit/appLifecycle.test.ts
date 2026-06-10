@@ -44,6 +44,14 @@ describe('main app lifecycle', () => {
     expect(source).toContain('lastError: undefined')
   })
 
+  it('protects built-in recording segments while a Binance trade is open', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('async onActiveTradesChanged(trades)')
+    expect(source).toContain('windowRecorderService.protectSince()')
+    expect(source).toContain('earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
+  })
+
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

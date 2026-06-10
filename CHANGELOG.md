@@ -22,7 +22,8 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Binance watcher now treats built-in recorder buffer warmup as a waiting state instead of a polling failure.
 - Binance status card no longer switches between running, waiting and recorder messages while the app is idle.
 - Built-in recording is now the default video mode and records through a fixed-FPS canvas stream before MediaRecorder encoding.
-- Built-in recording now uses a 30-second replay window instead of asking users to wait for the full trade duration.
+- Built-in recording now uses a 30-second idle replay window, while active trades keep their full segment history.
+- Built-in recording now protects segments for open Binance trades and exports the whole trade from entry to exit.
 - Clip creation now shows an in-app progress bar while replay saving and ffmpeg processing are running.
 - Binance status no longer displays built-in recorder segment messages, preventing idle status flicker.
 - Native dropdowns now use a dark readable style.

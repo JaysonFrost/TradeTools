@@ -4,6 +4,7 @@ import { createBinanceFuturesClipWatcher } from '../../src/main/services/exchang
 describe('binanceFuturesClipWatcher', () => {
   it('creates a clip when a Binance Futures position closes', async () => {
     const createClipForClosedTrade = vi.fn().mockResolvedValue(undefined)
+    const onActiveTradesChanged = vi.fn()
     const listPositions = vi.fn()
       .mockResolvedValueOnce([{ symbol: 'BTCUSDT', positionAmt: '0.5' }])
       .mockResolvedValueOnce([{ symbol: 'BTCUSDT', positionAmt: '0' }])
@@ -13,6 +14,7 @@ describe('binanceFuturesClipWatcher', () => {
     const watcher = createBinanceFuturesClipWatcher({
       listPositions,
       createClipForClosedTrade,
+      onActiveTradesChanged,
       now
     })
 
@@ -29,6 +31,16 @@ describe('binanceFuturesClipWatcher', () => {
       entryTimeMs: Date.parse('2026-05-13T12:00:00.000Z'),
       exitTimeMs: Date.parse('2026-05-13T12:04:00.000Z')
     })
+    expect(onActiveTradesChanged).toHaveBeenCalledWith([{
+      id: 'binance-futures-BTCUSDT-1778673600000',
+      exchange: 'BINANCE',
+      marketType: 'FUTURES',
+      symbol: 'BTCUSDT',
+      side: 'LONG',
+      status: 'open',
+      entryTimeMs: Date.parse('2026-05-13T12:00:00.000Z')
+    }])
+    expect(onActiveTradesChanged).toHaveBeenLastCalledWith([])
   })
 
   it('creates a clip from recent closed-trade history when the position poll already sees zero', async () => {

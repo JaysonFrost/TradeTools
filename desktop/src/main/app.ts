@@ -668,6 +668,16 @@ app.whenReady().then(() => {
       const settings = await settingsStore.load()
       return (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 60) * 1000
     },
+    async onActiveTradesChanged(trades) {
+      const settings = await settingsStore.load()
+      if (settings.recording.mode !== 'window' || trades.length === 0) {
+        windowRecorderService.protectSince()
+        return
+      }
+
+      const earliestEntryTimeMs = Math.min(...trades.map((trade) => trade.entryTimeMs))
+      windowRecorderService.protectSince(earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
+    },
     createClipForClosedTrade: createClipAndNotify
   })
   let binanceFuturesPollInterval: NodeJS.Timeout | undefined
