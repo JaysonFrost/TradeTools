@@ -20,7 +20,11 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 - Built-in recorder can capture either a window or a full screen, which helps bypass Windows Graphics Capture window freezes.
 - Windows builds now disable Chromium WGC capture features to avoid stale-frame desktop capture errors.
 - Binance watcher now treats built-in recorder buffer warmup as a waiting state instead of a polling failure.
-- Binance status card now shows video warmup as "Ожидание" instead of switching between running and error states.
+- Binance status card no longer switches between running, waiting and recorder messages while the app is idle.
+- Built-in recording is now the default video mode and records through a fixed-FPS canvas stream before MediaRecorder encoding.
+- Built-in recording now uses a 30-second replay window instead of asking users to wait for the full trade duration.
+- Clip creation now shows an in-app progress bar while replay saving and ffmpeg processing are running.
+- Binance status no longer displays built-in recorder segment messages, preventing idle status flicker.
 - Native dropdowns now use a dark readable style.
 - README and user guide now document the no-OBS recording flow.
 

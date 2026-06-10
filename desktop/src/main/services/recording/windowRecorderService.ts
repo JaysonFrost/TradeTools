@@ -160,7 +160,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     const sourceSegments = relevantSegments(settings)
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
-    const bufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
+    const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
+    const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
     const active = Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
 
     return {
@@ -263,8 +264,10 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<string> => {
-    const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
+    const requestedReplayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
+    const maxReplayWindowMs = settings.clip.replayBufferSeconds * 1000
+    const replayStartMs = Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
     const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs)
     const neededSegments = sourceSegments.filter((segment) => (

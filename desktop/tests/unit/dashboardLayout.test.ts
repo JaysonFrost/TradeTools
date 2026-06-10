@@ -59,6 +59,8 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("types: ['window', 'screen']")
     expect(settingsPanelSource).toContain('listWindowSources')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
+    expect(controllerSource).toContain('createFixedFrameRateStream')
+    expect(controllerSource).toContain('canvas.captureStream')
     expect(controllerSource).toContain('recording.appendSegment')
     expect(dashboardSource).toContain('<WindowRecorderController')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
@@ -174,14 +176,15 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('binance:get-watch-status')")
   })
 
-  it('shows Binance video warmup as waiting instead of flipping between running and error', async () => {
+  it('shows clip processing progress without using recorder messages as Binance status', async () => {
     const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
 
-    expect(source).toContain('const isBinanceWaitingStatus')
-    expect(source).toContain("'Ждём видео:'")
-    expect(source).toContain("'Запись окна:'")
-    expect(source).toContain("binanceWaiting ? 'Ожидание'")
-    expect(source).toContain('!binanceWaiting')
+    expect(source).toContain('ClipProcessingBar')
+    expect(source).toContain('clipProcessing?.active')
+    expect(source).toContain("binanceProcessing ? 'Сохраняем'")
+    expect(source).toContain('localClipProcessing')
+    expect(source).not.toContain('isBinanceWaitingStatus')
+    expect(source).not.toContain("binanceWaiting ? 'Ожидание'")
   })
 
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {

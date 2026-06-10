@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { BinanceFuturesWatchStatus } from '../../main/services/exchanges/binanceFuturesClipWatcher'
+import type { BinanceFuturesWatchStatus, ClipProcessingStatus } from '../../main/services/exchanges/binanceFuturesClipWatcher'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
@@ -42,6 +42,7 @@ type VideoPageProps = {
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
   onSettingsSaved: (settings: AppSettings) => void
+  clipProcessing?: ClipProcessingStatus
 }
 
 type ProxyPageProps = {
@@ -51,21 +52,29 @@ type ProxyPageProps = {
   onSettingsSaved: (settings: AppSettings) => void
 }
 
-const binanceWaitingMessagePrefixes = [
-  'Ждём видео:',
-  'Запись окна:',
-  'OBS:'
-]
-
-const isBinanceWaitingStatus = (status: BinanceFuturesWatchStatus): boolean => (
-  !status.lastError && binanceWaitingMessagePrefixes.some((prefix) => status.message.startsWith(prefix))
+const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
+  <div className="rounded-3xl border border-violet-400/20 bg-violet-500/[0.07] p-4">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-violet-100">{status.title || 'Клип сделки'}</div>
+        <div className="mt-1 text-sm text-zinc-400">{status.message}</div>
+      </div>
+      <div className="text-xs font-semibold text-violet-200">{Math.round(status.progressPercent)}%</div>
+    </div>
+    <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+      <div
+        className="h-full rounded-full bg-violet-400 transition-[width] duration-500"
+        style={{ width: `${Math.max(6, Math.min(100, status.progressPercent))}%` }}
+      />
+    </div>
+  </div>
 )
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved }: VideoPageProps) => {
-  const recordingMode = settings?.recording.mode ?? 'obs'
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+  const recordingMode = settings?.recording.mode ?? 'window'
   const videoStatuses = useMemo(() => {
     const binanceConfigured = Boolean(settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured)
-    const binanceWaiting = isBinanceWaitingStatus(binanceWatch)
+    const binanceProcessing = Boolean(clipProcessing?.active)
 
     return [
       {
@@ -82,12 +91,12 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
         name: 'Binance USDT-M Futures',
         description: binanceWatch.message,
         status: binanceConfigured
-          ? binanceWatch.lastError ? 'Ошибка' : binanceWaiting ? 'Ожидание' : binanceWatch.running ? 'Работает' : 'Готов'
+          ? binanceWatch.lastError ? 'Ошибка' : binanceProcessing ? 'Сохраняем' : binanceWatch.running ? 'Работает' : 'Готов'
           : 'Нужно настроить',
-        tone: binanceConfigured && !binanceWatch.lastError && !binanceWaiting ? 'success' as const : 'warning' as const
+        tone: binanceConfigured && !binanceWatch.lastError && !binanceProcessing ? 'success' as const : binanceProcessing ? 'purple' as const : 'warning' as const
       }
     ]
-  }, [obs, settings, windowRecorder, binanceWatch, recordingMode])
+  }, [obs, settings, windowRecorder, binanceWatch, recordingMode, clipProcessing])
 
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
@@ -102,6 +111,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
           </div>
           <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25 sm:self-auto" onClick={onCreateTestClip}>Создать тестовый клип</button>
         </div>
+        {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} /></div>}
         <div className="space-y-3">
           {clips.length > 0 ? clips.map((clip) => (
             <ClipCard key={clip.id} clip={clip} onDeleted={onClipDeleted} onRenamed={onClipRenamed} />
@@ -159,6 +169,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [clips, setClips] = useState<ClipQueueItem[]>([])
   const [lastCheck, setLastCheck] = useState<ObsTestReplayResult>()
   const [clipMessage, setClipMessage] = useState('')
+  const [localClipProcessing, setLocalClipProcessing] = useState<ClipProcessingStatus>({
+    active: false,
+    title: '',
+    message: '',
+    progressPercent: 0
+  })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
   const [proxyVaultRuntime, setProxyVaultRuntime] = useState<ProxyVaultRuntimeState>({
@@ -299,6 +315,16 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   }
 
   const createTestClip = async () => {
+    const startedAtMs = Date.now()
+    setLocalClipProcessing({
+      active: true,
+      title: 'Тестовый клип',
+      message: settings?.recording.mode === 'window'
+        ? 'Собираем встроенный replay и режем клип'
+        : 'Сохраняем OBS replay и режем клип',
+      progressPercent: 35,
+      startedAtMs
+    })
     setClipMessage(settings?.recording.mode === 'window'
       ? 'Создаём тестовый клип: собираем встроенный replay из окна и режем ffmpeg...'
       : 'Создаём тестовый клип: сохраняем OBS replay, ищем файл и режем ffmpeg...'
@@ -306,10 +332,24 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     try {
       const api = getTradeToolsApi()
       const clip = await api.clips.createTest()
+      setLocalClipProcessing({
+        active: true,
+        title: clip.title,
+        message: 'Клип сохранён, обновляем очередь',
+        progressPercent: 95,
+        startedAtMs
+      })
       setClipMessage(`Клип создан: ${clip.title}`)
       await loadLocalState()
     } catch (error) {
       setClipMessage(error instanceof Error ? error.message : 'Не удалось создать клип')
+    } finally {
+      setLocalClipProcessing({
+        active: false,
+        title: '',
+        message: '',
+        progressPercent: 0
+      })
     }
   }
 
@@ -339,6 +379,10 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     void loadLocalState()
   }
 
+  const activeClipProcessing = localClipProcessing.active
+    ? localClipProcessing
+    : binanceWatch.clipProcessing?.active ? binanceWatch.clipProcessing : undefined
+
   return (
     <>
       <TopBar
@@ -367,6 +411,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           obs={obs}
           windowRecorder={windowRecorder}
           binanceWatch={binanceWatch}
+          clipProcessing={activeClipProcessing}
           onCreateTestClip={() => void createTestClip()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}

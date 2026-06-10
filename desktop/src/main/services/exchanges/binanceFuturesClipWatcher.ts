@@ -21,6 +21,15 @@ export type BinanceFuturesWatchStatus = {
   lastPollAtMs?: number
   lastClosedTradeAtMs?: number
   lastError?: string
+  clipProcessing?: ClipProcessingStatus
+}
+
+export type ClipProcessingStatus = {
+  active: boolean
+  title: string
+  message: string
+  progressPercent: number
+  startedAtMs?: number
 }
 
 export const createBinanceFuturesClipWatcher = (deps: BinanceFuturesClipWatcherDeps): BinanceFuturesClipWatcher => {

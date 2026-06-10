@@ -19,7 +19,7 @@ describe('settingsStore', () => {
     const settings = await store.load()
 
     expect(settings.language).toBe('ru')
-    expect(settings.recording.mode).toBe('obs')
+    expect(settings.recording.mode).toBe('window')
     expect(settings.obs.host).toBe('127.0.0.1')
     expect(settings.clip.outputDir).toBe(join(tempDir, 'clips'))
   })

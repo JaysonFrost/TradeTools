@@ -14,7 +14,7 @@ export type ObsSettingsPanelProps = {
 const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
 
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
-  const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('obs')
+  const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
@@ -130,18 +130,18 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
       <div className="mt-5 flex flex-wrap gap-2">
         <button
-          className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
-          onClick={() => setRecordingMode('obs')}
-          type="button"
-        >
-          <Radio size={16} className="mr-2" />OBS Replay Buffer
-        </button>
-        <button
           className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'window' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
           onClick={() => setRecordingMode('window')}
           type="button"
         >
           <Monitor size={16} className="mr-2" />Встроенная запись
+        </button>
+        <button
+          className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
+          onClick={() => setRecordingMode('obs')}
+          type="button"
+        >
+          <Radio size={16} className="mr-2" />OBS Replay Buffer
         </button>
       </div>
 

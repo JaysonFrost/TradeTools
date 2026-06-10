@@ -408,6 +408,10 @@ describe('tradeClipPipeline', () => {
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...createDefaultSettings(dataDir),
+        recording: {
+          ...createDefaultSettings(dataDir).recording,
+          mode: 'obs'
+        },
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,

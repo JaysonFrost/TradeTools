@@ -18,8 +18,9 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(2)
     expect(settings.clip.paddingAfterSeconds).toBe(2)
+    expect(settings.clip.replayBufferSeconds).toBe(30)
     expect(settings.recording).toEqual({
-      mode: 'obs',
+      mode: 'window',
       sourceType: 'window',
       windowSourceId: '',
       windowSourceName: '',
@@ -62,7 +63,7 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(0)
     expect(settings.clip.paddingAfterSeconds).toBe(60)
-    expect(settings.clip.replayBufferSeconds).toBe(120)
+    expect(settings.clip.replayBufferSeconds).toBe(30)
     expect(settings.clip.outputDir).toBe('/clips')
   })
 

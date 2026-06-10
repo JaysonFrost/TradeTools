@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
 import { dirname, extname, isAbsolute, join } from 'node:path'
 import { createBinanceFuturesClient } from './services/exchanges/binanceFuturesClient'
-import { createBinanceFuturesClipWatcher, type BinanceFuturesWatchStatus } from './services/exchanges/binanceFuturesClipWatcher'
+import { createBinanceFuturesClipWatcher, type BinanceFuturesWatchStatus, type ClipProcessingStatus } from './services/exchanges/binanceFuturesClipWatcher'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
@@ -47,6 +47,10 @@ const recorderBufferPendingErrorPrefixes = [
   'Встроенный рекордер ещё не накопил видео',
   'Встроенный рекордер ещё не записал время после выхода'
 ]
+const recorderStatusMessagePrefixes = [
+  'Запись окна:',
+  'Встроенная запись'
+]
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(windowsAppUserModelId)
@@ -58,6 +62,7 @@ const isRecorderBufferPendingError = (error: unknown): boolean => {
   const message = getErrorMessage(error)
   return recorderBufferPendingErrorPrefixes.some((prefix) => message.startsWith(prefix))
 }
+const isRecorderStatusMessage = (message: string): boolean => recorderStatusMessagePrefixes.some((prefix) => message.startsWith(prefix))
 
 type ProxySaveInput = {
   id?: string
@@ -577,10 +582,66 @@ app.whenReady().then(() => {
     if (!notification.ok) console.warn(`Clip notification failed: ${notification.message}`)
   }
 
+  let clipProcessingClearTimer: NodeJS.Timeout | undefined
+  let clipProcessingStatus: ClipProcessingStatus = {
+    active: false,
+    title: '',
+    message: '',
+    progressPercent: 0
+  }
+
+  const setClipProcessingStatus = (status: ClipProcessingStatus) => {
+    if (clipProcessingClearTimer) {
+      clearTimeout(clipProcessingClearTimer)
+      clipProcessingClearTimer = undefined
+    }
+    clipProcessingStatus = status
+  }
+
+  const clearClipProcessingSoon = () => {
+    if (clipProcessingClearTimer) clearTimeout(clipProcessingClearTimer)
+    clipProcessingClearTimer = setTimeout(() => {
+      clipProcessingStatus = {
+        active: false,
+        title: '',
+        message: '',
+        progressPercent: 0
+      }
+      clipProcessingClearTimer = undefined
+    }, 1_500)
+  }
+
   const createClipAndNotify = async (trade: ClosedTrade) => {
-    const clip = await clipPipeline.createClipForClosedTrade(trade)
-    await notifyClipCreated(clip)
-    return clip
+    const title = `${trade.symbol} ${trade.side}`
+    setClipProcessingStatus({
+      active: true,
+      title,
+      message: 'Сохраняем replay и собираем клип сделки',
+      progressPercent: 35,
+      startedAtMs: Date.now()
+    })
+
+    try {
+      const clip = await clipPipeline.createClipForClosedTrade(trade)
+      setClipProcessingStatus({
+        active: true,
+        title: clip.title,
+        message: 'Клип сохранён, обновляем очередь',
+        progressPercent: 95,
+        startedAtMs: clipProcessingStatus.startedAtMs
+      })
+      await notifyClipCreated(clip)
+      clearClipProcessingSoon()
+      return clip
+    } catch (error) {
+      setClipProcessingStatus({
+        active: false,
+        title,
+        message: getErrorMessage(error),
+        progressPercent: 0
+      })
+      throw error
+    }
   }
 
   const getBinanceFuturesClient = async () => {
@@ -634,11 +695,15 @@ app.whenReady().then(() => {
 
   const getBinanceFuturesWatchStatus = async (): Promise<BinanceFuturesWatchStatus> => {
     const configured = await isBinanceFuturesConfigured()
+    const cleanMessage = isRecorderStatusMessage(binanceFuturesWatchStatus.message)
+      ? binanceFuturesPollInterval ? 'Binance watcher работает, новых закрытых сделок нет' : 'Binance watcher запускается'
+      : binanceFuturesWatchStatus.message
     if (!configured) {
       return {
         ...binanceFuturesWatchStatus,
         configured,
         running: false,
+        clipProcessing: clipProcessingStatus,
         message: 'Binance Futures API ключи не настроены'
       }
     }
@@ -646,7 +711,9 @@ app.whenReady().then(() => {
     return {
       ...binanceFuturesWatchStatus,
       configured,
-      running: Boolean(binanceFuturesPollInterval)
+      message: cleanMessage,
+      running: Boolean(binanceFuturesPollInterval),
+      clipProcessing: clipProcessingStatus
     }
   }
 
@@ -687,21 +754,13 @@ app.whenReady().then(() => {
 
     const status = await windowRecorderService.getStatus(settings)
     if (!status.active) {
-      binanceFuturesWatchStatus = {
-        ...binanceFuturesWatchStatus,
-        configured: true,
-        running: Boolean(binanceFuturesPollInterval),
-        lastError: undefined,
-        message: `Запись окна: ${status.message}`
-      }
       return false
     }
 
-    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна') || binanceFuturesWatchStatus.message.startsWith('Запись окна')) {
+    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна')) {
       binanceFuturesWatchStatus = {
         ...binanceFuturesWatchStatus,
-        lastError: undefined,
-        message: status.message
+        lastError: undefined
       }
     }
     return true
@@ -729,8 +788,7 @@ app.whenReady().then(() => {
           configured: true,
           running: true,
           lastPollAtMs: Date.now(),
-          lastError: undefined,
-          message: `Ждём видео: ${message}`
+          lastError: undefined
         }
         return
       }

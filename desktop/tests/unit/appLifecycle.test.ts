@@ -31,14 +31,16 @@ describe('main app lifecycle', () => {
     expect(source).toContain('const isRecorderBufferPendingError')
     expect(source).toContain('if (isRecorderBufferPendingError(error))')
     expect(source).toContain('lastError: undefined')
-    expect(source).toContain('message: `Ждём видео: ${message}`')
+    expect(source).not.toContain('message: `Ждём видео: ${message}`')
   })
 
   it('does not surface built-in recorder segment warmup as a Binance error', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('message: `Запись окна: ${status.message}`')
-    expect(source).toContain("binanceFuturesWatchStatus.message.startsWith('Запись окна')")
+    expect(source).toContain('const isRecorderStatusMessage')
+    expect(source).toContain("const recorderStatusMessagePrefixes")
+    expect(source).toContain("'Запись окна:'")
+    expect(source).toContain("'Встроенная запись'")
     expect(source).toContain('lastError: undefined')
   })
 
