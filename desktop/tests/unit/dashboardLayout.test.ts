@@ -223,6 +223,8 @@ describe('Dashboard layout', () => {
     const releaseWorkflowSource = await readFile(resolve('../.github/workflows/release.yml'), 'utf8')
 
     expect(appSource).toContain('createAppUpdateService')
+    expect(appSource).toContain('hasPackagedUpdateConfig')
+    expect(appSource).toContain("app-update.yml")
     expect(appSource).toContain("ipcMain.handle('updates:check'")
     expect(preloadSource).toContain("ipcRenderer.invoke('updates:download'")
     expect(preloadSource).toContain("ipcRenderer.on('updates:status'")
@@ -230,6 +232,9 @@ describe('Dashboard layout', () => {
     expect(systemSettingsSource).toContain('Проверить обновления')
     expect(updateServiceSource).toContain("import electronUpdater")
     expect(updateServiceSource).toContain('const { autoUpdater } = electronUpdater')
+    expect(updateServiceSource).toContain('hasUpdateConfig')
+    expect(updateServiceSource).toContain('autoUpdater.forceDevUpdateConfig = true')
+    expect(updateServiceSource).toContain('autoUpdater.setFeedURL(githubFeed)')
     expect(updateServiceSource).not.toContain('import { autoUpdater')
     expect(releaseWorkflowSource).toContain('desktop/dist/latest*.yml')
     expect(releaseWorkflowSource).toContain("name '*.blockmap'")

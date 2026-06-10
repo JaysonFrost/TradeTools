@@ -37,11 +37,17 @@ export type AppUpdateService = {
 type AppUpdateServiceInput = {
   currentVersion: string
   isPackaged: boolean
+  hasUpdateConfig: boolean
   platform: NodeJS.Platform
   broadcast: (status: AppUpdateStatus) => void
 }
 
 const supportedPlatforms = new Set<NodeJS.Platform>(['win32', 'darwin'])
+const githubFeed = {
+  provider: 'github' as const,
+  owner: 'JaysonFrost',
+  repo: 'TradeTools'
+}
 
 const toUpdateFields = (info?: UpdateInfo): Pick<AppUpdateStatus, 'version' | 'releaseName' | 'releaseDate'> => ({
   ...(info?.version ? { version: info.version } : {}),
@@ -61,11 +67,13 @@ const toErrorMessage = (error: unknown): string => error instanceof Error ? erro
 export const createAppUpdateService = ({
   currentVersion,
   isPackaged,
+  hasUpdateConfig,
   platform,
   broadcast
 }: AppUpdateServiceInput): AppUpdateService => {
   const updatesSupported = supportedPlatforms.has(platform)
-  const updatesEnabled = isPackaged && updatesSupported
+  const updatesEnabled = updatesSupported && (isPackaged || hasUpdateConfig)
+  const forceConfigForUnpackagedBuild = updatesSupported && !isPackaged && hasUpdateConfig
   let lastUpdateInfo: UpdateInfo | undefined
   let checking = false
   let downloading = false
@@ -80,7 +88,7 @@ export const createAppUpdateService = ({
         status: 'disabled',
         currentVersion,
         message: updatesSupported
-          ? 'Автообновления доступны только в установленной версии TradeTools'
+          ? 'Автообновления доступны только в установленной сборке TradeTools'
           : 'Автообновления поддерживаются только на Windows и macOS'
       }
 
@@ -97,6 +105,10 @@ export const createAppUpdateService = ({
   }
 
   if (updatesEnabled) {
+    if (forceConfigForUnpackagedBuild) {
+      autoUpdater.forceDevUpdateConfig = true
+      autoUpdater.setFeedURL(githubFeed)
+    }
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
 

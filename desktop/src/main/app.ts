@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
 import { dirname, extname, isAbsolute, join } from 'node:path'
@@ -246,6 +246,8 @@ const assertHttpUrl = (url: string): string => {
 
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
 
+const hasPackagedUpdateConfig = (): boolean => existsSync(join(process.resourcesPath, 'app-update.yml'))
+
 const normalizePaymentDueDay = (value: unknown, legacyDate?: unknown): number => {
   const directDay = Number(value)
   if (Number.isFinite(directDay) && directDay >= 1 && directDay <= 31) return Math.trunc(directDay)
@@ -440,6 +442,7 @@ app.whenReady().then(() => {
   const appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
+    hasUpdateConfig: hasPackagedUpdateConfig(),
     platform: process.platform,
     broadcast: (status) => {
       for (const window of BrowserWindow.getAllWindows()) {
