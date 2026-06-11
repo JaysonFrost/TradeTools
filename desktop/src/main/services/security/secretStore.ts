@@ -6,11 +6,6 @@ export type KeychainAdapter = {
   deletePassword: (service: string, account: string) => Promise<boolean>
 }
 
-export type BinanceFuturesCredentials = {
-  apiKey: string
-  apiSecret: string
-}
-
 type KeychainAdapterModule = KeychainAdapter | {
   default?: unknown
 }
@@ -19,9 +14,6 @@ export type SecretStore = {
   setObsPassword: (password: string) => Promise<void>
   getObsPassword: () => Promise<string | undefined>
   clearObsPassword: () => Promise<boolean>
-  setBinanceFuturesCredentials: (credentials: BinanceFuturesCredentials) => Promise<void>
-  getBinanceFuturesCredentials: () => Promise<BinanceFuturesCredentials | undefined>
-  clearBinanceFuturesCredentials: () => Promise<boolean>
   setProxyPassword: (proxyId: string, password: string) => Promise<void>
   getProxyPassword: (proxyId: string) => Promise<string | undefined>
   clearProxyPassword: (proxyId: string) => Promise<boolean>
@@ -35,8 +27,6 @@ const legacyTradeCutServiceName = 'TradeCut'
 const legacyServiceName = ['Trade', 'Clipper'].join(' ')
 const keychainServiceNames = [serviceName, legacyTradeCutServiceName, legacyServiceName]
 const obsPasswordAccount = 'obs-websocket-password'
-const binanceFuturesApiKeyAccount = 'binance-futures-api-key'
-const binanceFuturesApiSecretAccount = 'binance-futures-api-secret'
 const proxyPasswordAccount = (proxyId: string): string => `proxy-password:${proxyId}`
 const proxyRuntimeEntryUuidAccount = 'proxy-runtime-entry-uuid'
 
@@ -64,18 +54,6 @@ export const createSecretStore = (adapterModule: KeychainAdapterModule = keytar)
 
     return undefined
   }
-  const getPasswordPair = async (firstAccount: string, secondAccount: string) => {
-    for (const service of keychainServiceNames) {
-      const [first, second] = await Promise.all([
-        adapter.getPassword(service, firstAccount),
-        adapter.getPassword(service, secondAccount)
-      ])
-      if (first && second) return [first, second] as const
-      if (first || second) return undefined
-    }
-
-    return undefined
-  }
   const deletePassword = async (account: string) => {
     const deleted = await Promise.all(keychainServiceNames.map((service) => adapter.deletePassword(service, account)))
     return deleted.some(Boolean)
@@ -90,26 +68,6 @@ export const createSecretStore = (adapterModule: KeychainAdapterModule = keytar)
     },
     clearObsPassword() {
       return deletePassword(obsPasswordAccount)
-    },
-    async setBinanceFuturesCredentials(credentials) {
-      await Promise.all([
-        adapter.setPassword(serviceName, binanceFuturesApiKeyAccount, credentials.apiKey),
-        adapter.setPassword(serviceName, binanceFuturesApiSecretAccount, credentials.apiSecret)
-      ])
-    },
-    async getBinanceFuturesCredentials() {
-      const credentials = await getPasswordPair(binanceFuturesApiKeyAccount, binanceFuturesApiSecretAccount)
-      if (!credentials) return undefined
-
-      const [apiKey, apiSecret] = credentials
-      return { apiKey, apiSecret }
-    },
-    async clearBinanceFuturesCredentials() {
-      const [apiKeyDeleted, apiSecretDeleted] = await Promise.all([
-        deletePassword(binanceFuturesApiKeyAccount),
-        deletePassword(binanceFuturesApiSecretAccount)
-      ])
-      return apiKeyDeleted || apiSecretDeleted
     },
     async setProxyPassword(proxyId, password) {
       await adapter.setPassword(serviceName, proxyPasswordAccount(proxyId), password)

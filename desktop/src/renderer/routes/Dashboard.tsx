@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { BinanceFuturesWatchStatus, ClipProcessingStatus } from '../../main/services/exchanges/binanceFuturesClipWatcher'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
-import type { ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
+import type { ClipProcessingStatus, ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
 import { SetupWizard } from '../components/setup/SetupWizard'
-import { BinanceFuturesSettingsPanel } from '../components/settings/BinanceFuturesSettingsPanel'
 import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
 import { ProxyVaultPanel, type ProxyVaultRuntimeState } from '../components/settings/ProxyVaultPanel'
 import { WindowRecorderController } from '../components/recording/WindowRecorderController'
@@ -38,7 +36,6 @@ type VideoPageProps = {
   clipMessage: string
   obs: ObsUiState
   windowRecorder?: WindowRecorderStatus
-  binanceWatch: BinanceFuturesWatchStatus
   terminalTrade: TerminalTradeRecordingStatus
   onCreateTestClip: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
@@ -73,16 +70,12 @@ const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
 )
 
 const TerminalTradeControls = ({
-  settings,
   windowRecorder,
   terminalTrade
 }: {
-  settings?: AppSettings
   windowRecorder?: WindowRecorderStatus
   terminalTrade: TerminalTradeRecordingStatus
 }) => {
-  if ((settings?.tradeSource.mode ?? 'terminal-window') !== 'terminal-window') return null
-
   const recorderActive = Boolean(windowRecorder?.active)
   const startedAt = terminalTrade.startedAtMs ? new Date(terminalTrade.startedAtMs).toLocaleTimeString('ru-RU') : ''
 
@@ -108,13 +101,9 @@ const TerminalTradeControls = ({
   )
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceWatch, terminalTrade, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, terminalTrade, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
   const recordingMode = settings?.recording.mode ?? 'window'
   const videoStatuses = useMemo(() => {
-    const tradeSourceMode = settings?.tradeSource.mode ?? 'terminal-window'
-    const binanceConfigured = Boolean(settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured)
-    const binanceProcessing = Boolean(clipProcessing?.active)
-
     return [
       {
         name: recordingMode === 'window' ? 'Встроенная запись окна' : 'OBS Replay Buffer',
@@ -126,14 +115,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
           ? windowRecorder?.active ? 'success' as const : 'warning' as const
           : obs.connected ? 'success' as const : 'warning' as const
       },
-      tradeSourceMode === 'binance-futures' ? {
-        name: 'Binance USDT-M Futures',
-        description: binanceWatch.message,
-        status: binanceConfigured
-          ? binanceWatch.lastError ? 'Ошибка' : binanceProcessing ? 'Сохраняем' : binanceWatch.running ? 'Работает' : 'Готов'
-          : 'Нужно настроить',
-        tone: binanceConfigured && !binanceWatch.lastError && !binanceProcessing ? 'success' as const : binanceProcessing ? 'purple' as const : 'warning' as const
-      } : {
+      {
         name: 'Источник сделок',
         description: windowRecorder?.active
           ? terminalTrade.message || 'Режим без API: TradeTools автоматически пишет окно терминала и ждёт события Vataga.'
@@ -142,7 +124,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
         tone: terminalTrade.lastError ? 'warning' as const : windowRecorder?.active ? 'success' as const : 'warning' as const
       }
     ]
-  }, [obs, settings, windowRecorder, binanceWatch, recordingMode, clipProcessing])
+  }, [obs, windowRecorder, recordingMode, terminalTrade])
 
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
@@ -150,7 +132,6 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
         {videoStatuses.map((status) => <IntegrationStatusCard key={status.name} {...status} />)}
       </section>
       <TerminalTradeControls
-        settings={settings}
         windowRecorder={windowRecorder}
         terminalTrade={terminalTrade}
       />
@@ -172,7 +153,6 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, binanceW
       <section className="col-span-12 space-y-4">
         <SystemSettingsPanel mode="video" settings={settings} onSaved={onSettingsSaved} />
         <ObsSettingsPanel settings={settings} onSaved={onSettingsSaved} />
-        <BinanceFuturesSettingsPanel settings={settings} onSaved={onSettingsSaved} />
       </section>
     </div>
   )
@@ -226,6 +206,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     message: '',
     progressPercent: 0
   })
+  const [remoteClipProcessing, setRemoteClipProcessing] = useState<ClipProcessingStatus>({
+    active: false,
+    title: '',
+    message: '',
+    progressPercent: 0
+  })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
@@ -239,11 +225,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     chainCheckProgress: [],
     chainSetupProgress: []
   })
-  const [binanceWatch, setBinanceWatch] = useState<BinanceFuturesWatchStatus>({
-    configured: false,
-    running: false,
-    message: 'Binance watcher ещё не проверялся'
-  })
   const [obs, setObs] = useState<ObsUiState>({
     status: 'Не проверено',
     message: 'OBS не проверяется автоматически. Нажмите «Проверить видео», когда OBS запущен.',
@@ -254,11 +235,11 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextBinanceWatch, nextWindowRecorder, nextTerminalTrade] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextWindowRecorder, nextTerminalTrade] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
-        api.binance.getWatchStatus(),
+        api.clips.getProcessingStatus(),
         api.recording.getStatus(),
         api.terminalTrade.getStatus()
       ])
@@ -266,7 +247,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setAppVersion(version)
       setSettings(nextSettings)
       setClips(pendingClips)
-      setBinanceWatch(nextBinanceWatch)
+      setRemoteClipProcessing(nextClipProcessing)
       setWindowRecorder(nextWindowRecorder)
       setTerminalTrade(nextTerminalTrade)
       setObs((current) => {
@@ -319,13 +300,13 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
-      const [pendingClips, nextBinanceWatch, nextTerminalTrade] = await Promise.all([
+      const [pendingClips, nextClipProcessing, nextTerminalTrade] = await Promise.all([
         api.clips.listPending(),
-        api.binance.getWatchStatus(),
+        api.clips.getProcessingStatus(),
         api.terminalTrade.getStatus()
       ])
       setClips(pendingClips)
-      setBinanceWatch(nextBinanceWatch)
+      setRemoteClipProcessing(nextClipProcessing)
       setTerminalTrade(nextTerminalTrade)
     } catch {
       // The initial load already surfaces Electron API errors; polling stays quiet.
@@ -443,7 +424,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
 
   const activeClipProcessing = localClipProcessing.active
     ? localClipProcessing
-    : binanceWatch.clipProcessing?.active ? binanceWatch.clipProcessing : undefined
+    : remoteClipProcessing.active ? remoteClipProcessing : undefined
 
   return (
     <>
@@ -472,7 +453,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clipMessage={clipMessage}
           obs={obs}
           windowRecorder={windowRecorder}
-          binanceWatch={binanceWatch}
           terminalTrade={terminalTrade}
           clipProcessing={activeClipProcessing}
           onCreateTestClip={() => void createTestClip()}

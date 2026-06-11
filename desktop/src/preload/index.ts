@@ -1,11 +1,9 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { BinanceFuturesConnectionStatus } from '../main/services/exchanges/binanceFuturesClient'
-import type { BinanceFuturesWatchStatus } from '../main/services/exchanges/binanceFuturesClipWatcher'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
 import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
-import type { ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
+import type { ClipProcessingStatus, ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
@@ -132,15 +130,12 @@ const api = {
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
   },
-  binance: {
-    testFuturesConnection: (): Promise<BinanceFuturesConnectionStatus> => ipcRenderer.invoke('binance:test-futures-connection'),
-    getWatchStatus: (): Promise<BinanceFuturesWatchStatus> => ipcRenderer.invoke('binance:get-watch-status')
-  },
   terminalTrade: {
     getStatus: (): Promise<TerminalTradeRecordingStatus> => ipcRenderer.invoke('terminal-trade:get-status')
   },
   clips: {
     listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),
+    getProcessingStatus: (): Promise<ClipProcessingStatus> => ipcRenderer.invoke('clips:get-processing-status'),
     createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test'),
     renameFile: (input: { metadataPath: string, fileName: string }): Promise<RenameClipFileResult> => ipcRenderer.invoke('clips:rename-file', input),
     deleteFromQueue: (metadataPath: string): Promise<DeleteClipFromQueueResult> => ipcRenderer.invoke('clips:delete-from-queue', metadataPath),

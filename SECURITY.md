@@ -17,10 +17,7 @@
 
 TradeTools работает с данными, которые нельзя раскрывать публично:
 
-- Binance API key/secret;
 - OBS WebSocket password;
 - SSH host/login/password;
 - proxy route details;
 - локальный `settings.json`, если он не очищен вручную.
-
-Биржевые ключи должны быть read-only: без прав торговли, вывода средств и изменения аккаунта.

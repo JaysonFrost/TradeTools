@@ -12,43 +12,30 @@ describe('main app lifecycle', () => {
     expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
   })
 
-  it('prepares the selected video recorder before Binance watcher polls trades', async () => {
+  it('passes video readiness into the automatic Vataga trade watcher', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
-    const startWatcherIndex = source.indexOf('const startBinanceFuturesPolling')
-    const ensureVideoIndex = source.indexOf('ensureVideoRecordingReady(true)', startWatcherIndex)
-    const pollIndex = source.indexOf('pollBinanceFuturesOnce()', ensureVideoIndex)
 
     expect(source).toContain('const ensureObsReplayBufferActive')
     expect(source).toContain('const ensureVideoRecordingReady')
-    expect(ensureVideoIndex).toBeGreaterThan(startWatcherIndex)
-    expect(pollIndex).toBeGreaterThan(ensureVideoIndex)
-    expect(source).toContain('if (!videoReady) return')
+    expect(source).toContain('createVatagaTerminalTradeWatcher')
+    expect(source).toContain('ensureVideoRecordingReady,')
+    expect(source).toContain('terminalTradeWatcher.start()')
   })
 
-  it('treats recorder buffer warmup as waiting status instead of Binance polling failure', async () => {
+  it('does not keep Binance API polling code in the main process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('const isRecorderBufferPendingError')
-    expect(source).toContain('if (isRecorderBufferPendingError(error))')
-    expect(source).toContain('lastError: undefined')
-    expect(source).not.toContain('message: `Ждём видео: ${message}`')
+    expect(source).not.toContain('createBinanceFuturesClient')
+    expect(source).not.toContain('createBinanceFuturesClipWatcher')
+    expect(source).not.toContain('startBinanceFuturesPolling')
+    expect(source).not.toContain("ipcMain.handle('binance:")
   })
 
-  it('does not surface built-in recorder segment warmup as a Binance error', async () => {
-    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+  it('protects built-in recording segments while a Vataga trade is open', async () => {
+    const source = await readFile(resolve('src/main/services/trades/terminalTradeRecorder.ts'), 'utf8')
 
-    expect(source).toContain('const isRecorderStatusMessage')
-    expect(source).toContain("const recorderStatusMessagePrefixes")
-    expect(source).toContain("'Запись окна:'")
-    expect(source).toContain("'Встроенная запись'")
-    expect(source).toContain('lastError: undefined')
-  })
-
-  it('protects built-in recording segments while a Binance trade is open', async () => {
-    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
-
-    expect(source).toContain('async onActiveTradesChanged(trades)')
-    expect(source).toContain('windowRecorderService.protectSince()')
+    expect(source).toContain('protectSince()')
+    expect(source).toContain('protectActiveTrades')
     expect(source).toContain('earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
   })
 

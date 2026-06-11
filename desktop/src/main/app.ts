@@ -4,8 +4,6 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
 import { dirname, extname, isAbsolute, join } from 'node:path'
-import { createBinanceFuturesClient } from './services/exchanges/binanceFuturesClient'
-import { createBinanceFuturesClipWatcher, type BinanceFuturesWatchStatus, type ClipProcessingStatus } from './services/exchanges/binanceFuturesClipWatcher'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
@@ -19,7 +17,7 @@ import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createVatagaTerminalTradeWatcher } from './services/trades/terminalTradeRecorder'
-import { createTradeClipPipeline, type ClipQueueItem } from './services/trades/tradeClipPipeline'
+import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
 
@@ -33,7 +31,6 @@ const isAllowedDevUrl = (url: string): boolean => {
 }
 
 const getIconPath = (): string => join(__dirname, '../../build/icon.png')
-const binanceFuturesPollIntervalMs = 2_000
 const obsReplayEnsureIntervalMs = 30_000
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
@@ -44,14 +41,6 @@ const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcScreenCapturer',
   'AllowWgcScreenZeroHz'
 ]
-const recorderBufferPendingErrorPrefixes = [
-  'Встроенный рекордер ещё не накопил видео',
-  'Встроенный рекордер ещё не записал время после выхода'
-]
-const recorderStatusMessagePrefixes = [
-  'Запись окна:',
-  'Встроенная запись'
-]
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(windowsAppUserModelId)
@@ -59,11 +48,6 @@ if (process.platform === 'win32') {
 }
 
 const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'неизвестная ошибка'
-const isRecorderBufferPendingError = (error: unknown): boolean => {
-  const message = getErrorMessage(error)
-  return recorderBufferPendingErrorPrefixes.some((prefix) => message.startsWith(prefix))
-}
-const isRecorderStatusMessage = (message: string): boolean => recorderStatusMessagePrefixes.some((prefix) => message.startsWith(prefix))
 
 type ProxySaveInput = {
   id?: string
@@ -216,8 +200,6 @@ const windowsNotificationsDisabledMessage = 'Уведомления Windows вы
 const extractSettingsPatch = (input: SettingsUpdateInput): SettingsUpdateInput => {
   const {
     obsPassword: _obsPassword,
-    binanceFuturesApiKey: _binanceFuturesApiKey,
-    binanceFuturesApiSecret: _binanceFuturesApiSecret,
     ...patch
   } = input
   return patch
@@ -648,100 +630,8 @@ app.whenReady().then(() => {
     }
   }
 
-  const getBinanceFuturesClient = async () => {
-    const [settings, credentials] = await Promise.all([
-      settingsStore.load(),
-      secretStore.getBinanceFuturesCredentials()
-    ])
-
-    if (settings.tradeSource.mode !== 'binance-futures' || !settings.exchange.binanceFutures.enabled || !credentials) return undefined
-
-    return createBinanceFuturesClient({
-      credentials,
-      testnet: settings.exchange.binanceFutures.testnet
-    })
-  }
-  const binanceFuturesClipWatcher = createBinanceFuturesClipWatcher({
-    async listPositions() {
-      return (await getBinanceFuturesClient())?.listPositions() ?? []
-    },
-    async listRecentClosedTrades(input) {
-      return (await getBinanceFuturesClient())?.listRecentClosedTrades(input) ?? []
-    },
-    async getHistoryLookbackMs() {
-      const settings = await settingsStore.load()
-      return (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 60) * 1000
-    },
-    async onActiveTradesChanged(trades) {
-      const settings = await settingsStore.load()
-      if (settings.recording.mode !== 'window' || trades.length === 0) {
-        windowRecorderService.protectSince()
-        return
-      }
-
-      const earliestEntryTimeMs = Math.min(...trades.map((trade) => trade.entryTimeMs))
-      windowRecorderService.protectSince(earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
-    },
-    createClipForClosedTrade: createClipAndNotify
-  })
-  let binanceFuturesPollInterval: NodeJS.Timeout | undefined
-  let binanceFuturesWatchStatus: BinanceFuturesWatchStatus = {
-    configured: false,
-    running: false,
-    message: 'Binance watcher ещё не запущен'
-  }
   let lastObsReplayEnsureAtMs = 0
   let obsReplayBufferReady = false
-
-  const isBinanceFuturesConfigured = async (): Promise<boolean> => {
-    const [settings, credentials] = await Promise.all([
-      settingsStore.load(),
-      secretStore.getBinanceFuturesCredentials()
-    ])
-
-    return Boolean(
-      settings.tradeSource.mode === 'binance-futures' &&
-      settings.exchange.binanceFutures.enabled &&
-      settings.exchange.binanceFutures.apiKeyConfigured &&
-      settings.exchange.binanceFutures.apiSecretConfigured &&
-      credentials
-    )
-  }
-
-  const getBinanceFuturesWatchStatus = async (): Promise<BinanceFuturesWatchStatus> => {
-    const settings = await settingsStore.load()
-    if (settings.tradeSource.mode !== 'binance-futures') {
-      return {
-        ...binanceFuturesWatchStatus,
-        configured: false,
-        running: false,
-        clipProcessing: clipProcessingStatus,
-        message: 'Режим без API: TradeTools пишет окно терминала напрямую'
-      }
-    }
-
-    const configured = await isBinanceFuturesConfigured()
-    const cleanMessage = isRecorderStatusMessage(binanceFuturesWatchStatus.message)
-      ? binanceFuturesPollInterval ? 'Binance watcher работает, новых закрытых сделок нет' : 'Binance watcher запускается'
-      : binanceFuturesWatchStatus.message
-    if (!configured) {
-      return {
-        ...binanceFuturesWatchStatus,
-        configured,
-        running: false,
-        clipProcessing: clipProcessingStatus,
-        message: 'Binance Futures API ключи не настроены'
-      }
-    }
-
-    return {
-      ...binanceFuturesWatchStatus,
-      configured,
-      message: cleanMessage,
-      running: Boolean(binanceFuturesPollInterval),
-      clipProcessing: clipProcessingStatus
-    }
-  }
 
   const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
@@ -750,26 +640,7 @@ app.whenReady().then(() => {
     lastObsReplayEnsureAtMs = checkedAtMs
     const status = await obsService.ensureReplayBufferActive()
     obsReplayBufferReady = status.connected && status.replayBufferActive
-
-    if (!obsReplayBufferReady) {
-      binanceFuturesWatchStatus = {
-        ...binanceFuturesWatchStatus,
-        configured: true,
-        running: Boolean(binanceFuturesPollInterval),
-        lastError: status.message,
-        message: `OBS: ${status.message}`
-      }
-      return false
-    }
-
-    if (binanceFuturesWatchStatus.lastError?.startsWith('OBS')) {
-      binanceFuturesWatchStatus = {
-        ...binanceFuturesWatchStatus,
-        lastError: undefined,
-        message: status.message
-      }
-    }
-    return true
+    return obsReplayBufferReady
   }
 
   const ensureVideoRecordingReady = async (force = false): Promise<boolean> => {
@@ -783,82 +654,7 @@ app.whenReady().then(() => {
       return false
     }
 
-    if (binanceFuturesWatchStatus.lastError?.startsWith('Запись окна')) {
-      binanceFuturesWatchStatus = {
-        ...binanceFuturesWatchStatus,
-        lastError: undefined
-      }
-    }
     return true
-  }
-
-  const pollBinanceFuturesOnce = async () => {
-    try {
-      const videoReady = await ensureVideoRecordingReady()
-      if (!videoReady) return
-      const closedTrades = await binanceFuturesClipWatcher.pollOnce()
-      binanceFuturesWatchStatus = {
-        configured: true,
-        running: true,
-        lastPollAtMs: Date.now(),
-        ...(closedTrades.length > 0 ? { lastClosedTradeAtMs: Math.max(...closedTrades.map((trade) => trade.exitTimeMs)) } : {}),
-        message: closedTrades.length > 0
-          ? `Найдены закрытые сделки: ${closedTrades.map((trade) => trade.symbol).join(', ')}`
-          : 'Binance watcher работает, новых закрытых сделок нет'
-      }
-    } catch (error) {
-      const message = getErrorMessage(error)
-      if (isRecorderBufferPendingError(error)) {
-        binanceFuturesWatchStatus = {
-          ...binanceFuturesWatchStatus,
-          configured: true,
-          running: true,
-          lastPollAtMs: Date.now(),
-          lastError: undefined
-        }
-        return
-      }
-
-      binanceFuturesWatchStatus = {
-        ...binanceFuturesWatchStatus,
-        configured: true,
-        running: true,
-        lastPollAtMs: Date.now(),
-        lastError: message,
-        message: `Binance watcher: ${message}`
-      }
-      console.error('Binance Futures polling failed:', error)
-    }
-  }
-
-  const startBinanceFuturesPolling = () => {
-    if (binanceFuturesPollInterval) return
-    binanceFuturesWatchStatus = {
-      ...binanceFuturesWatchStatus,
-      configured: true,
-      running: true,
-      message: 'Binance watcher запускается'
-    }
-    binanceFuturesPollInterval = setInterval(() => void pollBinanceFuturesOnce(), binanceFuturesPollIntervalMs)
-    void ensureVideoRecordingReady(true).then((videoReady) => {
-      if (videoReady) void pollBinanceFuturesOnce()
-    }).catch((error) => {
-      console.error('Video recording readiness check failed:', error)
-      void pollBinanceFuturesOnce()
-    })
-  }
-
-  const stopBinanceFuturesPolling = () => {
-    if (binanceFuturesPollInterval) {
-      clearInterval(binanceFuturesPollInterval)
-      binanceFuturesPollInterval = undefined
-    }
-    binanceFuturesWatchStatus = {
-      ...binanceFuturesWatchStatus,
-      running: false,
-      lastError: undefined,
-      message: 'Режим без API: TradeTools пишет окно терминала напрямую'
-    }
   }
 
   const terminalTradeWatcher = createVatagaTerminalTradeWatcher({
@@ -894,8 +690,6 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:get', () => settingsStore.load())
   ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
     const obsPassword = input.obsPassword?.trim()
-    const binanceFuturesApiKey = input.binanceFuturesApiKey?.trim()
-    const binanceFuturesApiSecret = input.binanceFuturesApiSecret?.trim()
     let patch = extractSettingsPatch(input)
 
     if (obsPassword) {
@@ -909,46 +703,9 @@ app.whenReady().then(() => {
       }
     }
 
-    if (binanceFuturesApiKey || binanceFuturesApiSecret) {
-      if (!binanceFuturesApiKey || !binanceFuturesApiSecret) {
-        throw new Error('Для Binance Futures укажите и API Key, и API Secret')
-      }
-
-      await secretStore.setBinanceFuturesCredentials({
-        apiKey: binanceFuturesApiKey,
-        apiSecret: binanceFuturesApiSecret
-      })
-      patch = {
-        ...patch,
-        exchange: {
-          ...(patch.exchange ?? {}),
-          binanceFutures: {
-            ...(patch.exchange?.binanceFutures ?? {}),
-            enabled: true,
-            apiKeyConfigured: true,
-            apiSecretConfigured: true
-          }
-        },
-        tradeSource: {
-          ...(patch.tradeSource ?? {}),
-          mode: 'binance-futures'
-        }
-      }
-    }
-
     let updatedSettings = await settingsStore.update(patch)
     if (patch.proxies) updatedSettings = await clearProxyRuntimeConfig()
     applyLaunchAtLogin(updatedSettings)
-    if (
-      updatedSettings.exchange.binanceFutures.enabled &&
-      updatedSettings.tradeSource.mode === 'binance-futures' &&
-      updatedSettings.exchange.binanceFutures.apiKeyConfigured &&
-      updatedSettings.exchange.binanceFutures.apiSecretConfigured
-    ) {
-      startBinanceFuturesPolling()
-    } else if (updatedSettings.tradeSource.mode !== 'binance-futures') {
-      stopBinanceFuturesPolling()
-    }
 
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
     return updatedSettings
@@ -1210,27 +967,9 @@ app.whenReady().then(() => {
       appDataDir: app.getPath('userData')
     })
   })
-  ipcMain.handle('binance:test-futures-connection', async () => {
-    const [settings, credentials] = await Promise.all([
-      settingsStore.load(),
-      secretStore.getBinanceFuturesCredentials()
-    ])
-
-    if (!credentials) {
-      return {
-        ok: false,
-        message: 'Binance Futures API Key и Secret не сохранены'
-      }
-    }
-
-    return createBinanceFuturesClient({
-      credentials,
-      testnet: settings.exchange.binanceFutures.testnet
-    }).testConnection()
-  })
-  ipcMain.handle('binance:get-watch-status', () => getBinanceFuturesWatchStatus())
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
+  ipcMain.handle('clips:get-processing-status', () => clipProcessingStatus)
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
     return createClipAndNotify(createSimulatedClosedTrade(Date.now(), settings.recording.mode === 'window' ? 5_000 : undefined))
@@ -1268,14 +1007,6 @@ app.whenReady().then(() => {
         body: `Локальный proxy не запустился после старта: ${message}`
       })
     })
-    if (
-      settings.exchange.binanceFutures.enabled &&
-      settings.tradeSource.mode === 'binance-futures' &&
-      settings.exchange.binanceFutures.apiKeyConfigured &&
-      settings.exchange.binanceFutures.apiSecretConfigured
-    ) {
-      startBinanceFuturesPolling()
-    }
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
   })
   setInterval(() => void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error)), proxyPaymentReminderIntervalMs)

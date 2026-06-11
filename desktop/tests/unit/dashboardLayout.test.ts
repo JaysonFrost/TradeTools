@@ -23,7 +23,7 @@ describe('Dashboard layout', () => {
     expect(source.indexOf('Очередь проверки')).toBeLessThan(source.indexOf('<ObsSettingsPanel'))
     expect(source).not.toContain('Клипы остаются локально')
     expect(source).not.toContain('Пока нет локальных клипов')
-    expect(source).toContain('<BinanceFuturesSettingsPanel')
+    expect(source).not.toContain('BinanceFuturesSettingsPanel')
     expect(source).toContain('mode="video"')
     expect(source).not.toContain('ActiveTradeCard')
     expect(source).not.toContain('Пайплайн клипа')
@@ -84,7 +84,7 @@ describe('Dashboard layout', () => {
     expect(preloadSource).not.toContain("ipcRenderer.invoke('terminal-trade:start'")
     expect(appSource).toContain('createVatagaTerminalTradeWatcher')
     expect(appSource).toContain("ipcMain.handle('terminal-trade:get-status'")
-    expect(appSource).toContain("settings.tradeSource.mode !== 'binance-futures'")
+    expect(appSource).not.toContain('binance-futures')
   })
 
   it('opens clip preview from the preview artwork', async () => {
@@ -178,32 +178,40 @@ describe('Dashboard layout', () => {
     expect(panelSource).not.toContain('const [chainCheckProgress')
   })
 
-  it('refreshes the clip queue while Binance watcher works in the main process', async () => {
+  it('refreshes the clip queue and background clip processing status', async () => {
     const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('refreshPendingClips')
     expect(source).toContain('setInterval')
     expect(source).toContain('api.clips.listPending()')
+    expect(source).toContain('api.clips.getProcessingStatus()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:get-processing-status')")
+    expect(appSource).toContain("ipcMain.handle('clips:get-processing-status'")
   })
 
-  it('surfaces Binance watcher status instead of leaving background failures invisible', async () => {
+  it('removes Binance API key wiring from the video UI and preload bridge', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(dashboardSource).toContain('api.binance.getWatchStatus()')
-    expect(dashboardSource).toContain('binanceWatch')
-    expect(preloadSource).toContain("ipcRenderer.invoke('binance:get-watch-status')")
+    expect(dashboardSource).not.toContain('api.binance')
+    expect(dashboardSource).not.toContain('binanceWatch')
+    expect(dashboardSource).not.toContain('BinanceFuturesSettingsPanel')
+    expect(preloadSource).not.toContain('binance:')
+    expect(appSource).not.toContain('binance:')
   })
 
-  it('shows clip processing progress without using recorder messages as Binance status', async () => {
+  it('shows clip processing progress without API watcher state', async () => {
     const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
 
     expect(source).toContain('ClipProcessingBar')
     expect(source).toContain('clipProcessing?.active')
-    expect(source).toContain("binanceProcessing ? 'Сохраняем'")
     expect(source).toContain('localClipProcessing')
+    expect(source).toContain('remoteClipProcessing')
+    expect(source).not.toContain('binanceProcessing')
     expect(source).not.toContain('isBinanceWaitingStatus')
-    expect(source).not.toContain("binanceWaiting ? 'Ожидание'")
   })
 
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {

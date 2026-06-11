@@ -71,32 +71,6 @@ describe('secretStore', () => {
     expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
   })
 
-  it('stores Binance Futures API credentials under separate keychain accounts', async () => {
-    const adapter = createAdapter()
-    const store = createSecretStore(adapter)
-
-    await store.setBinanceFuturesCredentials({ apiKey: 'binance-key', apiSecret: 'binance-secret' })
-
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'binance-futures-api-key', 'binance-key')
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'binance-futures-api-secret', 'binance-secret')
-  })
-
-  it('reads Binance Futures API credentials only when both key and secret exist', async () => {
-    const adapter = createAdapter()
-    vi.mocked(adapter.getPassword)
-      .mockResolvedValueOnce('binance-key')
-      .mockResolvedValueOnce('binance-secret')
-      .mockResolvedValueOnce('binance-key')
-      .mockResolvedValueOnce(null)
-    const store = createSecretStore(adapter)
-
-    await expect(store.getBinanceFuturesCredentials()).resolves.toEqual({
-      apiKey: 'binance-key',
-      apiSecret: 'binance-secret'
-    })
-    await expect(store.getBinanceFuturesCredentials()).resolves.toBeUndefined()
-  })
-
   it('stores proxy passwords by proxy id without exposing them through settings', async () => {
     const adapter = createAdapter()
     const store = createSecretStore(adapter)
@@ -131,5 +105,7 @@ describe('secretStore', () => {
     expect(`get${legacyAuthProvider}Credentials` in store).toBe(false)
     expect(`set${legacyAuthProvider}Tokens` in store).toBe(false)
     expect(`get${legacyAuthProvider}Tokens` in store).toBe(false)
+    expect('setBinanceFuturesCredentials' in store).toBe(false)
+    expect('getBinanceFuturesCredentials' in store).toBe(false)
   })
 })

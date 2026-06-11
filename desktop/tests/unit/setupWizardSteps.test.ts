@@ -8,12 +8,11 @@ describe('setupWizardSteps', () => {
       'obs-websocket',
       'obs-replay',
       'folders',
-      'trade-source',
       'test-clip',
       'video-done'
     ])
     expect(videoSetupWizardSteps[0].actions).toContain('Включим встроенную запись открытого терминала без API')
-    expect(videoSetupWizardSteps.find((step) => step.id === 'trade-source')?.title).toBe('Источник сделок')
+    expect(videoSetupWizardSteps.map((step) => step.id)).not.toContain('trade-source')
     expect(setupWizardSteps).toBe(videoSetupWizardSteps)
   })
 

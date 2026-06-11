@@ -74,9 +74,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [outputDir, setOutputDir] = useState('')
   const [paddingBefore, setPaddingBefore] = useState('2')
   const [paddingAfter, setPaddingAfter] = useState('2')
-  const [binanceApiKey, setBinanceApiKey] = useState('')
-  const [binanceApiSecret, setBinanceApiSecret] = useState('')
-  const [binanceTestnet, setBinanceTestnet] = useState(false)
   const [proxyTitle, setProxyTitle] = useState(defaultProxyTitle())
   const [proxyServer, setProxyServer] = useState('')
   const [proxyLogin, setProxyLogin] = useState('root')
@@ -101,7 +98,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [chainSetupProgress, setChainSetupProgress] = useState<ProxyChainSetupProgress[]>([])
   const [saving, setSaving] = useState(false)
   const [checkingVideo, setCheckingVideo] = useState(false)
-  const [testingBinance, setTestingBinance] = useState(false)
   const [localMessage, setLocalMessage] = useState('')
 
   const resetProxyDraft = (nextSettings = settings) => {
@@ -149,7 +145,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setOutputDir(settings.clip.outputDir)
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
-    setBinanceTestnet(settings.exchange.binanceFutures.testnet)
   }, [settings])
 
   const refreshWindowSources = async () => {
@@ -355,56 +350,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
   }
 
-  const saveBinanceSettings = async () => {
-    const apiKey = binanceApiKey.trim()
-    const apiSecret = binanceApiSecret.trim()
-    const binanceConfigured = settings?.exchange.binanceFutures.apiKeyConfigured && settings.exchange.binanceFutures.apiSecretConfigured
-    if (!apiKey && !apiSecret && !binanceConfigured) {
-      setLocalMessage('Введите API Key и API Secret или нажмите «Дальше», чтобы пропустить этот шаг.')
-      return
-    }
-    if ((apiKey || apiSecret) && (!apiKey || !apiSecret)) {
-      setLocalMessage('Для Binance Futures укажите и API Key, и API Secret.')
-      return
-    }
-
-    setSaving(true)
-    setLocalMessage('')
-    try {
-      const updated = await getTradeToolsApi().settings.update({
-        exchange: {
-          binanceFutures: {
-            enabled: settings?.exchange.binanceFutures.enabled ?? false,
-            testnet: binanceTestnet
-          }
-        },
-        binanceFuturesApiKey: apiKey || undefined,
-        binanceFuturesApiSecret: apiSecret || undefined
-      })
-      onSaved(updated)
-      setBinanceApiKey('')
-      setBinanceApiSecret('')
-      setLocalMessage(apiKey && apiSecret ? 'Binance Futures ключи сохранены' : 'Binance Futures настройки сохранены')
-    } catch (error) {
-      setLocalMessage(error instanceof Error ? error.message : 'Не удалось сохранить Binance Futures')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const testBinanceConnection = async () => {
-    setTestingBinance(true)
-    setLocalMessage('Проверяем Binance Futures...')
-    try {
-      const status = await getTradeToolsApi().binance.testFuturesConnection()
-      setLocalMessage(status.message)
-    } catch (error) {
-      setLocalMessage(error instanceof Error ? error.message : 'Не удалось проверить Binance Futures')
-    } finally {
-      setTestingBinance(false)
-    }
-  }
-
   const checkProxyChain = async () => {
     if (!selectedProxyId) {
       setLocalMessage('Сначала добавьте или выберите первый сервер маршрута.')
@@ -477,7 +422,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setLocalMessage('')
 
     if (step.id === 'video-welcome') {
-      changeStep(actionIndex === 0 ? 1 : actionIndex === 1 ? 3 : actionIndex === 2 ? 4 : 5)
+      changeStep(actionIndex === 0 ? 1 : actionIndex === 1 ? 3 : 4)
       return
     }
 
@@ -527,17 +472,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
     if (step.id === 'test-clip') {
       await onCreateTestClip()
-      return
-    }
-
-    if (step.id === 'trade-source') {
-      if (actionIndex === stepActionLabels.length - 1) {
-        await testBinanceConnection()
-      } else if (actionIndex === 0) {
-        setLocalMessage('Режим без API уже выбран по умолчанию. TradeTools будет писать окно терминала локально.')
-      } else {
-        setLocalMessage('Если нужна автонарезка по Binance, заполните API Key и API Secret ниже, затем нажмите «Сохранить ключи».')
-      }
       return
     }
 
@@ -604,8 +538,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         return recordingMode === 'window'
           ? 'TradeTools будет складывать готовые клипы в выбранную папку.'
           : 'TradeTools будет знать, где найти исходный OBS replay и куда положить готовый клип.'
-      case 'trade-source':
-        return 'Без API TradeTools пишет терминал локально. Если добавить Binance ключи, включится автонарезка по закрытым futures-позициям.'
       case 'test-clip':
         return 'В очереди проверки появится локальный клип с metadata JSON.'
       case 'proxy-welcome':
@@ -657,23 +589,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     </div>
   ) : null
 
-  const binanceFields = step.id === 'trade-source' ? (
-    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-      <label className="text-xs font-medium text-zinc-500">
-        API Key
-        <input className={inputClass} value={binanceApiKey} onChange={(event) => setBinanceApiKey(event.target.value)} type="password" placeholder={settings?.exchange.binanceFutures.apiKeyConfigured ? 'Сохранён' : 'Не задан'} />
-      </label>
-      <label className="text-xs font-medium text-zinc-500">
-        API Secret
-        <input className={inputClass} value={binanceApiSecret} onChange={(event) => setBinanceApiSecret(event.target.value)} type="password" placeholder={settings?.exchange.binanceFutures.apiSecretConfigured ? 'Сохранён' : 'Не задан'} />
-      </label>
-      <label className="mt-6 flex items-center gap-2 text-sm text-zinc-300">
-        <input className="h-4 w-4 accent-violet-500" checked={binanceTestnet} onChange={(event) => setBinanceTestnet(event.target.checked)} type="checkbox" />
-        Testnet
-      </label>
-    </div>
-  ) : null
-
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden bg-black/70 p-2 backdrop-blur-xl sm:p-4 lg:items-center lg:p-6">
       <div className="flex h-full max-h-[calc(100dvh-16px)] w-full max-w-6xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0b0c10] shadow-[0_24px_90px_rgba(0,0,0,0.65)] sm:max-h-[calc(100dvh-32px)] lg:max-h-[90dvh] lg:rounded-[32px]">
@@ -712,7 +627,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                 <div className="mb-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 p-3 text-sm leading-5 text-zinc-300 xl:hidden">
                   <span className="font-semibold text-violet-100">Что получится: </span>{resultText()}
                 </div>
-                {step.id === 'folders' ? folderFields : step.id === 'trade-source' ? binanceFields : actionButtons}
+                {step.id === 'folders' ? folderFields : actionButtons}
                 {step.id === 'obs-websocket' && (
                   <div className="mt-5 space-y-4">
                     <div className="flex flex-wrap gap-2">
@@ -793,15 +708,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                   </div>
                 )}
                 {step.id === 'folders' && <div className="mt-5">{actionButtons}</div>}
-                {step.id === 'trade-source' && (
-                  <>
-                    <div className="mt-5">{actionButtons}</div>
-                    <div className="mt-5 flex flex-wrap gap-2">
-                      <Button onClick={saveBinanceSettings} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить ключи'}</Button>
-                      <Button variant="ghost" onClick={() => void testBinanceConnection()} disabled={testingBinance}>{testingBinance ? 'Проверяем...' : 'Проверить Binance'}</Button>
-                    </div>
-                  </>
-                )}
                 {step.id === 'proxy-server' && (
                   <div className="mt-5 grid gap-4 xl:grid-cols-2">
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">

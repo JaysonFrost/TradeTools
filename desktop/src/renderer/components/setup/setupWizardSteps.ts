@@ -1,4 +1,4 @@
-export type VideoSetupWizardStepId = 'video-welcome' | 'obs-websocket' | 'obs-replay' | 'folders' | 'trade-source' | 'test-clip' | 'video-done'
+export type VideoSetupWizardStepId = 'video-welcome' | 'obs-websocket' | 'obs-replay' | 'folders' | 'test-clip' | 'video-done'
 export type ProxySetupWizardStepId = 'proxy-welcome' | 'proxy-server' | 'proxy-chain' | 'proxy-check' | 'proxy-done'
 export type SetupWizardStepId = VideoSetupWizardStepId | ProxySetupWizardStepId
 
@@ -17,7 +17,6 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     actions: [
       'Включим встроенную запись открытого терминала без API',
       'Укажем папку готовых клипов и, если нужен OBS, папку replay',
-      'Опционально добавим read-only API ключи Binance Futures',
       'Сделаем тестовый клип перед реальной торговлей'
     ]
   },
@@ -51,16 +50,6 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
       'Если выбран OBS, папка replay должна совпадать с Recording Path в OBS',
       'Папка клипов: место для готовых видео и JSON',
       'Отступ до входа и после выхода добавляет запас по краям сделки'
-    ]
-  },
-  {
-    id: 'trade-source',
-    title: 'Источник сделок',
-    goal: 'По умолчанию TradeTools работает без API и пишет окно терминала. Binance ключи можно добавить как дополнительный автоматический источник.',
-    actions: [
-      'Оставьте режим без API, если хотите писать терминал локально',
-      'Создайте API Key в Binance с доступом только на чтение, если нужна автонарезка по Binance',
-      'После сохранения ключей можно проверить подключение Binance'
     ]
   },
   {

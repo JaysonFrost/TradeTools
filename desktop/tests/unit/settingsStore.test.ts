@@ -58,7 +58,7 @@ describe('settingsStore', () => {
     expect(reloaded).toEqual(settings)
   })
 
-  it('persists Binance Futures configured flags without raw API credentials', async () => {
+  it('drops legacy Binance API settings when persisting settings', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
@@ -72,19 +72,13 @@ describe('settingsStore', () => {
         }
       },
       tradeSource: { mode: 'binance-futures' }
-    })
+    } as unknown as Parameters<typeof store.update>[0])
 
-    expect(settings.exchange.binanceFutures).toEqual({
-      enabled: true,
-      testnet: true,
-      apiKeyConfigured: true,
-      apiSecretConfigured: true
-    })
-    expect(settings.tradeSource.mode).toBe('binance-futures')
+    expect(settings).not.toHaveProperty('exchange')
+    expect(settings.tradeSource.mode).toBe('terminal-window')
 
     const reloaded = await store.load()
-    expect(JSON.stringify(reloaded)).not.toContain('binance-key')
-    expect(JSON.stringify(reloaded)).not.toContain('binance-secret')
+    expect(JSON.stringify(reloaded).toLowerCase()).not.toContain('binance')
     expect(reloaded).toEqual(settings)
   })
 
