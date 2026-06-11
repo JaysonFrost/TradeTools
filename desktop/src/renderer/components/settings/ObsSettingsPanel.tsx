@@ -1,7 +1,8 @@
-import { FolderOpen, Monitor, Radio, RefreshCw } from 'lucide-react'
+import { Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
+import { longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { Button } from '../ui/Button'
@@ -27,6 +28,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [port, setPort] = useState('4455')
   const [paddingBefore, setPaddingBefore] = useState('2')
   const [paddingAfter, setPaddingAfter] = useState('2')
+  const [replayBufferSeconds, setReplayBufferSeconds] = useState('30')
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
@@ -45,6 +47,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setPort(String(settings.obs.port))
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
+    setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
     setReplaySourceDir(settings.clip.replaySourceDir)
     setOutputDir(settings.clip.outputDir)
   }, [settings])
@@ -85,6 +88,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     try {
       const api = getTradeToolsApi()
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
+      const parsedPaddingBeforeSeconds = Number(paddingBefore)
+      const parsedReplayBufferSeconds = Number(replayBufferSeconds)
+      const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
+      const replayBufferSecondsValue = recordingMode === 'window'
+        ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
+        : parsedReplayBufferSeconds
       const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         recording: {
@@ -102,6 +111,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         clip: {
           paddingBeforeSeconds: Number(paddingBefore),
           paddingAfterSeconds: Number(paddingAfter),
+          replayBufferSeconds: replayBufferSecondsValue,
           replaySourceDir,
           outputDir
         }
@@ -114,6 +124,16 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     } finally {
       setSaving(false)
     }
+  }
+
+  const applyLongClipPreset = () => {
+    const seconds = String(longClipPresetSeconds)
+    setPaddingBefore(seconds)
+    setPaddingAfter(seconds)
+    setReplayBufferSeconds(seconds)
+    setMessage(recordingMode === 'window'
+      ? 'Пресет 10 минут включён. Встроенная запись будет хранить большой локальный буфер, клип появится примерно через 10 минут после выхода.'
+      : 'Пресет 10 минут включён. В OBS вручную поставьте Replay Buffer минимум 20 минут плюс обычная длина сделки.')
   }
 
   const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
@@ -153,6 +173,16 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         >
           <Radio size={16} className="mr-2" />OBS Replay Buffer
         </button>
+      </div>
+
+      <div className="mt-5 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до/после</Button>
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
+        </div>
+        <p className="mt-2">
+          Клип появится только после записи времени после выхода. Для OBS поставьте Replay Buffer минимум 20 минут плюс обычная длина сделки; для встроенной записи TradeTools будет хранить 10 минут локального буфера.
+        </p>
       </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -225,7 +255,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               Интервал буфера, сек
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
             </label>
-            <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-1">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>
+            <label className="text-xs font-medium text-zinc-500">
+              Буфер до входа, сек
+              <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
+            </label>
+            <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-6">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>
           </>
         )}
         <label className="text-xs font-medium text-zinc-500">

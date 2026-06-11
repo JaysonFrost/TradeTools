@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
@@ -27,6 +27,8 @@ export type WindowRecordingSegmentInput = {
 export type WindowRecorderStatus = {
   enabled: boolean
   active: boolean
+  backend: 'ffmpeg' | 'browser'
+  fallbackRequired?: boolean
   mode: AppSettings['recording']['mode']
   sourceId: string
   sourceName: string
@@ -53,10 +55,13 @@ export type WindowRecorderService = {
   getStatus: (settings: AppSettings) => Promise<WindowRecorderStatus>
   protectSince: (timeMs?: number) => void
   saveReplayBuffer: (input: WindowReplaySaveInput) => Promise<WindowReplaySaveResult>
+  start: (settings: AppSettings) => Promise<WindowRecorderStatus>
+  stop: () => Promise<void>
 }
 
 type StoredSegment = {
   id: string
+  backend: WindowRecorderStatus['backend']
   sourceId: string
   sourceName: string
   sessionId: string
@@ -71,9 +76,23 @@ type WindowRecorderServiceInput = {
   appDataDir: string
 }
 
+type NativeRecorderState = {
+  process: ChildProcess
+  sessionId: string
+  settingsKey: string
+  sourceId: string
+  sourceName: string
+  startedAtMs: number
+  listPath: string
+  outputPattern: string
+  stderr: string
+  stopping: boolean
+}
+
 const pollIntervalMs = 250
 const exportToleranceMs = 1_500
 const segmentStaleAfterMs = 8_000
+const nativeRecorderStartupGraceMs = 900
 
 const sleep = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
@@ -86,6 +105,9 @@ const toFileTimestamp = (timeMs: number): string => new Date(timeMs).toISOString
 const formatRoundedSeconds = (seconds: number): string => `${Math.max(0, Math.ceil(seconds))}с`
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
+const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
+const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
+const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
 
 const runFfmpeg = async (args: string[]): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -114,20 +136,245 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
   let protectedSinceMs = 0
+  let nativeRecorder: NativeRecorderState | undefined
+  let nativeLastError = ''
 
-  const pruneDiskFiles = async (keepIds: Set<string>) => {
+  const nativeSettingsKey = (settings: AppSettings): string => [
+    settings.recording.sourceType,
+    settings.recording.windowSourceId,
+    settings.recording.windowSourceName,
+    settings.recording.frameRate,
+    settings.recording.segmentSeconds
+  ].join('|')
+
+  const nativeSourceName = (settings: AppSettings): string => (
+    settings.recording.windowSourceName ||
+    (settings.recording.sourceType === 'screen' ? 'Экран' : '')
+  )
+
+  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string): string[] => {
+    const frameRate = formatFrameRate(settings.recording.frameRate)
+    const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
+    const inputName = settings.recording.sourceType === 'screen'
+      ? 'desktop'
+      : `title=${settings.recording.windowSourceName}`
+
+    return [
+      '-hide_banner',
+      '-loglevel',
+      'warning',
+      '-nostdin',
+      '-f',
+      'gdigrab',
+      '-framerate',
+      frameRate,
+      '-draw_mouse',
+      '1',
+      '-i',
+      inputName,
+      '-map',
+      '0:v:0',
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-tune',
+      'zerolatency',
+      '-crf',
+      '24',
+      '-pix_fmt',
+      'yuv420p',
+      '-r',
+      frameRate,
+      '-fps_mode',
+      'cfr',
+      '-f',
+      'segment',
+      '-segment_time',
+      segmentSeconds,
+      '-reset_timestamps',
+      '1',
+      '-segment_format',
+      'mp4',
+      '-segment_list',
+      listPath,
+      '-segment_list_type',
+      'csv',
+      outputPattern
+    ]
+  }
+
+  const stopNativeRecorder = async () => {
+    const current = nativeRecorder
+    if (!current) return
+
+    nativeRecorder = undefined
+    current.stopping = true
+    if (current.process.exitCode !== null || current.process.killed) return
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        current.process.kill('SIGKILL')
+        resolve()
+      }, 1_500)
+      current.process.once('exit', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+      current.process.kill('SIGTERM')
+    })
+  }
+
+  const scanNativeSegments = async () => {
+    const current = nativeRecorder
+    if (!current) return
+
+    const listText = await readFile(current.listPath, 'utf8').catch(() => '')
+    if (!listText.trim()) return
+
+    const knownIds = new Set(segments.map((segment) => segment.id))
+    const lines = listText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+
+    for (const [index, line] of lines.entries()) {
+      const [rawPath, rawStart, rawEnd] = line.split(',')
+      if (!rawPath || !rawStart || !rawEnd) continue
+
+      const startSeconds = Number(rawStart)
+      const endSeconds = Number(rawEnd)
+      if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) continue
+
+      const segmentPath = isAbsolute(rawPath) ? rawPath : join(segmentsDir, rawPath)
+      const fileStat = await stat(segmentPath).catch(() => undefined)
+      if (!fileStat?.isFile() || fileStat.size <= 0) continue
+
+      const id = `${current.sessionId}-${index}`
+      if (knownIds.has(id)) continue
+
+      segments.push({
+        id,
+        backend: 'ffmpeg',
+        sourceId: current.sourceId,
+        sourceName: current.sourceName,
+        sessionId: current.sessionId,
+        sequence: index,
+        startedAtMs: current.startedAtMs + Math.round(startSeconds * 1000),
+        endedAtMs: current.startedAtMs + Math.round(endSeconds * 1000),
+        path: segmentPath,
+        sizeBytes: fileStat.size
+      })
+      knownIds.add(id)
+    }
+  }
+
+  const startNativeRecorder = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
+    if (settings.recording.mode !== 'window') {
+      await stopNativeRecorder()
+      return buildStatus(settings)
+    }
+
+    if (!isNativeRecordingSupported()) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
+      })
+    }
+
+    if (settings.recording.sourceType === 'window' && !settings.recording.windowSourceName) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
+      })
+    }
+
+    const settingsKey = nativeSettingsKey(settings)
+    if (nativeRecorder?.settingsKey === settingsKey && nativeRecorder.process.exitCode === null) {
+      await scanNativeSegments()
+      return buildStatus(settings, { backend: 'ffmpeg' })
+    }
+
+    await stopNativeRecorder()
+    await mkdir(segmentsDir, { recursive: true })
+
+    const sessionId = `ffmpeg-${Date.now()}-${randomUUID()}`
+    const listPath = join(segmentsDir, `${sessionId}.csv`)
+    const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
+    const sourceName = nativeSourceName(settings)
+    const processStartedAtMs = Date.now()
+    const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath), {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true
+    })
+    const state: NativeRecorderState = {
+      process: child,
+      sessionId,
+      settingsKey,
+      sourceId: settings.recording.windowSourceId || settings.recording.sourceType,
+      sourceName,
+      startedAtMs: processStartedAtMs,
+      listPath,
+      outputPattern,
+      stderr: '',
+      stopping: false
+    }
+
+    nativeLastError = ''
+    nativeRecorder = state
+
+    child.stderr.on('data', (chunk) => {
+      state.stderr = normalizeFfmpegLog(`${state.stderr}${String(chunk)}`)
+    })
+    child.on('error', (error) => {
+      nativeLastError = isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg').message : error.message
+      if (nativeRecorder === state) nativeRecorder = undefined
+    })
+    child.on('exit', (code, signal) => {
+      if (!state.stopping) {
+        nativeLastError = normalizeFfmpegLog(state.stderr) || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
+      }
+      if (nativeRecorder === state) nativeRecorder = undefined
+    })
+
+    await sleep(nativeRecorderStartupGraceMs)
+    if (nativeRecorder !== state || child.exitCode !== null) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: nativeLastError
+          ? `ffmpeg-рекордер не запустился: ${nativeLastError}. Используем совместимый рекордер Chromium.`
+          : 'ffmpeg-рекордер не запустился. Используем совместимый рекордер Chromium.'
+      })
+    }
+
+    return buildStatus(settings, {
+      backend: 'ffmpeg',
+      message: 'Оптимизированная ffmpeg-запись запущена, ждём первые сегменты'
+    })
+  }
+
+  const pruneDiskFiles = async (keepPaths: Set<string>) => {
     const entries = await readdir(segmentsDir, { withFileTypes: true }).catch(() => [])
     await Promise.all(entries.map(async (entry) => {
-      if (!entry.isFile() || !entry.name.endsWith('.webm')) return
+      if (!entry.isFile()) return
+      const filePath = join(segmentsDir, entry.name)
+      const extension = extname(entry.name).toLowerCase()
+      if (!['.webm', '.mp4', '.csv'].includes(extension)) return
+      if (keepPaths.has(filePath)) return
+      if (nativeRecorder?.listPath === filePath) return
 
-      const fileId = entry.name.replace(/\.webm$/i, '').split('__').at(-1)
-      if (fileId && keepIds.has(fileId)) return
+      if (nativeRecorder && entry.name.startsWith(`${nativeRecorder.sessionId}-`)) {
+        const fileStat = await stat(filePath).catch(() => undefined)
+        if (fileStat && Date.now() - fileStat.mtimeMs < segmentStaleAfterMs) return
+      }
 
-      await rm(join(segmentsDir, entry.name), { force: true }).catch(() => undefined)
+      await rm(filePath, { force: true }).catch(() => undefined)
     }))
   }
 
   const pruneSegments = async (settings: AppSettings, nowMs = Date.now()) => {
+    await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
     const cutoffMs = protectedSinceMs > 0 ? Math.min(replayCutoffMs, protectedSinceMs) : replayCutoffMs
@@ -145,7 +392,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       await rm(segment.path, { force: true }).catch(() => undefined)
     }
 
-    await pruneDiskFiles(new Set(segments.map((segment) => segment.id)))
+    const keepPaths = new Set(segments.map((segment) => segment.path))
+    await pruneDiskFiles(keepPaths)
   }
 
   const relevantSegments = (settings: AppSettings): StoredSegment[] => {
@@ -158,31 +406,44 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       .sort((a, b) => a.startedAtMs - b.startedAtMs)
   }
 
-  const buildStatus = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
+  const buildStatus = async (
+    settings: AppSettings,
+    override: Partial<Pick<WindowRecorderStatus, 'backend' | 'fallbackRequired' | 'message'>> = {}
+  ): Promise<WindowRecorderStatus> => {
     await pruneSegments(settings)
     const sourceSegments = relevantSegments(settings)
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
     const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
     const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
-    const active = Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
+    const active = Boolean(nativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
+    const backend = override.backend ?? (nativeRecorder ? 'ffmpeg' : 'browser')
+    const defaultMessage = settings.recording.mode !== 'window'
+      ? 'Встроенная запись окна выключена'
+      : !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
+        ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
+        : backend === 'ffmpeg' && nativeRecorder
+          ? bufferedSeconds > 0
+            ? `Оптимизированная ffmpeg-запись активна, накоплено ${Math.round(bufferedSeconds)}с`
+            : 'Оптимизированная ffmpeg-запись активна, ждём первые сегменты'
+          : nativeLastError
+            ? `ffmpeg-рекордер остановился: ${nativeLastError}`
+            : active
+              ? `Встроенная запись активна, накоплено ${Math.round(bufferedSeconds)}с`
+              : 'Ждём сегменты от встроенного рекордера'
 
     return {
       enabled: settings.recording.mode === 'window',
       active,
+      backend,
+      ...(override.fallbackRequired || (settings.recording.mode === 'window' && !nativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
       mode: settings.recording.mode,
       sourceId: settings.recording.windowSourceId,
       sourceName: settings.recording.windowSourceName,
       segmentCount: sourceSegments.length,
       bufferedSeconds,
       lastSegmentAtMs: last?.endedAtMs ?? 0,
-      message: settings.recording.mode !== 'window'
-        ? 'Встроенная запись окна выключена'
-        : !settings.recording.windowSourceId
-          ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
-          : active
-            ? `Встроенная запись активна, накоплено ${Math.round(bufferedSeconds)}с`
-            : 'Ждём сегменты от встроенного рекордера'
+      message: override.message ?? defaultMessage
     }
   }
 
@@ -266,6 +527,70 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     ])
   }
 
+  const concatNativeReplayFile = async (neededSegments: StoredSegment[], listPath: string, replayPath: string, settings: AppSettings): Promise<void> => {
+    const concatList = neededSegments
+      .map((segment) => `file '${escapeConcatPath(segment.path)}'`)
+      .join('\n')
+    await writeFile(listPath, `${concatList}\n`, 'utf8')
+
+    try {
+      await runFfmpeg([
+        '-y',
+        '-fflags',
+        '+genpts',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
+        '-map',
+        '0:v:0',
+        '-an',
+        '-c',
+        'copy',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        replayPath
+      ])
+      return
+    } catch {
+      await runFfmpeg([
+        '-y',
+        '-fflags',
+        '+genpts',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
+        '-map',
+        '0:v:0',
+        '-an',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '18',
+        '-pix_fmt',
+        'yuv420p',
+        '-r',
+        String(settings.recording.frameRate),
+        '-fps_mode',
+        'cfr',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        replayPath
+      ])
+    }
+  }
+
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<string> => {
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
@@ -302,45 +627,54 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     let sessionFiles: string[] = []
 
     try {
-      sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
-      if (sessionFiles.length === 1 && sessionFiles[0]) {
-        await encodeReplayFile(sessionFiles[0], replayPath, settings)
+      const allNativeSegments = neededSegments.every((segment) => segment.backend === 'ffmpeg')
+      const allBrowserSegments = neededSegments.every((segment) => segment.backend === 'browser')
+
+      if (allNativeSegments) {
+        await concatNativeReplayFile(neededSegments, listPath, replayPath, settings)
+      } else if (allBrowserSegments) {
+        sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
+        if (sessionFiles.length === 1 && sessionFiles[0]) {
+          await encodeReplayFile(sessionFiles[0], replayPath, settings)
+        } else {
+          const concatList = sessionFiles
+            .map((path) => `file '${escapeConcatPath(path)}'`)
+            .join('\n')
+          await writeFile(listPath, `${concatList}\n`, 'utf8')
+          await runFfmpeg([
+            '-y',
+            '-fflags',
+            '+genpts',
+            '-f',
+            'concat',
+            '-safe',
+            '0',
+            '-i',
+            listPath,
+            '-map',
+            '0:v:0',
+            '-an',
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '18',
+            '-pix_fmt',
+            'yuv420p',
+            '-r',
+            String(settings.recording.frameRate),
+            '-fps_mode',
+            'cfr',
+            '-avoid_negative_ts',
+            'make_zero',
+            '-movflags',
+            '+faststart',
+            replayPath
+          ])
+        }
       } else {
-        const concatList = sessionFiles
-          .map((path) => `file '${escapeConcatPath(path)}'`)
-          .join('\n')
-        await writeFile(listPath, `${concatList}\n`, 'utf8')
-        await runFfmpeg([
-          '-y',
-          '-fflags',
-          '+genpts',
-          '-f',
-          'concat',
-          '-safe',
-          '0',
-          '-i',
-          listPath,
-          '-map',
-          '0:v:0',
-          '-an',
-          '-c:v',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-crf',
-          '18',
-          '-pix_fmt',
-          'yuv420p',
-          '-r',
-          String(settings.recording.frameRate),
-          '-fps_mode',
-          'cfr',
-          '-avoid_negative_ts',
-          'make_zero',
-          '-movflags',
-          '+faststart',
-          replayPath
-        ])
+        throw new Error('Во время сделки переключился backend записи. Дождитесь новой сделки после перезапуска записи.')
       }
       const savedAt = new Date(last.endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -376,6 +710,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
       segments.push({
         id,
+        backend: 'browser',
         sourceId: input.sourceId,
         sourceName: input.sourceName,
         sessionId,
@@ -389,6 +724,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return buildStatus(settings)
     },
     getStatus: buildStatus,
+    start: startNativeRecorder,
+    stop: stopNativeRecorder,
     async saveReplayBuffer({ settings, trade }) {
       const requestedAtMs = Date.now()
       if (settings.recording.mode !== 'window') {

@@ -60,9 +60,26 @@ describe('settings', () => {
 
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(0)
-    expect(settings.clip.paddingAfterSeconds).toBe(60)
+    expect(settings.clip.paddingAfterSeconds).toBe(600)
     expect(settings.clip.replayBufferSeconds).toBe(30)
     expect(settings.clip.outputDir).toBe('/clips')
+  })
+
+  it('allows the heavy 10 minute clip preset for built-in recording', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window'
+      },
+      clip: {
+        paddingBeforeSeconds: 600,
+        paddingAfterSeconds: 600,
+        replayBufferSeconds: 30
+      }
+    }, '/app-data')
+
+    expect(settings.clip.paddingBeforeSeconds).toBe(600)
+    expect(settings.clip.paddingAfterSeconds).toBe(600)
+    expect(settings.clip.replayBufferSeconds).toBe(600)
   })
 
   it('drops legacy Binance Futures API settings and keeps the no-API source', () => {

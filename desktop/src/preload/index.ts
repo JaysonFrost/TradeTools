@@ -128,6 +128,8 @@ const api = {
   recording: {
     listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
+    start: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:start'),
+    stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
   },
   terminalTrade: {

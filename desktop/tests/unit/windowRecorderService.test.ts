@@ -23,4 +23,22 @@ describe('windowRecorderService', () => {
     expect(source).not.toContain('maxReplayWindowMs')
     expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
   })
+
+  it('uses an optimized ffmpeg recorder before falling back to browser capture', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(serviceSource).toContain("'-f',")
+    expect(serviceSource).toContain("'gdigrab'")
+    expect(serviceSource).toContain("'-segment_list'")
+    expect(serviceSource).toContain("backend: 'ffmpeg'")
+    expect(serviceSource).toContain('fallbackRequired')
+    expect(controllerSource).toContain('recording.start()')
+    expect(controllerSource).toContain('recording.stop()')
+    expect(controllerSource).toContain('fallbackRequired')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:start'")
+    expect(appSource).toContain("ipcMain.handle('recording:start'")
+  })
 })

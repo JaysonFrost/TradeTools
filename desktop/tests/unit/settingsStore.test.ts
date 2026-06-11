@@ -50,7 +50,8 @@ describe('settingsStore', () => {
       frameRate: 24,
       segmentSeconds: 3
     })
-    expect(settings.clip.paddingBeforeSeconds).toBe(60)
+    expect(settings.clip.paddingBeforeSeconds).toBe(99)
+    expect(settings.clip.replayBufferSeconds).toBe(99)
     expect(settings.clip.outputDir).toBe('/Users/igor/Clips')
     expect(settings.obs).toEqual({ host: 'localhost', port: 4455, passwordConfigured: true })
 
