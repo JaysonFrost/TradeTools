@@ -4,6 +4,13 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.3] - 2026-06-11
+
+### Fixed
+
+- Fixed installed Windows builds being treated as update-disabled when Electron reports them as unpackaged or `app-update.yml` is not found.
+- TradeTools now sets the GitHub update feed explicitly for installed builds.
+
 ## [0.2.2] - 2026-06-11
 
 ### Fixed

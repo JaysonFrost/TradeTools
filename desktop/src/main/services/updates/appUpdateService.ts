@@ -37,6 +37,7 @@ export type AppUpdateService = {
 type AppUpdateServiceInput = {
   currentVersion: string
   isPackaged: boolean
+  isInstalledBuild: boolean
   hasUpdateConfig: boolean
   platform: NodeJS.Platform
   broadcast: (status: AppUpdateStatus) => void
@@ -67,13 +68,14 @@ const toErrorMessage = (error: unknown): string => error instanceof Error ? erro
 export const createAppUpdateService = ({
   currentVersion,
   isPackaged,
+  isInstalledBuild,
   hasUpdateConfig,
   platform,
   broadcast
 }: AppUpdateServiceInput): AppUpdateService => {
   const updatesSupported = supportedPlatforms.has(platform)
-  const updatesEnabled = updatesSupported && (isPackaged || hasUpdateConfig)
-  const forceConfigForUnpackagedBuild = updatesSupported && !isPackaged && hasUpdateConfig
+  const updatesEnabled = updatesSupported && (isPackaged || isInstalledBuild || hasUpdateConfig)
+  const forceConfigForUnpackagedBuild = updatesEnabled && !isPackaged
   let lastUpdateInfo: UpdateInfo | undefined
   let checking = false
   let downloading = false
@@ -107,8 +109,8 @@ export const createAppUpdateService = ({
   if (updatesEnabled) {
     if (forceConfigForUnpackagedBuild) {
       autoUpdater.forceDevUpdateConfig = true
-      autoUpdater.setFeedURL(githubFeed)
     }
+    autoUpdater.setFeedURL(githubFeed)
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
 
