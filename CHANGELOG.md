@@ -6,6 +6,8 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-06-11
+
 ### Added
 
 - Added a system notification when a new TradeTools version is available.
