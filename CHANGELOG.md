@@ -15,7 +15,8 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ### Fixed
 
-- Disabled cursor drawing in the optimized Windows ffmpeg recorder to avoid rapid cursor flickering while TradeTools is running.
+- Disabled cursor drawing in the optimized Windows ffmpeg recorder so the pointer is not burned into captured videos.
+- Avoided the Windows `gdigrab` screen backend when recording the full screen, because it can flicker the real cursor on some systems.
 
 ## [0.2.5] - 2026-06-11
 

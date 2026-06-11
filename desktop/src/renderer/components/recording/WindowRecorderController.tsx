@@ -40,7 +40,8 @@ const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): Me
       maxFrameRate: frameRate,
       maxWidth: 3840,
       maxHeight: 2160
-    }
+    },
+    cursor: 'never'
   } as unknown as MediaTrackConstraints
 })
 

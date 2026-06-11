@@ -323,6 +323,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       })
     }
 
+    if (settings.recording.sourceType === 'screen') {
+      await stopNativeRecorder()
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Запись экрана идёт через Chromium: так не мигает курсор Windows. Для максимального FPS выберите конкретное окно терминала.'
+      })
+    }
+
     if (settings.recording.sourceType === 'window' && !settings.recording.windowSourceName) {
       return buildStatus(settings, {
         backend: 'browser',

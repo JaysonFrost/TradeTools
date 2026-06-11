@@ -43,6 +43,15 @@ describe('windowRecorderService', () => {
     expect(appSource).toContain("ipcMain.handle('recording:start'")
   })
 
+  it('avoids the gdigrab screen backend on Windows because it can flicker the real cursor', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
+    expect(serviceSource).toContain('не мигает курсор Windows')
+    expect(controllerSource).toContain("cursor: 'never'")
+  })
+
   it('keeps free recording segments and exports a stocks-book recording file', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
