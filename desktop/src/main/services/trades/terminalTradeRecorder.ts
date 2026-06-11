@@ -645,7 +645,7 @@ export const createTerminalTradeWatcher = ({
       await protectActiveTrades()
       emit({
         source: event.source,
-        message: `${sourceName}: клип ${closedTrade.symbol} сохранён`,
+        message: `${sourceName}: клип ${closedTrade.symbol} поставлен в очередь`,
         lastEventAtMs: event.eventTimeMs,
         lastError: undefined
       })

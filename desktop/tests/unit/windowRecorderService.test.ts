@@ -24,7 +24,16 @@ describe('windowRecorderService', () => {
     expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
   })
 
-  it('uses an optimized ffmpeg recorder before falling back to browser capture', async () => {
+  it('marks built-in replay exports as ready clips and trims browser segments before the pipeline step', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('readyClip: true')
+    expect(source).toContain('trimBrowserReplayFile')
+    expect(source).toContain('replayStartMs')
+    expect(source).toContain('replayEndMs')
+  })
+
+  it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -35,12 +44,23 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
+    expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
+    expect(serviceSource).toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')
     expect(controllerSource).toContain('recording.start()')
     expect(controllerSource).toContain('recording.stop()')
     expect(controllerSource).toContain('fallbackRequired')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:start'")
     expect(appSource).toContain("ipcMain.handle('recording:start'")
+  })
+
+  it('avoids cursor capture in the Chromium fallback and avoids the gdigrab screen backend', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
+    expect(serviceSource).toContain('не мигает курсор Windows')
+    expect(controllerSource).toContain("cursor: 'never'")
   })
 
   it('keeps free recording segments and exports a stocks-book recording file', async () => {

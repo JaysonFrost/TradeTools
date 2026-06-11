@@ -39,6 +39,31 @@ describe('main app lifecycle', () => {
     expect(source).toContain('earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
   })
 
+  it('queues clip rendering jobs without blocking terminal trade event processing', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const watcherSource = await readFile(resolve('src/main/services/trades/terminalTradeRecorder.ts'), 'utf8')
+
+    expect(appSource).toContain('clipRenderQueue')
+    expect(appSource).toContain('enqueueClipRender')
+    expect(appSource).toContain('runClipRenderQueue')
+    expect(appSource).toContain('activeClipRenderJob')
+    expect(appSource).toContain('applyWindowRecorderProtection')
+    expect(appSource).toContain('watcherProtectedSinceMs')
+    expect(appSource).toContain("createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false })")
+    expect(appSource).toContain("ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())")
+    expect(watcherSource).toContain('поставлен в очередь')
+    expect(watcherSource).not.toContain('клип ${closedTrade.symbol} сохранён')
+  })
+
+  it('reports live clip processing progress instead of leaving the UI parked at 35 percent', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const currentClipProcessingStatus')
+    expect(source).toContain('Math.min(88')
+    expect(source).toContain('elapsedSeconds')
+    expect(source).toContain('queuedCount')
+  })
+
   it('exposes a system notification test and notifies when a clip enters the queue', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

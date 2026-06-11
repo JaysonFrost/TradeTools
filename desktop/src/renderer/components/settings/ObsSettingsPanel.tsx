@@ -2,7 +2,7 @@ import { CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucid
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
-import { longClipPresetSeconds } from '../../../shared/videoDefaults'
+import { longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { Button } from '../ui/Button'
@@ -135,13 +135,14 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   }
 
   const applyLongClipPreset = () => {
-    const seconds = String(longClipPresetSeconds)
-    setPaddingBefore(seconds)
-    setPaddingAfter(seconds)
-    setReplayBufferSeconds(seconds)
+    const beforeSeconds = String(longClipPresetSeconds)
+    const afterSeconds = String(longClipAfterExitSeconds)
+    setPaddingBefore(beforeSeconds)
+    setPaddingAfter(afterSeconds)
+    setReplayBufferSeconds(beforeSeconds)
     setMessage(recordingMode === 'window'
-      ? 'Пресет 10 минут включён. Встроенная запись будет хранить большой локальный буфер, клип появится примерно через 10 минут после выхода.'
-      : 'Пресет 10 минут включён. В OBS вручную поставьте Replay Buffer минимум 20 минут плюс обычная длина сделки.')
+      ? 'Пресет включён: 10 минут до входа и 2 минуты после выхода. Клип появится примерно через 2 минуты после выхода.'
+      : 'Пресет включён: 10 минут до входа и 2 минуты после выхода. В OBS поставьте Replay Buffer минимум 12 минут плюс обычная длина сделки.')
   }
 
   const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
@@ -185,11 +186,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
       <div className="mt-5 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до/после</Button>
+          <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до / 2 минуты после</Button>
           <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
         </div>
         <p className="mt-2">
-          Клип появится только после записи времени после выхода. Для OBS поставьте Replay Buffer минимум 20 минут плюс обычная длина сделки; для встроенной записи TradeTools будет хранить 10 минут локального буфера.
+          Клип появится только после записи времени после выхода. Для OBS поставьте Replay Buffer минимум 12 минут плюс обычная длина сделки; для встроенной записи TradeTools будет хранить 10 минут локального буфера и 2 минуты после выхода.
         </p>
       </div>
 

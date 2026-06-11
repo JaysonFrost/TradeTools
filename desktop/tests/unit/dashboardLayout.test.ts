@@ -58,11 +58,12 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Экран')
     expect(appSource).toContain("types: ['window', 'screen']")
     expect(settingsPanelSource).toContain('listWindowSources')
-    expect(settingsPanelSource).toContain('Пресет 10 минут до/после')
+    expect(settingsPanelSource).toContain('Пресет 10 минут до / 2 минуты после')
     expect(settingsPanelSource).toContain('Буфер до входа, сек')
     expect(settingsPanelSource).toContain('Размер одного куска записи')
     expect(settingsPanelSource).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
+    expect(settingsPanelSource).toContain('longClipAfterExitSeconds')
     expect(controllerSource).toContain('findPreferredTerminalSource')
     expect(controllerSource).toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
@@ -155,12 +156,13 @@ describe('Dashboard layout', () => {
   it('offers a heavy 10 minute video preset in the setup wizard', async () => {
     const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
 
-    expect(source).toContain('Пресет 10 минут до/после')
+    expect(source).toContain('Пресет 10 минут до / 2 минуты после')
     expect(source).toContain('Тяжёлый режим')
     expect(source).toContain('Локальный буфер до входа, сек')
     expect(source).toContain('Размер одного куска записи')
     expect(source).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(source).toContain('longClipPresetSeconds')
+    expect(source).toContain('longClipAfterExitSeconds')
   })
 
   it('keeps proxy controls on the proxy page', async () => {
