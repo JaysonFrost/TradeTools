@@ -6,7 +6,7 @@ import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/serv
 import type { ClipProcessingStatus, ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
-import type { WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
+import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
 
 export type ProxySaveInput = {
   id?: string
@@ -128,7 +128,12 @@ const api = {
   recording: {
     listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
+    getFreeStatus: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-status'),
     start: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:start'),
+    startFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-start'),
+    pauseFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-pause'),
+    resumeFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-resume'),
+    finishFree: (): Promise<FreeRecordingFinishResult> => ipcRenderer.invoke('recording:free-finish'),
     stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
   },

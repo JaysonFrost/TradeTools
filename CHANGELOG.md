@@ -4,6 +4,19 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [Unreleased]
+
+### Added
+
+- Added a system notification when a new TradeTools version is available.
+- Added live built-in video buffer progress so the UI shows how many seconds are saved out of the configured buffer.
+- Added a free terminal recording mode with start, pause, resume and finish controls.
+- Added video buffer field hints that explain the difference between segment interval and pre-entry buffer.
+
+### Fixed
+
+- Disabled cursor drawing in the optimized Windows ffmpeg recorder to avoid rapid cursor flickering while TradeTools is running.
+
 ## [0.2.5] - 2026-06-11
 
 ### Added

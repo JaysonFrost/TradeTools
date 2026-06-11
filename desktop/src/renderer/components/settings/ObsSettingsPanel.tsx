@@ -1,4 +1,4 @@
-import { Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucide-react'
+import { CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
@@ -14,6 +14,14 @@ export type ObsSettingsPanelProps = {
 }
 
 const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
+const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
+const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа в сделку. Это должно быть не меньше поля «Секунд до входа».'
+
+const FieldHint = ({ text }: { text: string }) => (
+  <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
+    <CircleHelp size={13} />
+  </span>
+)
 
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
   const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
@@ -252,11 +260,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               <input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" />
             </label>
             <label className="text-xs font-medium text-zinc-500">
-              Интервал буфера, сек
+              <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
             </label>
             <label className="text-xs font-medium text-zinc-500">
-              Буфер до входа, сек
+              <span>Буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
               <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
             </label>
             <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-6">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>

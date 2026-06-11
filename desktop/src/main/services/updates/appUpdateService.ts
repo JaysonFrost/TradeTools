@@ -41,6 +41,7 @@ type AppUpdateServiceInput = {
   hasUpdateConfig: boolean
   platform: NodeJS.Platform
   broadcast: (status: AppUpdateStatus) => void
+  onUpdateAvailable?: (status: AppUpdateStatus) => void
 }
 
 const supportedPlatforms = new Set<NodeJS.Platform>(['win32', 'darwin'])
@@ -71,7 +72,8 @@ export const createAppUpdateService = ({
   isInstalledBuild,
   hasUpdateConfig,
   platform,
-  broadcast
+  broadcast,
+  onUpdateAvailable
 }: AppUpdateServiceInput): AppUpdateService => {
   const updatesSupported = supportedPlatforms.has(platform)
   const updatesEnabled = updatesSupported && (isPackaged || isInstalledBuild || hasUpdateConfig)
@@ -80,6 +82,7 @@ export const createAppUpdateService = ({
   let checking = false
   let downloading = false
   let backgroundCheckStarted = false
+  let notifiedUpdateVersion = ''
   let status: AppUpdateStatus = updatesEnabled
     ? {
         status: 'idle',
@@ -125,11 +128,20 @@ export const createAppUpdateService = ({
     autoUpdater.on('update-available', (info) => {
       checking = false
       lastUpdateInfo = info
-      setEnabledStatus({
+      const nextStatus: Omit<AppUpdateStatus, 'currentVersion'> = {
         status: 'available',
         ...toUpdateFields(info),
         message: `Доступна новая версия TradeTools ${info.version}`
-      })
+      }
+      setEnabledStatus(nextStatus)
+
+      if (info.version && notifiedUpdateVersion !== info.version) {
+        notifiedUpdateVersion = info.version
+        onUpdateAvailable?.({
+          currentVersion,
+          ...nextStatus
+        })
+      }
     })
 
     autoUpdater.on('update-not-available', (info) => {

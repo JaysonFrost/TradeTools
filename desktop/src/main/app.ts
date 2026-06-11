@@ -458,19 +458,6 @@ app.whenReady().then(() => {
       ? windowRecorderService.saveReplayBuffer(input)
       : obsService.testReplaySave()
   })
-  const appUpdateService = createAppUpdateService({
-    currentVersion: app.getVersion(),
-    isPackaged: app.isPackaged,
-    isInstalledBuild: isInstalledUpdateBuild(),
-    hasUpdateConfig: hasPackagedUpdateConfig(),
-    platform: process.platform,
-    broadcast: (status) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send('updates:status', status)
-      }
-    }
-  })
-
   const saveProxyRuntimeConfig = async (config: ProxyChainRuntimeConfig): Promise<void> => {
     await secretStore.setProxyRuntimeEntryUuid(config.entryUuid)
     await settingsStore.update({
@@ -563,6 +550,28 @@ app.whenReady().then(() => {
       }
     }
   }
+
+  const appUpdateService = createAppUpdateService({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    isInstalledBuild: isInstalledUpdateBuild(),
+    hasUpdateConfig: hasPackagedUpdateConfig(),
+    platform: process.platform,
+    broadcast: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('updates:status', status)
+      }
+    },
+    onUpdateAvailable: (status) => {
+      const version = status.version ? ` ${status.version}` : ''
+      const notification = showSystemNotification({
+        title: 'Вышла новая версия TradeTools',
+        body: `Доступна версия${version}. Откройте TradeTools, чтобы скачать обновление.`,
+        onClick: focusMainWindow
+      })
+      if (!notification.ok) console.warn(`Update notification failed: ${notification.message}`)
+    }
+  })
 
   const notifyProxyPaymentsDue = async () => {
     const settings = await settingsStore.load()
@@ -767,7 +776,12 @@ app.whenReady().then(() => {
       }))
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
+  ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
   ipcMain.handle('recording:start', async () => windowRecorderService.start(await settingsStore.load()))
+  ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:stop', async () => windowRecorderService.stop())
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())

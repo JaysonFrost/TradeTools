@@ -4,6 +4,7 @@ import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } fro
 import { basename, extname, isAbsolute, join } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
+import { toSafeClipFileBaseName } from '../video/clipPaths'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 
 export type WindowCaptureSource = {
@@ -50,12 +51,37 @@ export type WindowReplaySaveResult = {
   replayPath?: string
 }
 
+export type FreeRecordingStatus = {
+  active: boolean
+  paused: boolean
+  startedAtMs: number
+  currentIntervalStartedAtMs: number
+  recordedSeconds: number
+  segmentCount: number
+  outputPath?: string
+  message: string
+}
+
+export type FreeRecordingFinishResult = {
+  ok: true
+  videoPath: string
+  fileName: string
+  startedAtMs: number
+  endedAtMs: number
+  durationSeconds: number
+}
+
 export type WindowRecorderService = {
   appendSegment: (input: WindowRecordingSegmentInput, settings: AppSettings) => Promise<WindowRecorderStatus>
+  finishFreeRecording: (settings: AppSettings) => Promise<FreeRecordingFinishResult>
+  getFreeRecordingStatus: (settings: AppSettings) => Promise<FreeRecordingStatus>
   getStatus: (settings: AppSettings) => Promise<WindowRecorderStatus>
+  pauseFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   protectSince: (timeMs?: number) => void
+  resumeFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   saveReplayBuffer: (input: WindowReplaySaveInput) => Promise<WindowReplaySaveResult>
   start: (settings: AppSettings) => Promise<WindowRecorderStatus>
+  startFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   stop: () => Promise<void>
 }
 
@@ -89,6 +115,16 @@ type NativeRecorderState = {
   stopping: boolean
 }
 
+type FreeRecordingInterval = {
+  startMs: number
+  endMs?: number
+}
+
+type FreeRecordingState = {
+  startedAtMs: number
+  intervals: FreeRecordingInterval[]
+}
+
 const pollIntervalMs = 250
 const exportToleranceMs = 1_500
 const segmentStaleAfterMs = 8_000
@@ -103,6 +139,11 @@ const sanitizeSegmentTime = (value: unknown): number => {
 
 const toFileTimestamp = (timeMs: number): string => new Date(timeMs).toISOString().replace(/[:.]/g, '-')
 const formatRoundedSeconds = (seconds: number): string => `${Math.max(0, Math.ceil(seconds))}с`
+const padDatePart = (value: number): string => String(value).padStart(2, '0')
+const formatFilePeriodTimestamp = (timeMs: number): string => {
+  const date = new Date(timeMs)
+  return `${padDatePart(date.getDate())}.${padDatePart(date.getMonth() + 1)}.${date.getFullYear()} ${padDatePart(date.getHours())}-${padDatePart(date.getMinutes())}-${padDatePart(date.getSeconds())}`
+}
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
@@ -136,6 +177,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
   let protectedSinceMs = 0
+  let freeRecording: FreeRecordingState | undefined
   let nativeRecorder: NativeRecorderState | undefined
   let nativeLastError = ''
 
@@ -169,7 +211,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       '-framerate',
       frameRate,
       '-draw_mouse',
-      '1',
+      '0',
       '-i',
       inputName,
       '-map',
@@ -377,7 +419,9 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
-    const cutoffMs = protectedSinceMs > 0 ? Math.min(replayCutoffMs, protectedSinceMs) : replayCutoffMs
+    const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0].filter((value) => value > 0)
+    const protectedCutoffMs = protectedCutoffs.length > 0 ? Math.min(...protectedCutoffs) : 0
+    const cutoffMs = protectedCutoffMs > 0 ? Math.min(replayCutoffMs, protectedCutoffMs) : replayCutoffMs
     const sessionLastEndedAt = new Map<string, number>()
 
     for (const segment of segments) {
@@ -418,18 +462,20 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
     const active = Boolean(nativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
     const backend = override.backend ?? (nativeRecorder ? 'ffmpeg' : 'browser')
+    const bufferTargetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
+    const bufferMessage = `накоплено ${Math.round(bufferedSeconds)}с из ${bufferTargetSeconds}с`
     const defaultMessage = settings.recording.mode !== 'window'
       ? 'Встроенная запись окна выключена'
       : !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
         ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
         : backend === 'ffmpeg' && nativeRecorder
           ? bufferedSeconds > 0
-            ? `Оптимизированная ffmpeg-запись активна, накоплено ${Math.round(bufferedSeconds)}с`
+            ? `Оптимизированная ffmpeg-запись активна, ${bufferMessage}`
             : 'Оптимизированная ffmpeg-запись активна, ждём первые сегменты'
           : nativeLastError
             ? `ffmpeg-рекордер остановился: ${nativeLastError}`
             : active
-              ? `Встроенная запись активна, накоплено ${Math.round(bufferedSeconds)}с`
+              ? `Встроенная запись активна, ${bufferMessage}`
               : 'Ждём сегменты от встроенного рекордера'
 
     return {
@@ -591,6 +637,71 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
   }
 
+  const writeReplayFromSegments = async (
+    sourceSegments: StoredSegment[],
+    neededSegments: StoredSegment[],
+    replayPath: string,
+    settings: AppSettings,
+    replayId: string,
+    listPath: string
+  ): Promise<string[]> => {
+    const allNativeSegments = neededSegments.every((segment) => segment.backend === 'ffmpeg')
+    const allBrowserSegments = neededSegments.every((segment) => segment.backend === 'browser')
+    const sessionFiles: string[] = []
+
+    if (allNativeSegments) {
+      await concatNativeReplayFile(neededSegments, listPath, replayPath, settings)
+      return sessionFiles
+    }
+
+    if (allBrowserSegments) {
+      sessionFiles.push(...await buildSessionFiles(sourceSegments, neededSegments, replayId))
+      if (sessionFiles.length === 1 && sessionFiles[0]) {
+        await encodeReplayFile(sessionFiles[0], replayPath, settings)
+        return sessionFiles
+      }
+
+      const concatList = sessionFiles
+        .map((path) => `file '${escapeConcatPath(path)}'`)
+        .join('\n')
+      await writeFile(listPath, `${concatList}\n`, 'utf8')
+      await runFfmpeg([
+        '-y',
+        '-fflags',
+        '+genpts',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
+        '-map',
+        '0:v:0',
+        '-an',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '18',
+        '-pix_fmt',
+        'yuv420p',
+        '-r',
+        String(settings.recording.frameRate),
+        '-fps_mode',
+        'cfr',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        replayPath
+      ])
+      return sessionFiles
+    }
+
+    throw new Error('Во время записи переключился backend записи. Дождитесь новой записи после перезапуска рекордера.')
+  }
+
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<string> => {
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
@@ -627,58 +738,120 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     let sessionFiles: string[] = []
 
     try {
-      const allNativeSegments = neededSegments.every((segment) => segment.backend === 'ffmpeg')
-      const allBrowserSegments = neededSegments.every((segment) => segment.backend === 'browser')
-
-      if (allNativeSegments) {
-        await concatNativeReplayFile(neededSegments, listPath, replayPath, settings)
-      } else if (allBrowserSegments) {
-        sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
-        if (sessionFiles.length === 1 && sessionFiles[0]) {
-          await encodeReplayFile(sessionFiles[0], replayPath, settings)
-        } else {
-          const concatList = sessionFiles
-            .map((path) => `file '${escapeConcatPath(path)}'`)
-            .join('\n')
-          await writeFile(listPath, `${concatList}\n`, 'utf8')
-          await runFfmpeg([
-            '-y',
-            '-fflags',
-            '+genpts',
-            '-f',
-            'concat',
-            '-safe',
-            '0',
-            '-i',
-            listPath,
-            '-map',
-            '0:v:0',
-            '-an',
-            '-c:v',
-            'libx264',
-            '-preset',
-            'veryfast',
-            '-crf',
-            '18',
-            '-pix_fmt',
-            'yuv420p',
-            '-r',
-            String(settings.recording.frameRate),
-            '-fps_mode',
-            'cfr',
-            '-avoid_negative_ts',
-            'make_zero',
-            '-movflags',
-            '+faststart',
-            replayPath
-          ])
-        }
-      } else {
-        throw new Error('Во время сделки переключился backend записи. Дождитесь новой сделки после перезапуска записи.')
-      }
+      sessionFiles = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath)
       const savedAt = new Date(last.endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
       return replayPath
+    } finally {
+      await rm(listPath, { force: true }).catch(() => undefined)
+      await Promise.all(sessionFiles.map((path) => rm(path, { force: true }).catch(() => undefined)))
+    }
+  }
+
+  const getFreeRecordingRecordedMs = (recording: FreeRecordingState, nowMs = Date.now()): number => {
+    return recording.intervals.reduce((sum, interval) => (
+      sum + Math.max(0, (interval.endMs ?? nowMs) - interval.startMs)
+    ), 0)
+  }
+
+  const isFreeRecordingPaused = (recording: FreeRecordingState | undefined): boolean => {
+    const lastInterval = recording?.intervals.at(-1)
+    return Boolean(recording && lastInterval && lastInterval.endMs !== undefined)
+  }
+
+  const buildFreeRecordingStatus = async (settings: AppSettings, message?: string): Promise<FreeRecordingStatus> => {
+    await pruneSegments(settings)
+    if (!freeRecording) {
+      return {
+        active: false,
+        paused: false,
+        startedAtMs: 0,
+        currentIntervalStartedAtMs: 0,
+        recordedSeconds: 0,
+        segmentCount: 0,
+        message: message ?? 'Свободная запись не запущена'
+      }
+    }
+
+    const recording = freeRecording
+    const paused = isFreeRecordingPaused(recording)
+    const currentInterval = recording.intervals.at(-1)
+    const recordedSeconds = Math.round(getFreeRecordingRecordedMs(recording) / 1000)
+    const intervalSegments = relevantSegments(settings).filter((segment) => (
+      recording.intervals.some((interval) => (
+        segment.endedAtMs >= interval.startMs - exportToleranceMs &&
+        segment.startedAtMs <= (interval.endMs ?? Date.now()) + exportToleranceMs
+      ))
+    ))
+
+    return {
+      active: true,
+      paused,
+      startedAtMs: recording.startedAtMs,
+      currentIntervalStartedAtMs: paused ? 0 : currentInterval?.startMs ?? 0,
+      recordedSeconds,
+      segmentCount: intervalSegments.length,
+      message: message ?? (paused
+        ? `Свободная запись на паузе, записано ${recordedSeconds}с`
+        : `Свободная запись идёт, записано ${recordedSeconds}с`)
+    }
+  }
+
+  const buildFreeRecordingPath = async (settings: AppSettings, startedAtMs: number, endedAtMs: number): Promise<string> => {
+    const startDate = new Date(startedAtMs)
+    const dayFolder = join(
+      settings.clip.outputDir,
+      `${startDate.getFullYear()}-${padDatePart(startDate.getMonth() + 1)}-${padDatePart(startDate.getDate())}`
+    )
+    await mkdir(dayFolder, { recursive: true })
+
+    const title = `Запись стаканов ${formatFilePeriodTimestamp(startedAtMs)} - ${formatFilePeriodTimestamp(endedAtMs)}`
+    return join(dayFolder, `${toSafeClipFileBaseName(title)}.mp4`)
+  }
+
+  const finishFreeRecording = async (settings: AppSettings): Promise<FreeRecordingFinishResult> => {
+    const recording = freeRecording
+    if (!recording) throw new Error('Свободная запись не запущена')
+
+    const endedAtMs = Date.now()
+    const lastInterval = recording.intervals.at(-1)
+    if (lastInterval && lastInterval.endMs === undefined) lastInterval.endMs = endedAtMs
+
+    const intervals = recording.intervals.filter((interval) => (interval.endMs ?? endedAtMs) - interval.startMs > 250)
+    const durationSeconds = Math.round(getFreeRecordingRecordedMs({ ...recording, intervals }, endedAtMs) / 1000)
+    if (intervals.length === 0 || durationSeconds <= 0) throw new Error('Свободная запись слишком короткая: нет сохранённых сегментов')
+
+    const targetEndMs = Math.max(...intervals.map((interval) => interval.endMs ?? endedAtMs))
+    const timeoutMs = Math.max(5_000, settings.recording.segmentSeconds * 2_000 + 2_000)
+    const sourceSegments = await waitForSegmentsUntil(settings, targetEndMs, timeoutMs)
+    const neededSegments = sourceSegments.filter((segment) => intervals.some((interval) => (
+      segment.endedAtMs >= interval.startMs - exportToleranceMs &&
+      segment.startedAtMs <= (interval.endMs ?? endedAtMs) + exportToleranceMs
+    )))
+
+    if (neededSegments.length === 0) throw new Error('Свободная запись ещё не накопила видео. Подождите пару секунд и попробуйте закончить снова.')
+
+    await mkdir(replaysDir, { recursive: true })
+    const replayId = randomUUID()
+    const listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
+    const replayPath = await buildFreeRecordingPath(settings, recording.startedAtMs, endedAtMs)
+    let sessionFiles: string[] = []
+
+    try {
+      await rm(replayPath, { force: true }).catch(() => undefined)
+      sessionFiles = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath)
+      const savedAt = new Date(endedAtMs)
+      await utimes(replayPath, savedAt, savedAt)
+      freeRecording = undefined
+
+      return {
+        ok: true,
+        videoPath: replayPath,
+        fileName: basename(replayPath),
+        startedAtMs: recording.startedAtMs,
+        endedAtMs,
+        durationSeconds
+      }
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
       await Promise.all(sessionFiles.map((path) => rm(path, { force: true }).catch(() => undefined)))
@@ -690,6 +863,8 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       const parsed = Number(timeMs)
       protectedSinceMs = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
     },
+    finishFreeRecording,
+    getFreeRecordingStatus: buildFreeRecordingStatus,
     async appendSegment(input, settings) {
       if (settings.recording.mode !== 'window') return buildStatus(settings)
 
@@ -724,7 +899,35 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return buildStatus(settings)
     },
     getStatus: buildStatus,
+    async pauseFreeRecording(settings) {
+      if (!freeRecording) return buildFreeRecordingStatus(settings, 'Свободная запись не запущена')
+
+      const lastInterval = freeRecording.intervals.at(-1)
+      if (lastInterval && lastInterval.endMs === undefined) lastInterval.endMs = Date.now()
+      return buildFreeRecordingStatus(settings)
+    },
     start: startNativeRecorder,
+    async resumeFreeRecording(settings) {
+      if (!freeRecording) return buildFreeRecordingStatus(settings, 'Свободная запись не запущена')
+      if (!isFreeRecordingPaused(freeRecording)) return buildFreeRecordingStatus(settings)
+
+      freeRecording.intervals.push({ startMs: Date.now() })
+      return buildFreeRecordingStatus(settings)
+    },
+    async startFreeRecording(settings) {
+      if (settings.recording.mode !== 'window') {
+        throw new Error('Свободная запись доступна во встроенной записи окна или экрана')
+      }
+      if (freeRecording) return buildFreeRecordingStatus(settings)
+
+      await startNativeRecorder(settings)
+      const startedAtMs = Date.now()
+      freeRecording = {
+        startedAtMs,
+        intervals: [{ startMs: startedAtMs }]
+      }
+      return buildFreeRecordingStatus(settings, 'Свободная запись началась')
+    },
     stop: stopNativeRecorder,
     async saveReplayBuffer({ settings, trade }) {
       const requestedAtMs = Date.now()

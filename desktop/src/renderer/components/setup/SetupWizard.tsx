@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
@@ -25,6 +25,14 @@ export type SetupWizardProps = {
 
 const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
 const compactInputClass = inputClass.replace('mt-1 ', '')
+const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
+const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа в сделку. Это должно быть не меньше поля «Секунд до входа».'
+
+const FieldHint = ({ text }: { text: string }) => (
+  <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
+    <CircleHelp size={13} />
+  </span>
+)
 
 const proxyName = (settings: AppSettings | undefined, proxyId: string): string => {
   const proxy = settings?.proxies.find((item) => item.id === proxyId)
@@ -616,7 +624,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       <label className="text-xs font-medium text-zinc-500">Секунд до входа<input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" /></label>
       <label className="text-xs font-medium text-zinc-500">Секунд после выхода<input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" /></label>
       {recordingMode === 'window' && (
-        <label className="text-xs font-medium text-zinc-500 md:col-span-2">Локальный буфер до входа, сек<input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" /></label>
+        <label className="text-xs font-medium text-zinc-500 md:col-span-2">
+          <span>Локальный буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
+          <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
+        </label>
       )}
     </div>
   ) : null
@@ -728,7 +739,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                           </div>
                         </label>
                         <label className="text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Интервал буфера, сек<input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" /></label>
+                        <label className="text-xs font-medium text-zinc-500">
+                          <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
+                          <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
+                        </label>
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">

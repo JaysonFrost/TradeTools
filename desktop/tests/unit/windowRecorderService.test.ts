@@ -32,6 +32,7 @@ describe('windowRecorderService', () => {
 
     expect(serviceSource).toContain("'-f',")
     expect(serviceSource).toContain("'gdigrab'")
+    expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
     expect(serviceSource).toContain('fallbackRequired')
@@ -40,5 +41,22 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('fallbackRequired')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:start'")
     expect(appSource).toContain("ipcMain.handle('recording:start'")
+  })
+
+  it('keeps free recording segments and exports a stocks-book recording file', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(serviceSource).toContain('FreeRecordingStatus')
+    expect(serviceSource).toContain('freeRecording?.startedAtMs')
+    expect(serviceSource).toContain('startFreeRecording')
+    expect(serviceSource).toContain('pauseFreeRecording')
+    expect(serviceSource).toContain('resumeFreeRecording')
+    expect(serviceSource).toContain('finishFreeRecording')
+    expect(serviceSource).toContain('Запись стаканов')
+    expect(serviceSource).toContain('writeReplayFromSegments')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-status'")
+    expect(appSource).toContain("ipcMain.handle('recording:free-start'")
   })
 })
