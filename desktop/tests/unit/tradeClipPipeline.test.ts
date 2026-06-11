@@ -444,7 +444,7 @@ describe('tradeClipPipeline', () => {
     const saveTimeMs = Date.parse('2026-05-14T18:00:38.000Z')
     const trade = {
       ...createSimulatedClosedTrade(saveTimeMs),
-      id: 'binance-futures-AIGENSYNUSDT-1778781632034',
+      id: 'terminal-AIGENSYNUSDT-1778781632034',
       symbol: 'AIGENSYNUSDT',
       entryTimeMs: Date.parse('2026-05-14T18:00:32.034Z'),
       exitTimeMs: Date.parse('2026-05-14T18:00:35.902Z')

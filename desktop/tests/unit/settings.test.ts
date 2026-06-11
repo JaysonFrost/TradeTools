@@ -44,15 +44,10 @@ describe('settings', () => {
       configuredAtMs: 0
     })
     expect(settings.proxies).toEqual([])
-    expect(settings.exchange.binanceFutures).toEqual({
-      enabled: false,
-      testnet: false,
-      apiKeyConfigured: false,
-      apiSecretConfigured: false
-    })
     expect(settings.tradeSource).toEqual({
       mode: 'terminal-window'
     })
+    expect(settings).not.toHaveProperty('exchange')
     expect(settings).not.toHaveProperty(legacyVideoProviderSettingsKey)
     expect(settings).not.toHaveProperty(legacyGateSettingsKey)
   })
@@ -70,7 +65,7 @@ describe('settings', () => {
     expect(settings.clip.outputDir).toBe('/clips')
   })
 
-  it('normalizes Binance Futures API key settings without raw secrets', () => {
+  it('drops legacy Binance Futures API settings and keeps the no-API source', () => {
     const settings = normalizeSettings({
       exchange: {
         binanceFutures: {
@@ -79,27 +74,18 @@ describe('settings', () => {
           apiKeyConfigured: true,
           apiSecretConfigured: true
         }
+      },
+      tradeSource: {
+        mode: 'binance-futures'
       }
-    }, '/app-data')
+    } as unknown as Parameters<typeof normalizeSettings>[0], '/app-data')
 
-    expect(settings.exchange.binanceFutures).toEqual({
-      enabled: true,
-      testnet: true,
-      apiKeyConfigured: true,
-      apiSecretConfigured: true
-    })
-    expect(settings.tradeSource.mode).toBe('binance-futures')
+    expect(settings).not.toHaveProperty('exchange')
+    expect(settings.tradeSource.mode).toBe('terminal-window')
   })
 
   it('keeps terminal-window as the explicit no-API trade source', () => {
     const settings = normalizeSettings({
-      exchange: {
-        binanceFutures: {
-          enabled: true,
-          apiKeyConfigured: true,
-          apiSecretConfigured: true
-        }
-      },
       tradeSource: {
         mode: 'terminal-window'
       }

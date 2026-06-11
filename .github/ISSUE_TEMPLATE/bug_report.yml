@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Спасибо за репорт. Не прикладывайте API-ключи, SSH-пароли, OBS WebSocket пароль и приватные IP серверов.
+        Спасибо за репорт. Не прикладывайте SSH-пароли, OBS WebSocket пароль и приватные IP серверов.
   - type: input
     id: version
     attributes:
@@ -31,7 +31,7 @@ body:
       label: Где проблема?
       options:
         - Видео / OBS / клипы
-        - Binance API
+        - Автозапись Vataga
         - Прокси / VPS / SSH
         - Уведомления
         - Автозапуск

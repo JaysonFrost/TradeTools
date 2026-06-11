@@ -4,6 +4,19 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.1] - 2026-06-11
+
+### Added
+
+- Added automatic TigerTrade trade recording from local WorkLog position updates.
+- Added automatic MetaScalp trade recording through the terminal's local read-only API.
+- Added terminal watcher tests for Vataga, TigerTrade and MetaScalp event parsing.
+
+### Changed
+
+- Video UI now presents automatic recording as a general terminal mode instead of a Vataga-only mode.
+- README and user guide now document Vataga, TigerTrade and MetaScalp as supported trade sources.
+
 ## [0.2.0] - 2026-06-08
 
 ### Added
@@ -15,17 +28,16 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 ### Changed
 
 - Video setup wizard now treats OBS as an optional alternative mode.
-- Binance watcher waits for the selected video source before creating clips.
+- Vataga terminal log watcher creates clips without exchange API keys.
 - Built-in recorder now uses continuous recording sessions to avoid freezes from restarting capture every few seconds.
 - Built-in recorder can capture either a window or a full screen, which helps bypass Windows Graphics Capture window freezes.
 - Windows builds now disable Chromium WGC capture features to avoid stale-frame desktop capture errors.
-- Binance watcher now treats built-in recorder buffer warmup as a waiting state instead of a polling failure.
-- Binance status card no longer switches between running, waiting and recorder messages while the app is idle.
+- The old Binance API-key watcher and settings UI were removed.
 - Built-in recording is now the default video mode and records through a fixed-FPS canvas stream before MediaRecorder encoding.
 - Built-in recording now uses a 30-second idle replay window, while active trades keep their full segment history.
-- Built-in recording now protects segments for open Binance trades and exports the whole trade from entry to exit.
+- Built-in recording now protects segments for open Vataga trades and exports the whole trade from entry to exit.
 - Clip creation now shows an in-app progress bar while replay saving and ffmpeg processing are running.
-- Binance status no longer displays built-in recorder segment messages, preventing idle status flicker.
+- Clip processing progress is exposed through a generic clips status instead of an exchange watcher status.
 - Native dropdowns now use a dark readable style.
 - README and user guide now document the no-OBS recording flow.
 
@@ -55,7 +67,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 ### Added
 
 - Local OBS Replay Buffer pipeline for trade clips.
-- Binance USDT-M Futures read-only integration.
+- Vataga terminal auto-recording from local trade logs.
 - Clip queue with preview, file open, folder open and video file rename.
 - Proxy/VPS vault with monthly payment day, hosting link and keychain password storage.
 - Drag-and-drop proxy chain ordering.

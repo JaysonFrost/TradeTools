@@ -38,16 +38,8 @@ export type AppSettings = {
     port: number
     passwordConfigured: boolean
   }
-  exchange: {
-    binanceFutures: {
-      enabled: boolean
-      testnet: boolean
-      apiKeyConfigured: boolean
-      apiSecretConfigured: boolean
-    }
-  }
   tradeSource: {
-    mode: 'terminal-window' | 'binance-futures'
+    mode: 'terminal-window'
   }
   system: {
     launchAtLogin: boolean
@@ -78,9 +70,6 @@ export type PartialSettings = Partial<{
   recording: Partial<AppSettings['recording']>
   clip: Partial<AppSettings['clip']>
   obs: Partial<AppSettings['obs']>
-  exchange: {
-    binanceFutures?: Partial<AppSettings['exchange']['binanceFutures']>
-  }
   tradeSource: Partial<AppSettings['tradeSource']>
   system: Partial<AppSettings['system']>
   proxyRuntime: Partial<AppSettings['proxyRuntime']>
@@ -89,8 +78,6 @@ export type PartialSettings = Partial<{
 
 export type SettingsUpdateInput = PartialSettings & {
   obsPassword?: string
-  binanceFuturesApiKey?: string
-  binanceFuturesApiSecret?: string
 }
 
 const clamp = (value: number, min: number, max: number): number => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min
@@ -137,10 +124,6 @@ const normalizeHttpUrl = (value: unknown): string => {
 }
 
 const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
-const normalizeTradeSourceMode = (value: unknown, fallback: AppSettings['tradeSource']['mode']): AppSettings['tradeSource']['mode'] => {
-  if (value === 'terminal-window' || value === 'binance-futures') return value
-  return fallback
-}
 const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSettings['recording']['sourceType'] => {
   if (value === 'screen') return 'screen'
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
@@ -223,14 +206,6 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     port: 4455,
     passwordConfigured: false
   },
-  exchange: {
-    binanceFutures: {
-      enabled: false,
-      testnet: false,
-      apiKeyConfigured: false,
-      apiSecretConfigured: false
-    }
-  },
   tradeSource: {
     mode: 'terminal-window'
   },
@@ -256,8 +231,6 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
   const defaults = createDefaultSettings(appDataDir)
   const recordingMode = normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode)
   const maxReplayBufferSeconds = recordingMode === 'window' ? 30 : 7200
-  const legacyBinanceSourceEnabled = settings.exchange?.binanceFutures?.enabled === true
-  const defaultTradeSourceMode = legacyBinanceSourceEnabled ? 'binance-futures' : defaults.tradeSource.mode
 
   return {
     language: 'ru',
@@ -281,16 +254,8 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       port: clamp(settings.obs?.port ?? defaults.obs.port, 1, 65535),
       passwordConfigured: settings.obs?.passwordConfigured ?? defaults.obs.passwordConfigured
     },
-    exchange: {
-      binanceFutures: {
-        enabled: settings.exchange?.binanceFutures?.enabled ?? defaults.exchange.binanceFutures.enabled,
-        testnet: settings.exchange?.binanceFutures?.testnet ?? defaults.exchange.binanceFutures.testnet,
-        apiKeyConfigured: settings.exchange?.binanceFutures?.apiKeyConfigured ?? defaults.exchange.binanceFutures.apiKeyConfigured,
-        apiSecretConfigured: settings.exchange?.binanceFutures?.apiSecretConfigured ?? defaults.exchange.binanceFutures.apiSecretConfigured
-      }
-    },
     tradeSource: {
-      mode: normalizeTradeSourceMode(settings.tradeSource?.mode, defaultTradeSourceMode)
+      mode: 'terminal-window'
     },
     system: {
       launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,

@@ -23,12 +23,6 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
     ...current.obs,
     ...(patch.obs ?? {})
   },
-  exchange: {
-    binanceFutures: {
-      ...current.exchange.binanceFutures,
-      ...(patch.exchange?.binanceFutures ?? {})
-    }
-  },
   tradeSource: {
     ...current.tradeSource,
     ...(patch.tradeSource ?? {})

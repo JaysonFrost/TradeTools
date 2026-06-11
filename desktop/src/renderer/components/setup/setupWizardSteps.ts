@@ -1,4 +1,4 @@
-export type VideoSetupWizardStepId = 'video-welcome' | 'obs-websocket' | 'obs-replay' | 'folders' | 'trade-source' | 'test-clip' | 'video-done'
+export type VideoSetupWizardStepId = 'video-welcome' | 'obs-websocket' | 'obs-replay' | 'folders' | 'test-clip' | 'video-done'
 export type ProxySetupWizardStepId = 'proxy-welcome' | 'proxy-server' | 'proxy-chain' | 'proxy-check' | 'proxy-done'
 export type SetupWizardStepId = VideoSetupWizardStepId | ProxySetupWizardStepId
 
@@ -17,7 +17,6 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     actions: [
       'Включим встроенную запись открытого терминала без API',
       'Укажем папку готовых клипов и, если нужен OBS, папку replay',
-      'Опционально добавим read-only API ключи Binance Futures',
       'Сделаем тестовый клип перед реальной торговлей'
     ]
   },
@@ -54,16 +53,6 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     ]
   },
   {
-    id: 'trade-source',
-    title: 'Источник сделок',
-    goal: 'По умолчанию TradeTools работает без API и пишет окно терминала. Binance ключи можно добавить как дополнительный автоматический источник.',
-    actions: [
-      'Оставьте режим без API, если хотите писать терминал локально',
-      'Создайте API Key в Binance с доступом только на чтение, если нужна автонарезка по Binance',
-      'После сохранения ключей можно проверить подключение Binance'
-    ]
-  },
-  {
     id: 'test-clip',
     title: 'Создайте тестовый клип',
     goal: 'Проверить весь локальный pipeline до подключения реальных сделок.',
@@ -80,7 +69,7 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     goal: 'Локальная часть настроена: источник записи даёт replay, ffmpeg режет клип, очередь проверки показывает результат.',
     actions: [
       'Перед торговлей убедитесь, что окно терминала открыто или OBS Replay Buffer запущен',
-      'В режиме без API используйте локальную запись сделки на странице видео',
+      'В режиме без биржевых ключей TradeTools сам ждёт сделки Vataga, TigerTrade или MetaScalp',
       'Если что-то сломается, снова откройте настройку видео сверху'
     ]
   }

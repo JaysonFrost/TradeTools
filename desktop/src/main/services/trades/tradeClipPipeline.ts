@@ -28,6 +28,14 @@ export type ClipQueueItem = {
   createdAtMs: number
 }
 
+export type ClipProcessingStatus = {
+  active: boolean
+  title: string
+  message: string
+  progressPercent: number
+  startedAtMs?: number
+}
+
 export type TradeClipMetadata = ClipQueueItem & {
   replayPath: string
   replaySavedAtMs: number
