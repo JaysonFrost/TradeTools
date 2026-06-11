@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
-import { dirname, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
@@ -228,7 +228,44 @@ const assertHttpUrl = (url: string): string => {
 
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
 
-const hasPackagedUpdateConfig = (): boolean => existsSync(join(process.resourcesPath, 'app-update.yml'))
+const getPackagedUpdateConfigPaths = (): string[] => {
+  const candidates = [
+    join(process.resourcesPath, 'app-update.yml'),
+    join(dirname(process.execPath), 'resources', 'app-update.yml')
+  ]
+  return [...new Set(candidates)]
+}
+
+const hasPackagedUpdateConfig = (): boolean => getPackagedUpdateConfigPaths().some((filePath) => existsSync(filePath))
+
+const hasPackagedAppArchive = (): boolean => (
+  existsSync(join(process.resourcesPath, 'app.asar')) ||
+  existsSync(join(dirname(process.execPath), 'resources', 'app.asar'))
+)
+
+const isInstalledUpdateBuild = (): boolean => {
+  if (app.isPackaged) return true
+  if (process.defaultApp) return false
+
+  const executableName = basename(process.execPath).toLowerCase()
+  if (process.platform === 'win32') {
+    const executablePath = process.execPath.toLowerCase()
+    return executableName === 'tradetools.exe' && (
+      hasPackagedAppArchive() ||
+      hasPackagedUpdateConfig() ||
+      executablePath.includes(`${sep}programs${sep}tradetools${sep}`.toLowerCase())
+    )
+  }
+
+  if (process.platform === 'darwin') {
+    return process.execPath.includes('.app/Contents/MacOS/') && (
+      hasPackagedAppArchive() ||
+      hasPackagedUpdateConfig()
+    )
+  }
+
+  return false
+}
 
 const normalizePaymentDueDay = (value: unknown, legacyDate?: unknown): number => {
   const directDay = Number(value)
@@ -424,6 +461,7 @@ app.whenReady().then(() => {
   const appUpdateService = createAppUpdateService({
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
+    isInstalledBuild: isInstalledUpdateBuild(),
     hasUpdateConfig: hasPackagedUpdateConfig(),
     platform: process.platform,
     broadcast: (status) => {
