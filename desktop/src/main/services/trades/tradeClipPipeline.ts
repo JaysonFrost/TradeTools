@@ -34,6 +34,7 @@ export type ClipProcessingStatus = {
   message: string
   progressPercent: number
   startedAtMs?: number
+  queuedCount?: number
 }
 
 export type TradeClipMetadata = ClipQueueItem & {

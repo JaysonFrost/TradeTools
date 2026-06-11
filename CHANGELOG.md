@@ -10,6 +10,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 - Added a system notification when a new TradeTools version is available.
 - Added live built-in video buffer progress so the UI shows how many seconds are saved out of the configured buffer.
+- Added a clip render queue so terminal trades detected during video processing wait safely instead of being lost.
 - Added a free terminal recording mode with start, pause, resume and finish controls.
 - Added video buffer field hints that explain the difference between segment interval and pre-entry buffer.
 
@@ -20,6 +21,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ### Fixed
 
+- Fixed clip processing status getting stuck at 35% by returning a live elapsed-time progress estimate and queued clip count.
 - Disabled cursor drawing in the optimized Windows ffmpeg recorder so the pointer is not burned into captured videos.
 - Disabled the Windows `gdigrab` recorder by default because it can flicker the real cursor and interfere with games while TradeTools records in the background.
 

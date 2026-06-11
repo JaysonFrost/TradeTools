@@ -615,12 +615,47 @@ app.whenReady().then(() => {
     if (!notification.ok) console.warn(`Clip notification failed: ${notification.message}`)
   }
 
-  let clipProcessingClearTimer: NodeJS.Timeout | undefined
-  let clipProcessingStatus: ClipProcessingStatus = {
+  type ClipRenderJob = {
+    id: string
+    trade: ClosedTrade
+    title: string
+    queuedAtMs: number
+    protectedSinceMs: number
+    resolve?: (clip: ClipQueueItem) => void
+    reject?: (error: unknown) => void
+  }
+
+  const emptyClipProcessingStatus = (): ClipProcessingStatus => ({
     active: false,
     title: '',
     message: '',
     progressPercent: 0
+  })
+
+  let clipProcessingClearTimer: NodeJS.Timeout | undefined
+  let clipProcessingStatus: ClipProcessingStatus = emptyClipProcessingStatus()
+  let watcherProtectedSinceMs = 0
+  const clipRenderQueue: ClipRenderJob[] = []
+  let activeClipRenderJob: ClipRenderJob | undefined
+  let clipRenderWorkerRunning = false
+
+  const normalizeProtectionTime = (value?: number): number => (
+    Number.isFinite(value) && (value ?? 0) > 0 ? Math.trunc(value as number) : 0
+  )
+
+  const applyWindowRecorderProtection = () => {
+    const protectedTimes = [
+      watcherProtectedSinceMs,
+      activeClipRenderJob?.protectedSinceMs ?? 0,
+      ...clipRenderQueue.map((job) => job.protectedSinceMs)
+    ].filter((value) => value > 0)
+
+    windowRecorderService.protectSince(protectedTimes.length ? Math.min(...protectedTimes) : undefined)
+  }
+
+  const setWatcherProtectedSince = (timeMs?: number) => {
+    watcherProtectedSinceMs = normalizeProtectionTime(timeMs)
+    applyWindowRecorderProtection()
   }
 
   const setClipProcessingStatus = (status: ClipProcessingStatus) => {
@@ -644,37 +679,146 @@ app.whenReady().then(() => {
     }, 1_500)
   }
 
-  const createClipAndNotify = async (trade: ClosedTrade) => {
-    const title = `${trade.symbol} ${trade.side}`
-    setClipProcessingStatus({
-      active: true,
-      title,
-      message: 'Сохраняем replay и собираем клип сделки',
-      progressPercent: 35,
-      startedAtMs: Date.now()
-    })
+  const currentClipProcessingStatus = (): ClipProcessingStatus => {
+    const queuedCount = clipRenderQueue.length
+    if (!clipProcessingStatus.active) {
+      return queuedCount > 0
+        ? {
+            active: true,
+            title: 'Очередь клипов',
+            message: `Ждём обработки: ${queuedCount}`,
+            progressPercent: 10,
+            queuedCount
+          }
+        : clipProcessingStatus
+    }
 
-    try {
-      const clip = await clipPipeline.createClipForClosedTrade(trade)
+    const elapsedSeconds = clipProcessingStatus.startedAtMs
+      ? Math.max(0, Math.floor((Date.now() - clipProcessingStatus.startedAtMs) / 1000))
+      : 0
+    const dynamicProgress = clipProcessingStatus.progressPercent > 0 && clipProcessingStatus.progressPercent < 95
+      ? Math.min(88, Math.max(clipProcessingStatus.progressPercent, 35 + Math.floor(elapsedSeconds / 2)))
+      : clipProcessingStatus.progressPercent
+    const queueSuffix = queuedCount > 0 ? ` В очереди ещё ${queuedCount}.` : ''
+    const elapsedSuffix = elapsedSeconds >= 5 && dynamicProgress < 95 ? ` Идёт ${elapsedSeconds}с.` : ''
+
+    return {
+      ...clipProcessingStatus,
+      message: `${clipProcessingStatus.message}${queueSuffix}${elapsedSuffix}`,
+      progressPercent: dynamicProgress,
+      queuedCount
+    }
+  }
+
+  const runClipRenderQueue = () => {
+    if (clipRenderWorkerRunning) return
+    clipRenderWorkerRunning = true
+
+    void (async () => {
+      try {
+        while (clipRenderQueue.length > 0) {
+          const job = clipRenderQueue.shift()
+          if (!job) continue
+
+          activeClipRenderJob = job
+          applyWindowRecorderProtection()
+          const startedAtMs = Date.now()
+          setClipProcessingStatus({
+            active: true,
+            title: job.title,
+            message: 'Сохраняем replay и собираем клип сделки',
+            progressPercent: 35,
+            startedAtMs,
+            queuedCount: clipRenderQueue.length
+          })
+
+          try {
+            const clip = await clipPipeline.createClipForClosedTrade(job.trade)
+            setClipProcessingStatus({
+              active: true,
+              title: clip.title,
+              message: 'Клип сохранён, обновляем очередь',
+              progressPercent: 95,
+              startedAtMs,
+              queuedCount: clipRenderQueue.length
+            })
+            await notifyClipCreated(clip)
+            job.resolve?.(clip)
+          } catch (error) {
+            setClipProcessingStatus({
+              active: false,
+              title: job.title,
+              message: getErrorMessage(error),
+              progressPercent: 0,
+              queuedCount: clipRenderQueue.length
+            })
+            job.reject?.(error)
+            if (!job.reject) console.warn(`Clip render failed: ${getErrorMessage(error)}`)
+          } finally {
+            activeClipRenderJob = undefined
+            applyWindowRecorderProtection()
+          }
+        }
+      } finally {
+        clipRenderWorkerRunning = false
+        if (clipRenderQueue.length > 0) {
+          runClipRenderQueue()
+        } else if (clipProcessingStatus.active) {
+          clearClipProcessingSoon()
+        }
+      }
+    })()
+  }
+
+  const enqueueClipRender = async (
+    trade: ClosedTrade,
+    options: { waitForCompletion: boolean }
+  ): Promise<ClipQueueItem | void> => {
+    const title = `${trade.symbol} ${trade.side}`
+    const settings = await settingsStore.load()
+    const protectedSinceMs = settings.recording.mode === 'window'
+      ? Math.max(1, trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
+      : 0
+    const queuedAtMs = Date.now()
+    let resolveCompletion: ((clip: ClipQueueItem) => void) | undefined
+    let rejectCompletion: ((error: unknown) => void) | undefined
+    const completion = options.waitForCompletion
+      ? new Promise<ClipQueueItem>((resolve, reject) => {
+          resolveCompletion = resolve
+          rejectCompletion = reject
+        })
+      : undefined
+
+    clipRenderQueue.push({
+      id: `${trade.id}-${queuedAtMs}`,
+      trade,
+      title,
+      queuedAtMs,
+      protectedSinceMs,
+      resolve: resolveCompletion,
+      reject: rejectCompletion
+    })
+    applyWindowRecorderProtection()
+    if (activeClipRenderJob) {
+      setClipProcessingStatus({
+        ...clipProcessingStatus,
+        queuedCount: clipRenderQueue.length
+      })
+    } else {
       setClipProcessingStatus({
         active: true,
-        title: clip.title,
-        message: 'Клип сохранён, обновляем очередь',
-        progressPercent: 95,
-        startedAtMs: clipProcessingStatus.startedAtMs
-      })
-      await notifyClipCreated(clip)
-      clearClipProcessingSoon()
-      return clip
-    } catch (error) {
-      setClipProcessingStatus({
-        active: false,
         title,
-        message: getErrorMessage(error),
-        progressPercent: 0
+        message: clipRenderWorkerRunning
+          ? `Клип поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
+          : 'Клип поставлен в очередь обработки',
+        progressPercent: 10,
+        startedAtMs: queuedAtMs,
+        queuedCount: clipRenderQueue.length
       })
-      throw error
     }
+    runClipRenderQueue()
+
+    return completion
   }
 
   let lastObsReplayEnsureAtMs = 0
@@ -707,8 +851,8 @@ app.whenReady().then(() => {
   const terminalTradeWatcher = createTerminalTradeWatcher({
     getSettings: () => settingsStore.load(),
     ensureVideoRecordingReady,
-    protectSince: (timeMs) => windowRecorderService.protectSince(timeMs),
-    createClipForClosedTrade: createClipAndNotify,
+    protectSince: setWatcherProtectedSince,
+    createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false }),
     onStatusChange: (status) => {
       if (status.lastError) console.warn(`Terminal trade watcher: ${status.lastError}`)
     }
@@ -1023,10 +1167,12 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
-  ipcMain.handle('clips:get-processing-status', () => clipProcessingStatus)
+  ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
-    return createClipAndNotify(createSimulatedClosedTrade(Date.now(), settings.recording.mode === 'window' ? 5_000 : undefined))
+    const clip = await enqueueClipRender(createSimulatedClosedTrade(Date.now(), settings.recording.mode === 'window' ? 5_000 : undefined), { waitForCompletion: true })
+    if (!clip) throw new Error('Тестовый клип не был обработан')
+    return clip
   })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
