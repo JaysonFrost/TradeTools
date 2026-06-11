@@ -767,6 +767,8 @@ app.whenReady().then(() => {
       }))
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
+  ipcMain.handle('recording:start', async () => windowRecorderService.start(await settingsStore.load()))
+  ipcMain.handle('recording:stop', async () => windowRecorderService.stop())
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())
   ))
@@ -1034,6 +1036,9 @@ app.whenReady().then(() => {
   appUpdateService.startBackgroundCheck()
   terminalTradeWatcher.start()
   app.on('before-quit', () => terminalTradeWatcher.stop())
+  app.on('before-quit', () => {
+    void windowRecorderService.stop()
+  })
 
   void settingsStore.load().then((settings) => {
     applyLaunchAtLogin(settings)

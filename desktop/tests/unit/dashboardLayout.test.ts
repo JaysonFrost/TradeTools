@@ -58,6 +58,9 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Экран')
     expect(appSource).toContain("types: ['window', 'screen']")
     expect(settingsPanelSource).toContain('listWindowSources')
+    expect(settingsPanelSource).toContain('Пресет 10 минут до/после')
+    expect(settingsPanelSource).toContain('Буфер до входа, сек')
+    expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(controllerSource).toContain('findPreferredTerminalSource')
     expect(controllerSource).toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
@@ -128,6 +131,15 @@ describe('Dashboard layout', () => {
     expect(source).toContain('setSavedWizardProxyIds([firstProxy.id, secondProxy.id])')
     expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId })')
     expect(source).toContain('Настроить и запустить связку')
+  })
+
+  it('offers a heavy 10 minute video preset in the setup wizard', async () => {
+    const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
+
+    expect(source).toContain('Пресет 10 минут до/после')
+    expect(source).toContain('Тяжёлый режим')
+    expect(source).toContain('Локальный буфер до входа, сек')
+    expect(source).toContain('longClipPresetSeconds')
   })
 
   it('keeps proxy controls on the proxy page', async () => {

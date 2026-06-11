@@ -4,6 +4,13 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [Unreleased]
+
+### Added
+
+- Added a heavy 10 minute before/after video preset with clear warnings about file size, processing time and delayed clip creation.
+- Added an optimized built-in Windows recorder that captures through `ffmpeg`/`gdigrab` in the main process before falling back to Chromium capture.
+
 ## [0.2.4] - 2026-06-11
 
 ### Changed

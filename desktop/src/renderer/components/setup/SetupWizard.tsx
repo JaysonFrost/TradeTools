@@ -1,9 +1,10 @@
-import { ArrowLeft, ArrowRight, CheckCircle2, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
+import { longClipPresetSeconds } from '../../../shared/videoDefaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
@@ -74,6 +75,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [outputDir, setOutputDir] = useState('')
   const [paddingBefore, setPaddingBefore] = useState('2')
   const [paddingAfter, setPaddingAfter] = useState('2')
+  const [replayBufferSeconds, setReplayBufferSeconds] = useState('30')
   const [proxyTitle, setProxyTitle] = useState(defaultProxyTitle())
   const [proxyServer, setProxyServer] = useState('')
   const [proxyLogin, setProxyLogin] = useState('root')
@@ -145,6 +147,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setOutputDir(settings.clip.outputDir)
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
+    setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
   }, [settings])
 
   const refreshWindowSources = async () => {
@@ -252,6 +255,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
         ?? latestSources.find((source) => source.id === windowSourceId)
         ?? (recordingMode === 'window' && sourceType === 'window' ? findPreferredTerminalSource(latestSources) : undefined)
+      const parsedPaddingBeforeSeconds = Number(paddingBefore)
+      const parsedReplayBufferSeconds = Number(replayBufferSeconds)
+      const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
+      const replayBufferSecondsValue = recordingMode === 'window'
+        ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
+        : parsedReplayBufferSeconds
       const updated = await api.settings.update({
         obsPassword: obsPassword.trim() || undefined,
         recording: {
@@ -270,7 +279,8 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
           replaySourceDir,
           outputDir,
           paddingBeforeSeconds: Number(paddingBefore),
-          paddingAfterSeconds: Number(paddingAfter)
+          paddingAfterSeconds: Number(paddingAfter),
+          replayBufferSeconds: replayBufferSecondsValue
         }
       })
       onSaved(updated)
@@ -281,6 +291,16 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     } finally {
       setSaving(false)
     }
+  }
+
+  const applyLongClipPreset = () => {
+    const seconds = String(longClipPresetSeconds)
+    setPaddingBefore(seconds)
+    setPaddingAfter(seconds)
+    setReplayBufferSeconds(seconds)
+    setLocalMessage(recordingMode === 'window'
+      ? 'Пресет 10 минут включён. Встроенная запись будет хранить большой локальный буфер, клип появится примерно через 10 минут после выхода.'
+      : 'Пресет 10 минут включён. В OBS вручную поставьте Replay Buffer минимум 20 минут плюс обычная длина сделки.')
   }
 
   const saveProxyServers = async () => {
@@ -536,7 +556,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
           : 'OBS начнет держать последние минуты записи в памяти и отдавать их по команде.'
       case 'folders':
         return recordingMode === 'window'
-          ? 'TradeTools будет складывать готовые клипы в выбранную папку.'
+          ? 'TradeTools будет складывать готовые клипы в выбранную папку и держать локальный буфер до входа.'
           : 'TradeTools будет знать, где найти исходный OBS replay и куда положить готовый клип.'
       case 'test-clip':
         return 'В очереди проверки появится локальный клип с metadata JSON.'
@@ -568,6 +588,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const folderFields = step.id === 'folders' ? (
     <div className="grid gap-4 md:grid-cols-2">
+      <div className="md:col-span-2 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до/после</Button>
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
+        </div>
+        <p className="mt-2">
+          Клип появится только после записи времени после выхода. Для OBS нужен Replay Buffer минимум 20 минут плюс обычная длина сделки; встроенная запись будет держать 10 минут локального буфера.
+        </p>
+      </div>
       {recordingMode === 'obs' && (
         <div className="md:col-span-2">
           <div className="text-xs font-medium text-zinc-500">Папка OBS replay</div>
@@ -586,6 +615,9 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       </div>
       <label className="text-xs font-medium text-zinc-500">Секунд до входа<input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" /></label>
       <label className="text-xs font-medium text-zinc-500">Секунд после выхода<input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" /></label>
+      {recordingMode === 'window' && (
+        <label className="text-xs font-medium text-zinc-500 md:col-span-2">Локальный буфер до входа, сек<input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" /></label>
+      )}
     </div>
   ) : null
 

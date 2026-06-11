@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
+import { defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
 
 export type ProxyRecord = {
   id: string
@@ -197,7 +198,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   clip: {
     paddingBeforeSeconds: 2,
     paddingAfterSeconds: 2,
-    replayBufferSeconds: 30,
+    replayBufferSeconds: defaultReplayBufferSeconds,
     replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
   },
@@ -230,7 +231,10 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
 export const normalizeSettings = (settings: PartialSettings, appDataDir: string): AppSettings => {
   const defaults = createDefaultSettings(appDataDir)
   const recordingMode = normalizeRecordingMode(settings.recording?.mode ?? defaults.recording.mode)
-  const maxReplayBufferSeconds = recordingMode === 'window' ? 30 : 7200
+  const paddingBeforeSeconds = clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, maxClipPaddingSeconds)
+  const paddingAfterSeconds = clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, maxClipPaddingSeconds)
+  const maxReplayBufferSeconds = recordingMode === 'window' ? maxWindowReplayBufferSeconds : maxObsReplayBufferSeconds
+  const minReplayBufferSeconds = recordingMode === 'window' ? Math.max(10, paddingBeforeSeconds) : 10
 
   return {
     language: 'ru',
@@ -243,9 +247,9 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10)
     },
     clip: {
-      paddingBeforeSeconds: clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, 60),
-      paddingAfterSeconds: clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, 60),
-      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, 10, maxReplayBufferSeconds),
+      paddingBeforeSeconds,
+      paddingAfterSeconds,
+      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, minReplayBufferSeconds, maxReplayBufferSeconds),
       replaySourceDir: settings.clip?.replaySourceDir ?? defaults.clip.replaySourceDir,
       outputDir: settings.clip?.outputDir ?? defaults.clip.outputDir
     },

@@ -48,6 +48,7 @@ const createLocalStatus = (settings: AppSettings, message: string, active = fals
   enabled: settings.recording.mode === 'window',
   active,
   mode: settings.recording.mode,
+  backend: 'browser',
   sourceId: settings.recording.windowSourceId,
   sourceName: settings.recording.windowSourceName,
   segmentCount: 0,
@@ -159,14 +160,17 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
     let recorder: MediaRecorder | undefined
     let sessionTimer: number | undefined
     let sourceRetryTimer: number | undefined
+    let statusPollTimer: number | undefined
 
     const cleanup = () => {
       disposed = true
       if (sessionTimer !== undefined) window.clearTimeout(sessionTimer)
       if (sourceRetryTimer !== undefined) window.clearTimeout(sourceRetryTimer)
+      if (statusPollTimer !== undefined) window.clearInterval(statusPollTimer)
       if (recorder?.state === 'recording') recorder.stop()
       fixedFrameRateStream?.stop()
       stream?.getTracks().forEach((track) => track.stop())
+      void getTradeToolsApi().recording.stop().catch(() => undefined)
     }
 
     const handleStartError = (error: unknown) => {
@@ -189,7 +193,26 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
         return
       }
 
-      onStatusChange(createLocalStatus(settings, 'Запускаем встроенную запись окна...'))
+      onStatusChange(createLocalStatus(settings, 'Запускаем оптимизированную ffmpeg-запись...'))
+      const optimizedStatus = await api.recording.start()
+      onStatusChange(optimizedStatus)
+      if (!optimizedStatus.fallbackRequired) {
+        statusPollTimer = window.setInterval(() => {
+          void api.recording.getStatus().then((status) => {
+            onStatusChange(status)
+            if (status.fallbackRequired && !disposed) {
+              if (statusPollTimer !== undefined) {
+                window.clearInterval(statusPollTimer)
+                statusPollTimer = undefined
+              }
+              void start().catch(handleStartError)
+            }
+          }).catch(handleStartError)
+        }, 2_000)
+        return
+      }
+
+      onStatusChange(createLocalStatus(settings, optimizedStatus.message || 'Запускаем совместимую запись окна...'))
       const sources = await api.recording.listWindowSources()
       let source = resolveSource(sources, settings)
       if (!source && !settings.recording.windowSourceId && !settings.recording.windowSourceName && settings.recording.sourceType === 'window') {
