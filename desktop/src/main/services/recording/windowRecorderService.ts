@@ -147,6 +147,7 @@ const formatFilePeriodTimestamp = (timeMs: number): string => {
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
+const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
 
@@ -320,6 +321,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         backend: 'browser',
         fallbackRequired: true,
         message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
+      })
+    }
+
+    if (!isGdigrabRecorderEnabled()) {
+      await stopNativeRecorder()
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows и мешать играм. Пишем через встроенный Chromium-рекордер без курсора.'
       })
     }
 
