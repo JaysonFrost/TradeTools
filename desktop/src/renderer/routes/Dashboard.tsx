@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Pause, Play, Square, Video } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
-import type { WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
+import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
 import type { ClipProcessingStatus, ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
@@ -36,10 +37,15 @@ type VideoPageProps = {
   clipMessage: string
   obs: ObsUiState
   windowRecorder?: WindowRecorderStatus
+  freeRecording?: FreeRecordingStatus
   terminalTrade: TerminalTradeRecordingStatus
   onCreateTestClip: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
+  onFreeRecordingStart: () => void
+  onFreeRecordingPause: () => void
+  onFreeRecordingResume: () => void
+  onFreeRecordingFinish: () => void
   onSettingsSaved: (settings: AppSettings) => void
   clipProcessing?: ClipProcessingStatus
 }
@@ -68,6 +74,101 @@ const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
     </div>
   </div>
 )
+
+const formatSeconds = (value: number): string => `${Math.max(0, Math.round(value))}с`
+
+const RecorderBufferProgress = ({ settings, windowRecorder }: { settings?: AppSettings, windowRecorder?: WindowRecorderStatus }) => {
+  if (!settings || settings.recording.mode !== 'window') return null
+
+  const targetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
+  const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
+  const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
+
+  return (
+    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-zinc-100">Буфер до входа</div>
+          <div className="mt-1 text-sm text-zinc-400">Накоплено {formatSeconds(bufferedSeconds)} из {formatSeconds(targetSeconds)}</div>
+        </div>
+        <div className="text-xs font-semibold text-violet-200">{Math.round(progressPercent)}%</div>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-violet-400 transition-[width] duration-500"
+          style={{ width: `${progressPercent > 0 ? Math.max(3, progressPercent) : 0}%` }}
+        />
+      </div>
+    </section>
+  )
+}
+
+const FreeRecordingControls = ({
+  settings,
+  freeRecording,
+  onStart,
+  onPause,
+  onResume,
+  onFinish
+}: {
+  settings?: AppSettings
+  freeRecording?: FreeRecordingStatus
+  onStart: () => void
+  onPause: () => void
+  onResume: () => void
+  onFinish: () => void
+}) => {
+  const isWindowMode = settings?.recording.mode === 'window'
+  const isActive = Boolean(freeRecording?.active)
+  const isPaused = Boolean(freeRecording?.paused)
+  const disabled = !settings || !isWindowMode
+  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
+  const startedAt = freeRecording?.startedAtMs ? new Date(freeRecording.startedAtMs).toLocaleTimeString('ru-RU') : ''
+
+  return (
+    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="m-0 text-base font-semibold">Свободная запись</h2>
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${isActive ? isPaused ? 'border-amber-300/30 bg-amber-300/10 text-amber-200' : 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : 'border-white/10 bg-black/20 text-zinc-400'}`}>
+              {isActive ? isPaused ? 'Пауза' : 'Идёт запись' : 'Готово'}
+            </span>
+          </div>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            {disabled
+              ? 'Свободная запись доступна во встроенной записи окна или экрана.'
+              : isActive
+                ? `${freeRecording?.message ?? 'Записываем терминал'}${startedAt ? ` с ${startedAt}` : ''}.`
+                : 'Записывает выбранное окно или экран без привязки к сделкам.'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {!isActive && (
+            <button className={`${buttonBase} border-violet-400/40 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30`} onClick={onStart} disabled={disabled} type="button">
+              <Video size={16} className="mr-2" />Начать
+            </button>
+          )}
+          {isActive && !isPaused && (
+            <button className={`${buttonBase} border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]`} onClick={onPause} type="button">
+              <Pause size={16} className="mr-2" />Пауза
+            </button>
+          )}
+          {isActive && isPaused && (
+            <button className={`${buttonBase} border-emerald-400/30 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25`} onClick={onResume} type="button">
+              <Play size={16} className="mr-2" />Продолжить
+            </button>
+          )}
+          {isActive && (
+            <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onFinish} type="button">
+              <Square size={16} className="mr-2" />Закончить
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
 
 const TerminalTradeControls = ({
   windowRecorder,
@@ -101,7 +202,7 @@ const TerminalTradeControls = ({
   )
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, terminalTrade, onCreateTestClip, onClipDeleted, onClipRenamed, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, onCreateTestClip, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
   const recordingMode = settings?.recording.mode ?? 'window'
   const videoStatuses = useMemo(() => {
     return [
@@ -131,9 +232,18 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, terminal
       <section className="col-span-12 grid gap-4 lg:grid-cols-2">
         {videoStatuses.map((status) => <IntegrationStatusCard key={status.name} {...status} />)}
       </section>
+      <RecorderBufferProgress settings={settings} windowRecorder={windowRecorder} />
       <TerminalTradeControls
         windowRecorder={windowRecorder}
         terminalTrade={terminalTrade}
+      />
+      <FreeRecordingControls
+        settings={settings}
+        freeRecording={freeRecording}
+        onStart={onFreeRecordingStart}
+        onPause={onFreeRecordingPause}
+        onResume={onFreeRecordingResume}
+        onFinish={onFreeRecordingFinish}
       />
       <section className="col-span-12">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -213,6 +323,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     progressPercent: 0
   })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
+  const [freeRecording, setFreeRecording] = useState<FreeRecordingStatus>()
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
     startedAtMs: 0,
@@ -235,12 +346,13 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextClipProcessing, nextWindowRecorder, nextTerminalTrade] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
         api.recording.getStatus(),
+        api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
 
@@ -249,6 +361,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
       setWindowRecorder(nextWindowRecorder)
+      setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
       setObs((current) => {
         if (current.connected || current.status === 'Отключено') return current
@@ -300,13 +413,17 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
-      const [pendingClips, nextClipProcessing, nextTerminalTrade] = await Promise.all([
+      const [pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
+        api.recording.getStatus(),
+        api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
+      setWindowRecorder(nextWindowRecorder)
+      setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
     } catch {
       // The initial load already surfaces Electron API errors; polling stays quiet.
@@ -396,6 +513,47 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
+  const startFreeRecording = async () => {
+    try {
+      const status = await getTradeToolsApi().recording.startFree()
+      setFreeRecording(status)
+      setClipMessage(status.message)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось начать свободную запись')
+    }
+  }
+
+  const pauseFreeRecording = async () => {
+    try {
+      const status = await getTradeToolsApi().recording.pauseFree()
+      setFreeRecording(status)
+      setClipMessage(status.message)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось поставить свободную запись на паузу')
+    }
+  }
+
+  const resumeFreeRecording = async () => {
+    try {
+      const status = await getTradeToolsApi().recording.resumeFree()
+      setFreeRecording(status)
+      setClipMessage(status.message)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось продолжить свободную запись')
+    }
+  }
+
+  const finishFreeRecording = async () => {
+    try {
+      setClipMessage('Сохраняем свободную запись...')
+      const result = await getTradeToolsApi().recording.finishFree()
+      setFreeRecording(await getTradeToolsApi().recording.getFreeStatus())
+      setClipMessage(`Свободная запись сохранена: ${result.fileName}`)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось сохранить свободную запись')
+    }
+  }
+
   const testNotification = () => getTradeToolsApi().notifications.test()
 
   useEffect(() => {
@@ -409,7 +567,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     } catch {
       // loadLocalState already surfaces Electron API errors.
     }
-    const interval = window.setInterval(() => void refreshPendingClips(), 2_000)
+    const interval = window.setInterval(() => void refreshPendingClips(), 1_000)
     return () => {
       window.clearInterval(interval)
       unsubscribeProxyCheck?.()
@@ -453,11 +611,16 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clipMessage={clipMessage}
           obs={obs}
           windowRecorder={windowRecorder}
+          freeRecording={freeRecording}
           terminalTrade={terminalTrade}
           clipProcessing={activeClipProcessing}
           onCreateTestClip={() => void createTestClip()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
+          onFreeRecordingStart={() => void startFreeRecording()}
+          onFreeRecordingPause={() => void pauseFreeRecording()}
+          onFreeRecordingResume={() => void resumeFreeRecording()}
+          onFreeRecordingFinish={() => void finishFreeRecording()}
           onSettingsSaved={onSettingsSaved}
         />
       ) : activePage === 'proxy' ? (

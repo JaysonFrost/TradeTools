@@ -60,6 +60,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('listWindowSources')
     expect(settingsPanelSource).toContain('Пресет 10 минут до/после')
     expect(settingsPanelSource).toContain('Буфер до входа, сек')
+    expect(settingsPanelSource).toContain('Размер одного куска записи')
+    expect(settingsPanelSource).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(controllerSource).toContain('findPreferredTerminalSource')
     expect(controllerSource).toContain('Автоматически выбрали окно терминала')
@@ -71,6 +73,23 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
     expect(appSource).toContain("ipcMain.handle('recording:append-segment'")
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
+  })
+
+  it('shows live built-in buffer progress and free terminal recording controls', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(dashboardSource).toContain('RecorderBufferProgress')
+    expect(dashboardSource).toContain('Накоплено {formatSeconds(bufferedSeconds)} из {formatSeconds(targetSeconds)}')
+    expect(dashboardSource).toContain('Свободная запись')
+    expect(dashboardSource).toContain('Записывает выбранное окно или экран без привязки к сделкам.')
+    expect(dashboardSource).toContain('recording.startFree()')
+    expect(dashboardSource).toContain('recording.pauseFree()')
+    expect(dashboardSource).toContain('recording.resumeFree()')
+    expect(dashboardSource).toContain('recording.finishFree()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-start'")
+    expect(appSource).toContain("ipcMain.handle('recording:free-finish'")
   })
 
   it('uses terminal window recording as the default no-API trade source', async () => {
@@ -139,6 +158,8 @@ describe('Dashboard layout', () => {
     expect(source).toContain('Пресет 10 минут до/после')
     expect(source).toContain('Тяжёлый режим')
     expect(source).toContain('Локальный буфер до входа, сек')
+    expect(source).toContain('Размер одного куска записи')
+    expect(source).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(source).toContain('longClipPresetSeconds')
   })
 

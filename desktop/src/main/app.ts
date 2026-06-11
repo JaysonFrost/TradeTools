@@ -776,7 +776,12 @@ app.whenReady().then(() => {
       }))
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
+  ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
   ipcMain.handle('recording:start', async () => windowRecorderService.start(await settingsStore.load()))
+  ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:stop', async () => windowRecorderService.stop())
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())
