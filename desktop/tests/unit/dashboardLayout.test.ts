@@ -77,11 +77,13 @@ describe('Dashboard layout', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
 
     expect(settingsSource).toContain("mode: 'terminal-window'")
-    expect(dashboardSource).toContain('Локальная сделка без API')
-    expect(dashboardSource).toContain('terminalTrade.start')
-    expect(dashboardSource).toContain('terminalTrade.finish')
-    expect(preloadSource).toContain("ipcRenderer.invoke('terminal-trade:start'")
-    expect(appSource).toContain("ipcMain.handle('terminal-trade:finish'")
+    expect(dashboardSource).toContain('Автозапись Vataga без API')
+    expect(dashboardSource).toContain('После закрытия TradeTools сам сохранит клип')
+    expect(dashboardSource).not.toContain('Начать запись сделки')
+    expect(preloadSource).toContain("ipcRenderer.invoke('terminal-trade:get-status'")
+    expect(preloadSource).not.toContain("ipcRenderer.invoke('terminal-trade:start'")
+    expect(appSource).toContain('createVatagaTerminalTradeWatcher')
+    expect(appSource).toContain("ipcMain.handle('terminal-trade:get-status'")
     expect(appSource).toContain("settings.tradeSource.mode !== 'binance-futures'")
   })
 

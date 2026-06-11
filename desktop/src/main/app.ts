@@ -18,7 +18,7 @@ import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
-import { createIdleTerminalTradeStatus, createTerminalClosedTrade, type TerminalTradeRecordingStatus } from './services/trades/terminalTradeRecorder'
+import { createVatagaTerminalTradeWatcher } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
@@ -648,51 +648,6 @@ app.whenReady().then(() => {
     }
   }
 
-  let terminalTradeStatus: TerminalTradeRecordingStatus = createIdleTerminalTradeStatus()
-
-  const protectTerminalTradeSegments = async (startedAtMs: number) => {
-    const settings = await settingsStore.load()
-    windowRecorderService.protectSince(startedAtMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
-  }
-
-  const startTerminalTradeRecording = async (): Promise<TerminalTradeRecordingStatus> => {
-    const settings = await settingsStore.load()
-    if (settings.recording.mode !== 'window') throw new Error('Локальная запись сделки работает только со встроенной записью окна терминала')
-
-    const status = await windowRecorderService.getStatus(settings)
-    if (!status.active) throw new Error(status.message || 'Встроенная запись окна терминала ещё не активна')
-
-    const startedAtMs = Date.now()
-    terminalTradeStatus = {
-      active: true,
-      startedAtMs,
-      message: 'Локальная сделка записывается'
-    }
-    await protectTerminalTradeSegments(startedAtMs)
-    return terminalTradeStatus
-  }
-
-  const finishTerminalTradeRecording = async (): Promise<ClipQueueItem> => {
-    if (!terminalTradeStatus.active || !terminalTradeStatus.startedAtMs) {
-      throw new Error('Локальная запись сделки ещё не запущена')
-    }
-
-    const startedAtMs = terminalTradeStatus.startedAtMs
-    await protectTerminalTradeSegments(startedAtMs)
-    try {
-      return await createClipAndNotify(createTerminalClosedTrade(startedAtMs, Date.now()))
-    } finally {
-      terminalTradeStatus = createIdleTerminalTradeStatus()
-      windowRecorderService.protectSince()
-    }
-  }
-
-  const cancelTerminalTradeRecording = (): TerminalTradeRecordingStatus => {
-    terminalTradeStatus = createIdleTerminalTradeStatus()
-    windowRecorderService.protectSince()
-    return terminalTradeStatus
-  }
-
   const getBinanceFuturesClient = async () => {
     const [settings, credentials] = await Promise.all([
       settingsStore.load(),
@@ -905,6 +860,16 @@ app.whenReady().then(() => {
       message: 'Режим без API: TradeTools пишет окно терминала напрямую'
     }
   }
+
+  const terminalTradeWatcher = createVatagaTerminalTradeWatcher({
+    getSettings: () => settingsStore.load(),
+    ensureVideoRecordingReady,
+    protectSince: (timeMs) => windowRecorderService.protectSince(timeMs),
+    createClipForClosedTrade: createClipAndNotify,
+    onStatusChange: (status) => {
+      if (status.lastError) console.warn(`Vataga terminal watcher: ${status.lastError}`)
+    }
+  })
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedCapturePermission = permission === 'media' || permission === 'display-capture'
@@ -1264,10 +1229,7 @@ app.whenReady().then(() => {
     }).testConnection()
   })
   ipcMain.handle('binance:get-watch-status', () => getBinanceFuturesWatchStatus())
-  ipcMain.handle('terminal-trade:get-status', () => terminalTradeStatus)
-  ipcMain.handle('terminal-trade:start', () => startTerminalTradeRecording())
-  ipcMain.handle('terminal-trade:finish', () => finishTerminalTradeRecording())
-  ipcMain.handle('terminal-trade:cancel', () => cancelTerminalTradeRecording())
+  ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
@@ -1293,6 +1255,8 @@ app.whenReady().then(() => {
   })
   createMainWindow()
   appUpdateService.startBackgroundCheck()
+  terminalTradeWatcher.start()
+  app.on('before-quit', () => terminalTradeWatcher.stop())
 
   void settingsStore.load().then((settings) => {
     applyLaunchAtLogin(settings)

@@ -73,7 +73,11 @@ const waitForVideoMetadata = async (video: HTMLVideoElement): Promise<void> => {
   })
 }
 
-const createFixedFrameRateStream = async (sourceStream: MediaStream, frameRate: number): Promise<FixedFrameRateStream> => {
+const createFixedFrameRateStream = async (
+  sourceStream: MediaStream,
+  frameRate: number,
+  onLikelyBlackFrame?: () => void
+): Promise<FixedFrameRateStream> => {
   const [track] = sourceStream.getVideoTracks()
   if (!track) throw new Error('Источник записи не вернул видеодорожку')
 
@@ -95,9 +99,39 @@ const createFixedFrameRateStream = async (sourceStream: MediaStream, frameRate: 
   const context = canvas.getContext('2d', { alpha: false })
   if (!context) throw new Error('Не удалось подготовить canvas для записи')
 
+  const sampleCanvas = document.createElement('canvas')
+  sampleCanvas.width = 32
+  sampleCanvas.height = 18
+  const sampleContext = sampleCanvas.getContext('2d', { alpha: false, willReadFrequently: true })
+  let lastSampleAtMs = 0
+  let blackFrameStreak = 0
+  let blackFrameReported = false
+
+  const inspectFrame = () => {
+    if (!sampleContext || blackFrameReported || !onLikelyBlackFrame) return
+
+    const nowMs = Date.now()
+    if (nowMs - lastSampleAtMs < 1_000) return
+    lastSampleAtMs = nowMs
+
+    sampleContext.drawImage(canvas, 0, 0, sampleCanvas.width, sampleCanvas.height)
+    const pixels = sampleContext.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data
+    let visiblePixels = 0
+    for (let index = 0; index < pixels.length; index += 4) {
+      if ((pixels[index] ?? 0) > 12 || (pixels[index + 1] ?? 0) > 12 || (pixels[index + 2] ?? 0) > 12) visiblePixels += 1
+    }
+
+    blackFrameStreak = visiblePixels <= 2 ? blackFrameStreak + 1 : 0
+    if (blackFrameStreak >= 4) {
+      blackFrameReported = true
+      onLikelyBlackFrame()
+    }
+  }
+
   const drawFrame = () => {
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
     context.drawImage(video, 0, 0, width, height)
+    inspectFrame()
   }
   drawFrame()
 
@@ -124,13 +158,28 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
     let fixedFrameRateStream: FixedFrameRateStream | undefined
     let recorder: MediaRecorder | undefined
     let sessionTimer: number | undefined
+    let sourceRetryTimer: number | undefined
 
     const cleanup = () => {
       disposed = true
       if (sessionTimer !== undefined) window.clearTimeout(sessionTimer)
+      if (sourceRetryTimer !== undefined) window.clearTimeout(sourceRetryTimer)
       if (recorder?.state === 'recording') recorder.stop()
       fixedFrameRateStream?.stop()
       stream?.getTracks().forEach((track) => track.stop())
+    }
+
+    const handleStartError = (error: unknown) => {
+      onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось запустить встроенную запись окна'))
+    }
+
+    const scheduleSourceRetry = (start: () => Promise<void>) => {
+      if (disposed || sourceRetryTimer !== undefined) return
+
+      sourceRetryTimer = window.setTimeout(() => {
+        sourceRetryTimer = undefined
+        if (!disposed) void start().catch(handleStartError)
+      }, 2_000)
     }
 
     const start = async () => {
@@ -163,6 +212,7 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
         onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen'
           ? 'Выбранный экран не найден. Обновите список источников.'
           : 'Откройте торговый терминал. TradeTools сам выберет подходящее окно и начнёт запись.'))
+        scheduleSourceRetry(start)
         return
       }
 
@@ -176,7 +226,26 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
 
       stream = mediaStream
       try {
-        fixedFrameRateStream = await createFixedFrameRateStream(mediaStream, settings.recording.frameRate)
+        fixedFrameRateStream = await createFixedFrameRateStream(mediaStream, settings.recording.frameRate, source.type === 'window'
+          ? () => {
+              const screenSource = sources.find((candidate) => candidate.type === 'screen')
+              if (!screenSource || disposed) return
+
+              onStatusChange(createLocalStatus(settings, 'Окно Vataga отдаёт чёрный кадр. Переключаемся на запись экрана.'))
+              void api.settings.update({
+                recording: {
+                  ...settings.recording,
+                  sourceType: 'screen',
+                  windowSourceId: screenSource.id,
+                  windowSourceName: screenSource.name
+                }
+              }).then((updated) => {
+                if (!disposed) onSettingsChange?.(updated)
+              }).catch((error) => {
+                onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось переключиться на запись экрана'))
+              })
+            }
+          : undefined)
       } catch (error) {
         mediaStream.getTracks().forEach((track) => track.stop())
         stream = undefined
@@ -248,9 +317,7 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
       startRecordingSession()
     }
 
-    void start().catch((error) => {
-      onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось запустить встроенную запись окна'))
-    })
+    void start().catch(handleStartError)
 
     return cleanup
   }, [
