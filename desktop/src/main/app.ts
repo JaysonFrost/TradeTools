@@ -16,7 +16,7 @@ import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
-import { createVatagaTerminalTradeWatcher } from './services/trades/terminalTradeRecorder'
+import { createTerminalTradeWatcher } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
@@ -657,13 +657,13 @@ app.whenReady().then(() => {
     return true
   }
 
-  const terminalTradeWatcher = createVatagaTerminalTradeWatcher({
+  const terminalTradeWatcher = createTerminalTradeWatcher({
     getSettings: () => settingsStore.load(),
     ensureVideoRecordingReady,
     protectSince: (timeMs) => windowRecorderService.protectSince(timeMs),
     createClipForClosedTrade: createClipAndNotify,
     onStatusChange: (status) => {
-      if (status.lastError) console.warn(`Vataga terminal watcher: ${status.lastError}`)
+      if (status.lastError) console.warn(`Terminal trade watcher: ${status.lastError}`)
     }
   })
 

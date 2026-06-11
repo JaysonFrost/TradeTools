@@ -12,12 +12,12 @@ describe('main app lifecycle', () => {
     expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
   })
 
-  it('passes video readiness into the automatic Vataga trade watcher', async () => {
+  it('passes video readiness into the automatic terminal trade watcher', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('const ensureObsReplayBufferActive')
     expect(source).toContain('const ensureVideoRecordingReady')
-    expect(source).toContain('createVatagaTerminalTradeWatcher')
+    expect(source).toContain('createTerminalTradeWatcher')
     expect(source).toContain('ensureVideoRecordingReady,')
     expect(source).toContain('terminalTradeWatcher.start()')
   })
@@ -31,7 +31,7 @@ describe('main app lifecycle', () => {
     expect(source).not.toContain("ipcMain.handle('binance:")
   })
 
-  it('protects built-in recording segments while a Vataga trade is open', async () => {
+  it('protects built-in recording segments while a terminal trade is open', async () => {
     const source = await readFile(resolve('src/main/services/trades/terminalTradeRecorder.ts'), 'utf8')
 
     expect(source).toContain('protectSince()')

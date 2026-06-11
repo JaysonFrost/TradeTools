@@ -83,7 +83,7 @@ const TerminalTradeControls = ({
     <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <h2 className="m-0 text-base font-semibold">Автозапись Vataga без API</h2>
+          <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
           <p className="mt-1 text-sm leading-6 text-zinc-400">
             {terminalTrade.active
               ? `Идёт сделка с ${startedAt}. Активных позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
@@ -118,7 +118,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, terminal
       {
         name: 'Источник сделок',
         description: windowRecorder?.active
-          ? terminalTrade.message || 'Режим без API: TradeTools автоматически пишет окно терминала и ждёт события Vataga.'
+          ? terminalTrade.message || 'TradeTools автоматически пишет окно терминала и ждёт сделки Vataga, TigerTrade или MetaScalp.'
           : windowRecorder?.message ?? 'Откройте терминал, чтобы TradeTools начал локальную запись.',
         status: terminalTrade.active ? 'Пишем сделку' : windowRecorder?.active ? 'Авто' : 'Ждём окно',
         tone: terminalTrade.lastError ? 'warning' as const : windowRecorder?.active ? 'success' as const : 'warning' as const
@@ -216,8 +216,8 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
     startedAtMs: 0,
-    message: 'Автоматически ждём сделки Vataga',
-    source: 'vataga',
+    message: 'Автоматически ждём сделки Vataga, TigerTrade или MetaScalp',
+    source: 'multi-terminal',
     activeTradeCount: 0
   })
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
