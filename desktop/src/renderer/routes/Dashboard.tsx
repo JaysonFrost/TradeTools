@@ -80,7 +80,7 @@ const formatSeconds = (value: number): string => `${Math.max(0, Math.round(value
 const RecorderBufferProgress = ({ settings, windowRecorder }: { settings?: AppSettings, windowRecorder?: WindowRecorderStatus }) => {
   if (!settings || settings.recording.mode !== 'window') return null
 
-  const targetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
+  const targetSeconds = Math.max(1, Math.round(windowRecorder?.bufferTargetSeconds ?? settings.clip.replayBufferSeconds))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
 
