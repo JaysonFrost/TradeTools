@@ -68,6 +68,11 @@ type LogProviderState = {
 }
 
 type MetaScalpConnection = Record<string, unknown>
+type MetaScalpSnapshotDiff = {
+  events: TerminalPositionEvent[]
+  currentOpenPositions: Map<string, TerminalPositionEvent>
+  initialized: boolean
+}
 
 const defaultPollIntervalMs = 1_000
 const readChunkSize = 128 * 1024
@@ -295,12 +300,34 @@ const normalizeMetaScalpSide = (position: unknown, size: number): string => {
   return normalizeSideFromSize(Number.NaN, side)
 }
 
+const hasTruthyFlag = (value: unknown): boolean => value === true || normalizeAnyText(value).toLowerCase() === 'true'
+
+const isMetaScalpClosedStatus = (value: unknown): boolean => {
+  const text = normalizeAnyText(value).toLowerCase()
+  if (!text || /^-?\d+$/.test(text)) return false
+  return /(closed|close|flat|inactive|deleted|finished|done|canceled|cancelled)/i.test(text)
+}
+
+const isMetaScalpClosedSnapshot = (position: unknown): boolean => {
+  if (!position || typeof position !== 'object') return true
+  if (hasTruthyFlag(getField(position, ['IsClosed', 'isClosed', 'Closed', 'closed']))) return true
+  return isMetaScalpClosedStatus(getField(position, [
+    'Status',
+    'status',
+    'State',
+    'state',
+    'PositionStatus',
+    'positionStatus'
+  ]))
+}
+
 export const parseMetaScalpPositionSnapshot = (
   position: unknown,
   connection: MetaScalpConnection,
   nowMs: number
 ): TerminalPositionEvent | undefined => {
   if (!position || typeof position !== 'object') return undefined
+  if (isMetaScalpClosedSnapshot(position)) return undefined
 
   const connectionId = normalizeAnyText(getField(connection, ['Id', 'ConnectionId', 'connectionId', 'id']))
   const positionId = normalizeAnyText(getField(position, ['PositionId', 'positionId', 'Id', 'id']))
@@ -324,6 +351,41 @@ export const parseMetaScalpPositionSnapshot = (
     side: normalizeMetaScalpSide(position, size),
     isClosed: false,
     eventTimeMs
+  }
+}
+
+export const diffMetaScalpPositionSnapshots = (
+  currentOpenPositions: Map<string, TerminalPositionEvent>,
+  previousOpenPositions: Map<string, TerminalPositionEvent>,
+  initialized: boolean,
+  nowMs: number
+): MetaScalpSnapshotDiff => {
+  if (!initialized) {
+    return {
+      events: [],
+      currentOpenPositions,
+      initialized: true
+    }
+  }
+
+  const events: TerminalPositionEvent[] = []
+  for (const [positionKey, event] of currentOpenPositions) {
+    if (!previousOpenPositions.has(positionKey)) events.push(event)
+  }
+
+  for (const [positionKey, previousEvent] of previousOpenPositions) {
+    if (currentOpenPositions.has(positionKey)) continue
+    events.push({
+      ...previousEvent,
+      isClosed: true,
+      eventTimeMs: nowMs
+    })
+  }
+
+  return {
+    events,
+    currentOpenPositions,
+    initialized: true
   }
 }
 
@@ -475,6 +537,7 @@ export const createTerminalTradeWatcher = ({
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
   let metaScalpKnownOpenPositions = new Map<string, TerminalPositionEvent>()
+  let metaScalpSnapshotInitialized = false
   let metaScalpAvailable = false
   let timer: NodeJS.Timeout | undefined
   let polling = false
@@ -697,16 +760,15 @@ export const createTerminalTradeWatcher = ({
         }
       }
 
-      for (const [positionKey, previousEvent] of metaScalpKnownOpenPositions) {
-        if (currentOpenPositions.has(positionKey)) continue
-        enqueueEvent({
-          ...previousEvent,
-          isClosed: true,
-          eventTimeMs: Date.now()
-        })
-      }
-
-      metaScalpKnownOpenPositions = currentOpenPositions
+      const diff = diffMetaScalpPositionSnapshots(
+        currentOpenPositions,
+        metaScalpKnownOpenPositions,
+        metaScalpSnapshotInitialized,
+        Date.now()
+      )
+      metaScalpKnownOpenPositions = diff.currentOpenPositions
+      metaScalpSnapshotInitialized = diff.initialized
+      for (const event of diff.events) enqueueEvent(event)
       metaScalpAvailable = true
       return true
     } catch {
@@ -748,6 +810,7 @@ export const createTerminalTradeWatcher = ({
       timer = undefined
       activeTrades.clear()
       metaScalpKnownOpenPositions.clear()
+      metaScalpSnapshotInitialized = false
       protectSince()
       emit({ active: false, startedAtMs: 0, source: 'multi-terminal', message: 'Автозапись терминалов остановлена' })
     },
