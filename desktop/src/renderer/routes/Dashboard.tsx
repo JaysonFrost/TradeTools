@@ -86,7 +86,7 @@ const TerminalTradeControls = ({
           <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
           <p className="mt-1 text-sm leading-6 text-zinc-400">
             {terminalTrade.active
-              ? `Идёт сделка с ${startedAt}. Активных позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
+              ? `${terminalTrade.message || 'Идёт сделка'} с ${startedAt}. Активных позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
               : recorderActive
                 ? terminalTrade.message
                 : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'}

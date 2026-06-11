@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  diffMetaScalpPositionSnapshots,
   parseMetaScalpPositionSnapshot,
   parseTigerTradePositionEvent,
   parseVatagaPositionEvent
@@ -85,5 +86,69 @@ describe('terminalTradeRecorder', () => {
       isClosed: false,
       eventTimeMs: 1_781_111_111_000
     })
+  })
+
+  it('ignores closed MetaScalp position snapshots', () => {
+    expect(parseMetaScalpPositionSnapshot({
+      Id: 2,
+      Ticker: 'BTCUSDT',
+      Size: '1',
+      Status: 'Closed'
+    }, {
+      Id: 78,
+      Name: 'Binance Futures'
+    }, 1_900_000_000_000)).toBeUndefined()
+
+    expect(parseMetaScalpPositionSnapshot({
+      Id: 3,
+      Ticker: 'ETHUSDT',
+      Size: '1',
+      IsClosed: true
+    }, {
+      Id: 78,
+      Name: 'Binance Futures'
+    }, 1_900_000_000_000)).toBeUndefined()
+  })
+
+  it('seeds the first MetaScalp snapshot without opening phantom trades', () => {
+    const position = parseMetaScalpPositionSnapshot({
+      Id: 2,
+      Ticker: 'KOMAUSDT',
+      Size: '276.0'
+    }, {
+      Id: 78,
+      Name: 'Binance Futures'
+    }, 1_900_000_000_000)
+    expect(position).toBeDefined()
+
+    const firstSnapshot = new Map([[`metascalp:${position?.positionId}`, position!]])
+    const diff = diffMetaScalpPositionSnapshots(firstSnapshot, new Map(), false, 1_900_000_001_000)
+
+    expect(diff.initialized).toBe(true)
+    expect(diff.currentOpenPositions.size).toBe(1)
+    expect(diff.events).toEqual([])
+  })
+
+  it('emits MetaScalp open and close events after the initial snapshot', () => {
+    const position = parseMetaScalpPositionSnapshot({
+      Id: 2,
+      Ticker: 'KOMAUSDT',
+      Size: '276.0'
+    }, {
+      Id: 78,
+      Name: 'Binance Futures'
+    }, 1_900_000_000_000)
+    expect(position).toBeDefined()
+
+    const current = new Map([[`metascalp:${position?.positionId}`, position!]])
+    const openDiff = diffMetaScalpPositionSnapshots(current, new Map(), true, 1_900_000_001_000)
+    const closeDiff = diffMetaScalpPositionSnapshots(new Map(), current, true, 1_900_000_002_000)
+
+    expect(openDiff.events).toEqual([position])
+    expect(closeDiff.events).toEqual([{
+      ...position,
+      isClosed: true,
+      eventTimeMs: 1_900_000_002_000
+    }])
   })
 })
