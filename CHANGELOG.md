@@ -4,6 +4,12 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.4] - 2026-06-11
+
+### Changed
+
+- Prepared a follow-up release to validate automatic updates from installed TradeTools builds.
+
 ## [0.2.3] - 2026-06-11
 
 ### Fixed
