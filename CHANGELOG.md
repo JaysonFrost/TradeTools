@@ -4,6 +4,14 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.2] - 2026-06-11
+
+### Fixed
+
+- Fixed phantom active trade status from the initial MetaScalp position snapshot.
+- Closed or inactive MetaScalp position snapshots are now ignored.
+- Active terminal trade status now shows the source that triggered recording.
+
 ## [0.2.1] - 2026-06-11
 
 ### Added
