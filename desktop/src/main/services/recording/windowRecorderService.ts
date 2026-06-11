@@ -169,7 +169,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       '-framerate',
       frameRate,
       '-draw_mouse',
-      '1',
+      '0',
       '-i',
       inputName,
       '-map',

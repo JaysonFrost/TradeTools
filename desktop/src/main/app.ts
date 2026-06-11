@@ -458,19 +458,6 @@ app.whenReady().then(() => {
       ? windowRecorderService.saveReplayBuffer(input)
       : obsService.testReplaySave()
   })
-  const appUpdateService = createAppUpdateService({
-    currentVersion: app.getVersion(),
-    isPackaged: app.isPackaged,
-    isInstalledBuild: isInstalledUpdateBuild(),
-    hasUpdateConfig: hasPackagedUpdateConfig(),
-    platform: process.platform,
-    broadcast: (status) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send('updates:status', status)
-      }
-    }
-  })
-
   const saveProxyRuntimeConfig = async (config: ProxyChainRuntimeConfig): Promise<void> => {
     await secretStore.setProxyRuntimeEntryUuid(config.entryUuid)
     await settingsStore.update({
@@ -563,6 +550,28 @@ app.whenReady().then(() => {
       }
     }
   }
+
+  const appUpdateService = createAppUpdateService({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    isInstalledBuild: isInstalledUpdateBuild(),
+    hasUpdateConfig: hasPackagedUpdateConfig(),
+    platform: process.platform,
+    broadcast: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('updates:status', status)
+      }
+    },
+    onUpdateAvailable: (status) => {
+      const version = status.version ? ` ${status.version}` : ''
+      const notification = showSystemNotification({
+        title: 'Вышла новая версия TradeTools',
+        body: `Доступна версия${version}. Откройте TradeTools, чтобы скачать обновление.`,
+        onClick: focusMainWindow
+      })
+      if (!notification.ok) console.warn(`Update notification failed: ${notification.message}`)
+    }
+  })
 
   const notifyProxyPaymentsDue = async () => {
     const settings = await settingsStore.load()

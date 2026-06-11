@@ -4,6 +4,16 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [Unreleased]
+
+### Added
+
+- Added a system notification when a new TradeTools version is available.
+
+### Fixed
+
+- Disabled cursor drawing in the optimized Windows ffmpeg recorder to avoid rapid cursor flickering while TradeTools is running.
+
 ## [0.2.5] - 2026-06-11
 
 ### Added

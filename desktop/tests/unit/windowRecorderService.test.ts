@@ -32,6 +32,7 @@ describe('windowRecorderService', () => {
 
     expect(serviceSource).toContain("'-f',")
     expect(serviceSource).toContain("'gdigrab'")
+    expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
     expect(serviceSource).toContain('fallbackRequired')
