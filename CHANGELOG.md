@@ -4,6 +4,19 @@ All notable changes to TradeTools will be documented in this file.
 
 The project follows tag-based GitHub Releases. Version numbers are kept in `desktop/package.json`.
 
+## [0.2.1] - 2026-06-11
+
+### Added
+
+- Added automatic TigerTrade trade recording from local WorkLog position updates.
+- Added automatic MetaScalp trade recording through the terminal's local read-only API.
+- Added terminal watcher tests for Vataga, TigerTrade and MetaScalp event parsing.
+
+### Changed
+
+- Video UI now presents automatic recording as a general terminal mode instead of a Vataga-only mode.
+- README and user guide now document Vataga, TigerTrade and MetaScalp as supported trade sources.
+
 ## [0.2.0] - 2026-06-08
 
 ### Added
