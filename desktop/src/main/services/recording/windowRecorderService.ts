@@ -35,7 +35,6 @@ export type WindowRecorderStatus = {
   sourceName: string
   segmentCount: number
   bufferedSeconds: number
-  bufferTargetSeconds: number
   lastSegmentAtMs: number
   message: string
 }
@@ -508,7 +507,6 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       sourceName: settings.recording.windowSourceName,
       segmentCount: sourceSegments.length,
       bufferedSeconds,
-      bufferTargetSeconds: bufferTargetSeconds,
       lastSegmentAtMs: last?.endedAtMs ?? 0,
       message: override.message ?? defaultMessage
     }

@@ -82,7 +82,6 @@ describe('Dashboard layout', () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(dashboardSource).toContain('RecorderBufferProgress')
-    expect(dashboardSource).toContain('windowRecorder?.bufferTargetSeconds')
     expect(dashboardSource).toContain('Накоплено {formatSeconds(bufferedSeconds)} из {formatSeconds(targetSeconds)}')
     expect(dashboardSource).toContain('Свободная запись')
     expect(dashboardSource).toContain('Записывает выбранное окно или экран без привязки к сделкам.')

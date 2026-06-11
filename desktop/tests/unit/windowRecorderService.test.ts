@@ -24,15 +24,6 @@ describe('windowRecorderService', () => {
     expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
   })
 
-  it('returns the configured buffer target in recorder status for live UI progress', async () => {
-    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
-    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
-
-    expect(source).toContain('bufferTargetSeconds')
-    expect(source).toContain('bufferTargetSeconds: bufferTargetSeconds')
-    expect(controllerSource).toContain('bufferTargetSeconds: settings.clip.replayBufferSeconds')
-  })
-
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

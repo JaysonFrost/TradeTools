@@ -19,7 +19,6 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ### Fixed
 
-- Fixed built-in recorder buffer progress staying on an old target after video settings are changed.
 - Disabled cursor drawing in the optimized Windows ffmpeg recorder so the pointer is not burned into captured videos.
 - Disabled the Windows `gdigrab` recorder by default because it can flicker the real cursor and interfere with games while TradeTools records in the background.
 

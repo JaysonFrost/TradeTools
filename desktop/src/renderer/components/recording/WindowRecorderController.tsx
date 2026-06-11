@@ -54,7 +54,6 @@ const createLocalStatus = (settings: AppSettings, message: string, active = fals
   sourceName: settings.recording.windowSourceName,
   segmentCount: 0,
   bufferedSeconds: 0,
-  bufferTargetSeconds: settings.clip.replayBufferSeconds,
   lastSegmentAtMs: 0,
   message
 })
