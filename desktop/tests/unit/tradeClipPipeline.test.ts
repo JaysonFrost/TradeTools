@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
@@ -435,6 +435,61 @@ describe('tradeClipPipeline', () => {
 
     await expect(pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))).rejects.toThrow('OBS replay-файл содержит только 2.7 fps')
     expect(runFfmpeg).not.toHaveBeenCalled()
+  })
+
+  it('copies an already prepared built-in recorder clip without a second ffmpeg render', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-window-ready-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-window-ready-replays-'))
+    const replayPath = join(replayDir, 'window-ready.mp4')
+    const saveTimeMs = Date.parse('2026-05-14T18:00:38.000Z')
+    const trade = {
+      ...createSimulatedClosedTrade(saveTimeMs),
+      id: 'terminal-BTCUSDT-1778781632034',
+      entryTimeMs: Date.parse('2026-05-14T17:58:32.000Z'),
+      exitTimeMs: Date.parse('2026-05-14T18:00:35.000Z')
+    }
+    await writeFile(replayPath, 'ready built-in clip')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+
+    const runFfmpeg = vi.fn()
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window'
+        },
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 600,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs: saveTimeMs,
+        replayPath,
+        readyClip: true
+      })),
+      runFfmpeg,
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 131,
+        averageFrameRate: 30
+      }))
+    })
+
+    const clip = await pipeline.createClipForClosedTrade(trade)
+
+    expect(runFfmpeg).not.toHaveBeenCalled()
+    expect(await readFile(clip.videoPath, 'utf8')).toBe('ready built-in clip')
+    await expect(stat(clip.metadataPath)).resolves.toBeDefined()
+    const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.replayPath).toBe(clip.videoPath)
+    expect(metadata.trim).toEqual({ startSeconds: 0, endSeconds: 131, durationSeconds: 131 })
   })
 
   it('keeps an existing valid clip when a duplicate render produces an invalid mp4', async () => {

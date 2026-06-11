@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
@@ -61,6 +61,7 @@ export type SaveReplayBufferResult = {
   message: string
   requestedAtMs: number
   replayPath?: string
+  readyClip?: boolean
 }
 
 export type SaveReplayBufferInput = {
@@ -226,29 +227,40 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       assertUsableFrameRate(replayDetails, settings.recording.mode === 'window' ? 'Встроенный replay-файл' : 'OBS replay-файл')
       const replayDurationSeconds = replayDetails.durationSeconds
       const paths = buildClipOutputPaths(settings.clip.outputDir, trade)
-      const trim = planReplayTrim({
-        tradeEntryTimeMs: trade.entryTimeMs,
-        tradeExitTimeMs: trade.exitTimeMs,
-        replaySavedAtMs,
-        replayDurationSeconds,
-        paddingBeforeSeconds: settings.clip.paddingBeforeSeconds,
-        paddingAfterSeconds: settings.clip.paddingAfterSeconds
-      })
-      const ffmpegArgs = buildFfmpegTrimArgs({
-        inputPath: replayPath,
-        outputPath: nextTemporaryClipPath(paths.videoPath),
-        startSeconds: trim.startSeconds,
-        endSeconds: trim.endSeconds,
-        mode: 'reencode',
-        targetFrameRate: usableTargetFrameRate(replayDetails)
-      })
-      const temporaryVideoPath = ffmpegArgs.at(-1)
-      if (!temporaryVideoPath) throw new Error('Не удалось подготовить временный путь клипа')
+      const readyClip = replaySave.readyClip === true && settings.recording.mode === 'window'
+      const trim = readyClip
+        ? {
+            startSeconds: 0,
+            endSeconds: replayDurationSeconds,
+            durationSeconds: replayDurationSeconds
+          }
+        : planReplayTrim({
+            tradeEntryTimeMs: trade.entryTimeMs,
+            tradeExitTimeMs: trade.exitTimeMs,
+            replaySavedAtMs,
+            replayDurationSeconds,
+            paddingBeforeSeconds: settings.clip.paddingBeforeSeconds,
+            paddingAfterSeconds: settings.clip.paddingAfterSeconds
+          })
 
       await mkdir(paths.dayFolder, { recursive: true })
       let outputDetails: VideoDetails
+      let metadataReplayPath = replayPath
+      const temporaryVideoPath = nextTemporaryClipPath(paths.videoPath)
       try {
-        await runFfmpeg(ffmpegArgs)
+        if (readyClip) {
+          await copyFile(replayPath, temporaryVideoPath)
+        } else {
+          const ffmpegArgs = buildFfmpegTrimArgs({
+            inputPath: replayPath,
+            outputPath: temporaryVideoPath,
+            startSeconds: trim.startSeconds,
+            endSeconds: trim.endSeconds,
+            mode: 'reencode',
+            targetFrameRate: usableTargetFrameRate(replayDetails)
+          })
+          await runFfmpeg(ffmpegArgs)
+        }
         outputDetails = await getVideoDetails(temporaryVideoPath)
         assertUsableFrameRate(outputDetails, 'Готовый клип')
         const outputDurationSeconds = outputDetails.durationSeconds
@@ -256,6 +268,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
           throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
         }
         await rename(temporaryVideoPath, paths.videoPath)
+        if (readyClip) metadataReplayPath = paths.videoPath
       } catch (error) {
         await unlink(temporaryVideoPath).catch(() => undefined)
         throw error
@@ -281,7 +294,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       }
       const metadata: TradeClipMetadata = {
         ...item,
-        replayPath,
+        replayPath: metadataReplayPath,
         replaySavedAtMs,
         replayDurationSeconds,
         ...(replayDetails.averageFrameRate ? { replayFrameRate: replayDetails.averageFrameRate } : {}),

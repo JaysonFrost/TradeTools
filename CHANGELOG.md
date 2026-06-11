@@ -16,6 +16,7 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 ### Changed
 
 - Changed the heavy video preset to keep 10 minutes before entry and 120 seconds after exit.
+- Built-in recorder clips now skip the second ffmpeg render when the replay is already trimmed to the final trade range.
 
 ### Fixed
 

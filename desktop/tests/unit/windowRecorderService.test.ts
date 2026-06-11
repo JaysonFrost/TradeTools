@@ -24,6 +24,15 @@ describe('windowRecorderService', () => {
     expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
   })
 
+  it('marks built-in replay exports as ready clips and trims browser segments before the pipeline step', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('readyClip: true')
+    expect(source).toContain('trimBrowserReplayFile')
+    expect(source).toContain('replayStartMs')
+    expect(source).toContain('replayEndMs')
+  })
+
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
