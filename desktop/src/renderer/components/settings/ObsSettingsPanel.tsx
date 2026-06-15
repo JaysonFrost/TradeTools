@@ -274,16 +274,16 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               <span>Буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
               <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
             </label>
-            <label className="flex min-h-10 items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 text-sm font-semibold text-zinc-200">
+            <label className="flex min-h-10 items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-200">
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-violet-500"
                 checked={systemAudioEnabled}
                 onChange={(event) => setSystemAudioEnabled(event.target.checked)}
               />
-              Звук компьютера
+              Звук с ПК
             </label>
-            <label className="flex min-h-10 items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 text-sm font-semibold text-zinc-200">
+            <label className="flex min-h-10 items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-200">
               <input
                 type="checkbox"
                 className="h-4 w-4 accent-violet-500"
