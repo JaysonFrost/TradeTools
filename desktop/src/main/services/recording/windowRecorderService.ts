@@ -345,7 +345,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return buildStatus(settings, {
         backend: 'browser',
         fallbackRequired: true,
-        message: 'Звук пишется через Chromium: системный звук и микрофон доступны в совместимом рекордере.'
+        message: 'Звук встроен в видео через Chromium: системный звук и микрофон идут в тот же клип.'
       })
     }
 

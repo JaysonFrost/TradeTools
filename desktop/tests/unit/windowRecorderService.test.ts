@@ -96,7 +96,8 @@ describe('windowRecorderService', () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(serviceSource).toContain('settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled')
-    expect(serviceSource).toContain('Звук пишется через Chromium')
+    expect(serviceSource).toContain('Звук встроен в видео через Chromium')
+    expect(serviceSource).not.toContain('Звук пишется через Chromium')
     expect(serviceSource).toContain("'0:a?'")
     expect(serviceSource).toContain("'-c:a'")
     expect(serviceSource).toContain("'aac'")
