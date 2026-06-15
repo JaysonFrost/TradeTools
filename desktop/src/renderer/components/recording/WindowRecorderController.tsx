@@ -43,6 +43,12 @@ const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): W
   sources.find((source) => source.type === settings.recording.sourceType && source.name === settings.recording.windowSourceName)
 )
 
+const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCaptureSource | undefined): boolean => (
+  settings.recording.sourceType === 'window' &&
+  Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName) &&
+  !source
+)
+
 const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => ({
   audio: false,
   video: {
@@ -294,6 +300,18 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         return
       }
 
+      let sources: WindowCaptureSource[] | undefined
+      let source: WindowCaptureSource | undefined
+      if (settings.recording.sourceType === 'window') {
+        sources = await api.recording.listWindowSources()
+        source = resolveSource(sources, settings)
+        if (isSavedWindowSourceMissing(settings, source)) {
+          onStatusChange(createLocalStatus(settings, `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`))
+          scheduleSourceRetry(start)
+          return
+        }
+      }
+
       onStatusChange(createLocalStatus(settings, 'Запускаем оптимизированную ffmpeg-запись...'))
       const optimizedStatus = await api.recording.start()
       onStatusChange(optimizedStatus)
@@ -314,8 +332,8 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
 
       onStatusChange(createLocalStatus(settings, optimizedStatus.message || 'Запускаем совместимую запись окна...'))
-      const sources = await api.recording.listWindowSources()
-      let source = resolveSource(sources, settings)
+      sources = sources ?? await api.recording.listWindowSources()
+      source = source ?? resolveSource(sources, settings)
       if (!source && !settings.recording.windowSourceId && !settings.recording.windowSourceName && settings.recording.sourceType === 'window') {
         source = findPreferredTerminalSource(sources)
         if (source) {

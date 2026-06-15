@@ -22,9 +22,13 @@ describe('main app lifecycle', () => {
     expect(source).toContain('terminalTradeWatcher.start()')
   })
 
-  it('wakes the renderer recorder when a terminal trade opens before the window buffer is active', async () => {
+  it('does not wake the renderer recorder when background window recording is stopped', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
+    expect(source).toContain('let backgroundWindowRecordingEnabled = true')
+    expect(source).toContain('if (!backgroundWindowRecordingEnabled) return false')
+    expect(source).toContain('backgroundWindowRecordingEnabled = true')
+    expect(source).toContain('backgroundWindowRecordingEnabled = false')
     expect(source).toContain('notifyWindowRecordingNeeded')
     expect(source).toContain("webContents.send('recording:ensure-window')")
     expect(source).toContain('await windowRecorderService.start(settings)')

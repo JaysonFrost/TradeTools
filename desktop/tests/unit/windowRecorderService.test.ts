@@ -1,8 +1,78 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createWindowRecorderService } from '../../src/main/services/recording/windowRecorderService'
+import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 describe('windowRecorderService', () => {
+  const createMissingVatagaWindowFixture = async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-recorder-'))
+    const settings = createDefaultSettings(dataDir)
+    const checkedSourceNames: string[] = []
+    const service = createWindowRecorderService({
+      appDataDir: dataDir,
+      isWindowSourceAvailable: async (source) => {
+        checkedSourceNames.push(source.sourceName)
+        return false
+      }
+    })
+    const recordingSettings = {
+      ...settings,
+      recording: {
+        ...settings.recording,
+        mode: 'window' as const,
+        sourceType: 'window' as const,
+        windowSourceId: 'window:123',
+        windowSourceName: 'Vataga.terminal',
+        systemAudioEnabled: false,
+        microphoneEnabled: false
+      }
+    }
+
+    return {
+      dataDir,
+      service,
+      settings: recordingSettings,
+      getCheckedSourceNames: () => [...checkedSourceNames]
+    }
+  }
+
+  it('does not start native ffmpeg capture when the saved terminal window is closed', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+
+    try {
+      const status = await service.start(settings)
+
+      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(status.active).toBe(false)
+      expect(status.fallbackRequired).toBe(true)
+      expect(status.message).toContain('Окно Vataga.terminal не найдено')
+      expect(status.message).not.toContain("Can't find window")
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the missing saved window message stable without rechecking windows during status polls', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+
+    try {
+      await service.start(settings)
+      const status = await service.getStatus(settings)
+
+      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(status.active).toBe(false)
+      expect(status.fallbackRequired).toBe(true)
+      expect(status.message).toContain('Окно Vataga.terminal не найдено')
+      expect(status.message).not.toBe('Ждём сегменты от встроенного рекордера')
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
   it('reports buffered and required seconds when replay export is requested too early', async () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
@@ -60,7 +130,7 @@ describe('windowRecorderService', () => {
     expect(serviceSource).not.toContain('appendFile(sessionPath')
   })
 
-  it('uses ffmpeg gdigrab for Windows window capture before falling back to browser capture', async () => {
+  it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -72,8 +142,8 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
     expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording' })")
-    expect(serviceSource).not.toContain('TRADETOOLS_ENABLE_GDIGRAB')
-    expect(serviceSource).not.toContain('Фоновый GDI-захват отключён')
+    expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
+    expect(serviceSource).toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')
     expect(controllerSource).toContain('recording.start()')
     expect(controllerSource).toContain('recording.stop()')

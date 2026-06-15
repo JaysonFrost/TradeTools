@@ -376,30 +376,26 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     setBackgroundRecordingEnabled(enabled)
   }
 
-  const visibleWindowRecorderStatus = (status: WindowRecorderStatus, currentSettings: AppSettings): WindowRecorderStatus => (
-    currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
-      ? createStoppedWindowRecorderStatus(currentSettings)
-      : status
-  )
-
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
-        api.recording.getStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
+      const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+        ? createStoppedWindowRecorderStatus(nextSettings)
+        : await api.recording.getStatus()
 
       setAppVersion(version)
       setSettings(nextSettings)
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
-      setWindowRecorder(visibleWindowRecorderStatus(nextWindowRecorder, nextSettings))
+      setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
       setObs((current) => {
@@ -454,17 +450,19 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
-      const [pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
-        api.recording.getStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
       const currentSettings = settings ?? await api.settings.get()
-      setWindowRecorder(visibleWindowRecorderStatus(nextWindowRecorder, currentSettings))
+      const nextWindowRecorder = currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+        ? createStoppedWindowRecorderStatus(currentSettings)
+        : await api.recording.getStatus()
+      setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
     } catch {
@@ -650,7 +648,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       unsubscribeProxyCheck = api.proxies.onConfigureChainProgress((progress) => appendProxyProgress('check', progress))
       unsubscribeProxySetup = api.proxies.onSetupChainProgress((progress) => appendProxyProgress('setup', progress))
       unsubscribeRecordingEnsure = api.recording.onEnsureWindowRecording(() => {
-        if (!backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })
+        if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })
       })
     } catch {
       // loadLocalState already surfaces Electron API errors.

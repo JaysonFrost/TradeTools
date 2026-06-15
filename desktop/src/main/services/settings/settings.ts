@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
-import { defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
 
 export type ProxyRecord = {
   id: string
@@ -200,8 +200,8 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     microphoneEnabled: false
   },
   clip: {
-    paddingBeforeSeconds: 2,
-    paddingAfterSeconds: 2,
+    paddingBeforeSeconds: defaultClipPaddingBeforeSeconds,
+    paddingAfterSeconds: defaultClipPaddingAfterSeconds,
     replayBufferSeconds: defaultReplayBufferSeconds,
     replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')

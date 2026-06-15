@@ -2,7 +2,7 @@ import { CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucid
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
-import { longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { Button } from '../ui/Button'
@@ -36,9 +36,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [loadingSources, setLoadingSources] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState('4455')
-  const [paddingBefore, setPaddingBefore] = useState('2')
-  const [paddingAfter, setPaddingAfter] = useState('2')
-  const [replayBufferSeconds, setReplayBufferSeconds] = useState('30')
+  const [paddingBefore, setPaddingBefore] = useState(String(defaultClipPaddingBeforeSeconds))
+  const [paddingAfter, setPaddingAfter] = useState(String(defaultClipPaddingAfterSeconds))
+  const [replayBufferSeconds, setReplayBufferSeconds] = useState(String(defaultReplayBufferSeconds))
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
@@ -140,6 +140,13 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     }
   }
 
+  const applyDefaultClipPreset = () => {
+    setPaddingBefore(String(defaultClipPaddingBeforeSeconds))
+    setPaddingAfter(String(defaultClipPaddingAfterSeconds))
+    setReplayBufferSeconds(String(defaultReplayBufferSeconds))
+    setMessage('Дефолтный пресет включён: 2с до входа, 2с после выхода, буфер 60с.')
+  }
+
   const applyLongClipPreset = () => {
     const beforeSeconds = String(longClipPresetSeconds)
     const afterSeconds = String(longClipAfterExitSeconds)
@@ -190,7 +197,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         </button>
       </div>
 
-      <div className="mt-5 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
+      <div className="mt-5 flex flex-wrap items-center gap-3 text-sm leading-6 text-zinc-400">
+        <Button variant="ghost" onClick={applyDefaultClipPreset}><Clock3 size={16} className="mr-2" />Пресет 2с до / 2с после</Button>
+        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">буфер 60с</span>
+      </div>
+
+      <div className="mt-3 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до / 2 минуты после</Button>
           <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>

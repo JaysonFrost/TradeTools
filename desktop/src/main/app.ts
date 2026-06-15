@@ -250,6 +250,14 @@ const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSourc
   type: source.id.startsWith('screen:') ? 'screen' : 'window'
 })
 
+const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
+  const sources = await listDesktopCaptureSources()
+  return sources.some((source) => (
+    !source.id.startsWith('screen:') &&
+    ((input.sourceId && source.id === input.sourceId) || (input.sourceName && source.name === input.sourceName))
+  ))
+}
+
 const getPackagedUpdateConfigPaths = (): string[] => {
   const candidates = [
     join(process.resourcesPath, 'app-update.yml'),
@@ -472,7 +480,8 @@ app.whenReady().then(() => {
     getPassword: () => secretStore.getObsPassword()
   })
   const windowRecorderService = createWindowRecorderService({
-    appDataDir: app.getPath('userData')
+    appDataDir: app.getPath('userData'),
+    isWindowSourceAvailable: isCurrentWindowSourceAvailable
   })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
@@ -859,6 +868,7 @@ app.whenReady().then(() => {
 
   let lastObsReplayEnsureAtMs = 0
   let obsReplayBufferReady = false
+  let backgroundWindowRecordingEnabled = true
 
   const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
@@ -875,6 +885,7 @@ app.whenReady().then(() => {
     if (settings.recording.mode === 'obs') {
       return ensureObsReplayBufferActive(force)
     }
+    if (!backgroundWindowRecordingEnabled) return false
 
     const status = await windowRecorderService.getStatus(settings)
     if (!status.active) {
@@ -979,12 +990,18 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
-  ipcMain.handle('recording:start', async () => windowRecorderService.start(await settingsStore.load()))
+  ipcMain.handle('recording:start', async () => {
+    backgroundWindowRecordingEnabled = true
+    return windowRecorderService.start(await settingsStore.load())
+  })
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:stop', async () => windowRecorderService.stop())
+  ipcMain.handle('recording:stop', async () => {
+    backgroundWindowRecordingEnabled = false
+    return windowRecorderService.stop()
+  })
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())
   ))

@@ -77,6 +77,9 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Микрофон')
     expect(settingsPanelSource).toContain('systemAudioEnabled')
     expect(settingsPanelSource).toContain('microphoneEnabled')
+    expect(settingsPanelSource).toContain('Пресет 2с до / 2с после')
+    expect(settingsPanelSource).toContain('defaultReplayBufferSeconds')
+    expect(settingsPanelSource).toContain('буфер 60с')
     expect(settingsPanelSource).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(settingsPanelSource).toContain('longClipAfterExitSeconds')
@@ -123,7 +126,7 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('recording:free-finish'")
   })
 
-  it('restarts background window recording when main asks during a terminal trade', async () => {
+  it('restarts background window recording only when main asks while background recording is enabled', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -133,10 +136,20 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).toContain('recordingEnsureKey')
     expect(dashboardSource).toContain('onEnsureWindowRecording')
     expect(dashboardSource).toContain('startBackgroundRecording({ silent: true })')
-    expect(dashboardSource).toContain('if (!backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })')
+    expect(dashboardSource).toContain('if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })')
+    expect(dashboardSource).not.toContain('if (!backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })')
     expect(dashboardSource).toContain('recordingEnsureKey={recordingEnsureKey}')
     expect(controllerSource).toContain('recordingEnsureKey?: number')
     expect(controllerSource).toContain('recordingEnsureKey')
+  })
+
+  it('checks a saved window source before showing ffmpeg startup status', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('isSavedWindowSourceMissing')
+    expect(controllerSource.indexOf('isSavedWindowSourceMissing')).toBeLessThan(controllerSource.indexOf('Запускаем оптимизированную ffmpeg-запись'))
+    expect(controllerSource).toContain('scheduleSourceRetry(start)')
+    expect(controllerSource).toContain('Окно ${settings.recording.windowSourceName} не найдено')
   })
 
   it('uses terminal window recording as the default no-API trade source', async () => {
@@ -202,6 +215,9 @@ describe('Dashboard layout', () => {
   it('offers a heavy 10 minute video preset in the setup wizard', async () => {
     const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
 
+    expect(source).toContain('Пресет 2с до / 2с после')
+    expect(source).toContain('defaultReplayBufferSeconds')
+    expect(source).toContain('буфер 60с')
     expect(source).toContain('Пресет 10 минут до / 2 минуты после')
     expect(source).toContain('Тяжёлый режим')
     expect(source).toContain('Локальный буфер до входа, сек')
@@ -268,6 +284,8 @@ describe('Dashboard layout', () => {
     expect(source).toContain('setInterval')
     expect(source).toContain('api.clips.listPending()')
     expect(source).toContain('api.clips.getProcessingStatus()')
+    expect(source).toContain("const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current")
+    expect(source).toContain("const nextWindowRecorder = currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current")
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:get-processing-status')")
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status'")
   })

@@ -1,4 +1,6 @@
-export const defaultReplayBufferSeconds = 30
+export const defaultClipPaddingBeforeSeconds = 2
+export const defaultClipPaddingAfterSeconds = 2
+export const defaultReplayBufferSeconds = 60
 export const longClipPresetSeconds = 600
 export const longClipAfterExitSeconds = 120
 export const maxClipPaddingSeconds = longClipPresetSeconds

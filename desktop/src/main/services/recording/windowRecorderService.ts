@@ -119,6 +119,7 @@ type ReplayExportResult = {
 
 type WindowRecorderServiceInput = {
   appDataDir: string
+  isWindowSourceAvailable?: (source: { sourceId: string, sourceName: string }) => Promise<boolean>
 }
 
 type NativeRecorderState = {
@@ -167,6 +168,7 @@ const formatFilePeriodTimestamp = (timeMs: number): string => {
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
+const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
 const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
@@ -196,7 +198,7 @@ const runFfmpeg = async (args: string[]): Promise<void> => {
   })
 }
 
-export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServiceInput): WindowRecorderService => {
+export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable }: WindowRecorderServiceInput): WindowRecorderService => {
   const segmentsDir = join(appDataDir, 'window-recording', 'segments')
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
@@ -204,6 +206,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   let freeRecording: FreeRecordingState | undefined
   let nativeRecorder: NativeRecorderState | undefined
   let nativeLastError = ''
+  let nativeMissingSource: { settingsKey: string, message: string } | undefined
 
   const nativeSettingsKey = (settings: AppSettings): string => [
     settings.recording.sourceType,
@@ -219,6 +222,41 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     settings.recording.windowSourceName ||
     (settings.recording.sourceType === 'screen' ? 'Экран' : '')
   )
+
+  const clearNativeMissingSource = () => {
+    nativeMissingSource = undefined
+  }
+
+  const savedWindowSourceMissingStatus = async (settings: AppSettings): Promise<WindowRecorderStatus | undefined> => {
+    if (
+      settings.recording.sourceType !== 'window' ||
+      !settings.recording.windowSourceName ||
+      !isWindowSourceAvailable
+    ) {
+      return undefined
+    }
+
+    const available = await isWindowSourceAvailable({
+      sourceId: settings.recording.windowSourceId,
+      sourceName: settings.recording.windowSourceName
+    })
+    if (available) {
+      clearNativeMissingSource()
+      return undefined
+    }
+
+    await stopNativeRecorder()
+    nativeLastError = ''
+    nativeMissingSource = {
+      settingsKey: nativeSettingsKey(settings),
+      message: `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`
+    }
+    return buildStatus(settings, {
+      backend: 'browser',
+      fallbackRequired: true,
+      message: nativeMissingSource.message
+    })
+  }
 
   const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string): string[] => {
     const frameRate = formatFrameRate(settings.recording.frameRate)
@@ -265,6 +303,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   const stopNativeRecorder = async () => {
+    clearNativeMissingSource()
     const current = nativeRecorder
     if (!current) return
 
@@ -332,6 +371,9 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return buildStatus(settings)
     }
 
+    const missingWindowStatus = await savedWindowSourceMissingStatus(settings)
+    if (missingWindowStatus) return missingWindowStatus
+
     if (!isNativeRecordingSupported()) {
       return buildStatus(settings, {
         backend: 'browser',
@@ -363,6 +405,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         backend: 'browser',
         fallbackRequired: true,
         message: 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
+      })
+    }
+
+    if (!isGdigrabRecorderEnabled()) {
+      await stopNativeRecorder()
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows. Пишем через встроенный Chromium-рекордер без курсора.'
       })
     }
 
@@ -398,6 +449,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
 
     nativeLastError = ''
+    clearNativeMissingSource()
     nativeRecorder = state
 
     child.stderr.on('data', (chunk) => {
@@ -405,12 +457,14 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     })
     child.on('error', (error) => {
       nativeLastError = isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg').message : error.message
+      clearNativeMissingSource()
       if (nativeRecorder === state) nativeRecorder = undefined
     })
     child.on('exit', (code, signal) => {
       if (!state.stopping) {
         nativeLastError = normalizeFfmpegLog(state.stderr) || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
       }
+      clearNativeMissingSource()
       if (nativeRecorder === state) nativeRecorder = undefined
     })
 
@@ -881,6 +935,18 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
   }
 
+  const getWindowRecorderStatus = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
+    if (settings.recording.mode === 'window' && nativeMissingSource?.settingsKey === nativeSettingsKey(settings)) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: nativeMissingSource.message
+      })
+    }
+
+    return buildStatus(settings)
+  }
+
   return {
     protectSince(timeMs) {
       const parsed = Number(timeMs)
@@ -918,10 +984,11 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         path,
         sizeBytes: fileStat.size
       })
+      clearNativeMissingSource()
       await pruneSegments(settings, endedAtMs)
       return buildStatus(settings)
     },
-    getStatus: buildStatus,
+    getStatus: getWindowRecorderStatus,
     async pauseFreeRecording(settings) {
       if (!freeRecording) return buildFreeRecordingStatus(settings, 'Свободная запись не запущена')
 

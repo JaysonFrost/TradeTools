@@ -18,7 +18,7 @@ describe('settings', () => {
     expect(settings.language).toBe('ru')
     expect(settings.clip.paddingBeforeSeconds).toBe(2)
     expect(settings.clip.paddingAfterSeconds).toBe(2)
-    expect(settings.clip.replayBufferSeconds).toBe(30)
+    expect(settings.clip.replayBufferSeconds).toBe(60)
     expect(settings.recording).toEqual({
       mode: 'window',
       sourceType: 'window',
