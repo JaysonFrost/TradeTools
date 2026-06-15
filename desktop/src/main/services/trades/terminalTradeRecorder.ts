@@ -20,6 +20,7 @@ export type TerminalTradeRecordingStatus = {
 export type OpenTerminalTrade = Omit<ClosedTrade, 'status' | 'exitTimeMs'> & {
   status: 'open'
   positionId: string
+  size?: number
 }
 
 export type TerminalPositionEvent = {
@@ -30,6 +31,7 @@ export type TerminalPositionEvent = {
   side: string
   isClosed: boolean
   eventTimeMs: number
+  size?: number
 }
 
 export type VatagaPositionEvent = TerminalPositionEvent & {
@@ -103,6 +105,13 @@ const parseNumericValue = (value: unknown): number => {
 }
 
 const isNearlyZero = (value: number): boolean => Number.isFinite(value) && Math.abs(value) <= zeroTolerance
+const comparablePositionSizes = (previousSize: unknown, nextSize: unknown): [number, number] | undefined => {
+  if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return undefined
+  if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return undefined
+  if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return undefined
+  if (Math.sign(previousSize) !== Math.sign(nextSize)) return undefined
+  return [previousSize, nextSize]
+}
 
 const getField = (record: unknown, names: string[]): unknown => {
   if (!record || typeof record !== 'object') return undefined
@@ -228,15 +237,17 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
 
   const eventTimeMs = parseVatagaTime(payload.TradeTime) || parseVatagaTime(payload['@t'])
   if (!eventTimeMs) return undefined
+  const size = parseNumericValue(payload.PositionQuantity)
 
   return {
     source: 'vataga',
     positionId,
     exchange: normalizeVatagaExchange(payload.ExchangeType, payload.SymbolTitle),
     symbol: normalizeVatagaSymbolTitle(payload.SymbolTitle),
-    side: normalizeVatagaSide(payload.PositionQuantity, payload.TradeSide),
+    side: normalizeVatagaSide(size, payload.TradeSide),
     isClosed: payload.IsClosed === true,
-    eventTimeMs
+    eventTimeMs,
+    size: Number.isFinite(size) ? size : undefined
   }
 }
 
@@ -275,7 +286,8 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
     symbol: normalizedSymbol,
     side: normalizeSideFromSize(size),
     isClosed: isNearlyZero(size),
-    eventTimeMs
+    eventTimeMs,
+    size
   }
 }
 
@@ -351,7 +363,8 @@ export const parseMetaScalpPositionSnapshot = (
     symbol: normalizeTerminalSymbol(ticker),
     side: normalizeMetaScalpSide(position, size),
     isClosed: false,
-    eventTimeMs
+    eventTimeMs,
+    size
   }
 }
 
@@ -542,6 +555,7 @@ export const createTerminalTradeWatcher = ({
   ]
 
   const activeTrades = new Map<string, OpenTerminalTrade>()
+  const layeredTrades = new Map<string, OpenTerminalTrade[]>()
   const renderedTradeIds = new Set<string>()
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
@@ -595,22 +609,117 @@ export const createTerminalTradeWatcher = ({
 
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
+  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = ''): OpenTerminalTrade => ({
+    id: `${event.source}-${event.positionId}${idSuffix}`,
+    positionId: positionKey,
+    exchange: event.exchange,
+    marketType: 'TERMINAL',
+    symbol: event.symbol,
+    side: event.side,
+    status: 'open',
+    entryTimeMs: event.eventTimeMs,
+    size: event.size
+  })
+
+  const createClosedTradeClip = async (
+    openTrade: OpenTerminalTrade,
+    event: TerminalPositionEvent,
+    sourceName: string
+  ): Promise<ClosedTrade | undefined> => {
+    const closedTrade: ClosedTrade = {
+      id: `${openTrade.id}-${openTrade.entryTimeMs}-${event.eventTimeMs}`,
+      exchange: openTrade.exchange,
+      marketType: openTrade.marketType,
+      symbol: openTrade.symbol,
+      side: openTrade.side,
+      status: 'closed',
+      entryTimeMs: openTrade.entryTimeMs,
+      exitTimeMs: event.eventTimeMs
+    }
+
+    if (renderedTradeIds.has(closedTrade.id)) return undefined
+    renderedTradeIds.add(closedTrade.id)
+    emit({
+      source: event.source,
+      message: `${sourceName}: ${closedTrade.symbol} закрыта, сохраняем клип`,
+      lastEventAtMs: event.eventTimeMs,
+      lastError: undefined
+    })
+    await protectActiveTrades()
+    await createClipForClosedTrade(closedTrade)
+    return closedTrade
+  }
+
+  const emitQueuedClip = (event: TerminalPositionEvent, sourceName: string, closedTrade: ClosedTrade) => {
+    emit({
+      source: event.source,
+      message: `${sourceName}: клип ${closedTrade.symbol} поставлен в очередь`,
+      lastEventAtMs: event.eventTimeMs,
+      lastError: undefined
+    })
+  }
+
+  const emitClipError = (event: TerminalPositionEvent, sourceName: string, error: unknown) => {
+    emit({
+      source: event.source,
+      message: getErrorMessage(error, `${sourceName}: не удалось сохранить клип`),
+      lastEventAtMs: event.eventTimeMs,
+      lastError: getErrorMessage(error, `${sourceName}: не удалось сохранить клип`)
+    })
+  }
+
+  const handleLayeredPositionUpdate = async (
+    positionKey: string,
+    openTrade: OpenTerminalTrade,
+    event: TerminalPositionEvent,
+    sourceName: string
+  ) => {
+    const sizes = comparablePositionSizes(openTrade.size, event.size)
+    if (!sizes) {
+      if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
+      return
+    }
+
+    const [previousSize, nextSize] = sizes
+    if (Math.abs(nextSize) > Math.abs(previousSize)) {
+      const stack = layeredTrades.get(positionKey) ?? []
+      stack.push({
+        ...createOpenTrade(event, positionKey, `-layer-${event.eventTimeMs}-${stack.length + 1}`),
+        size: nextSize - previousSize
+      })
+      layeredTrades.set(positionKey, stack)
+    } else if (Math.abs(nextSize) < Math.abs(previousSize)) {
+      const stack = layeredTrades.get(positionKey)
+      const layeredTrade = stack?.pop()
+      if (layeredTrade) {
+        if (stack?.length) {
+          layeredTrades.set(positionKey, stack)
+        } else {
+          layeredTrades.delete(positionKey)
+        }
+
+        try {
+          const closedTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
+          if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
+        } catch (error) {
+          emitClipError(event, sourceName, error)
+        }
+      }
+    }
+
+    openTrade.size = nextSize
+  }
+
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
 
     if (!event.isClosed) {
-      if (!activeTrades.has(positionKey)) {
-        activeTrades.set(positionKey, {
-          id: `${event.source}-${event.positionId}`,
-          positionId: positionKey,
-          exchange: event.exchange,
-          marketType: 'TERMINAL',
-          symbol: event.symbol,
-          side: event.side,
-          status: 'open',
-          entryTimeMs: event.eventTimeMs
-        })
+      const openTrade = activeTrades.get(positionKey)
+      if (openTrade) {
+        await handleLayeredPositionUpdate(positionKey, openTrade, event, sourceName)
+      } else {
+        activeTrades.set(positionKey, createOpenTrade(event, positionKey))
       }
 
       await ensureVideoRecordingReady().catch(() => false)
@@ -627,46 +736,25 @@ export const createTerminalTradeWatcher = ({
     const openTrade = activeTrades.get(positionKey)
     if (!openTrade) return
 
-    const closedTrade: ClosedTrade = {
-      id: `${openTrade.id}-${openTrade.entryTimeMs}-${event.eventTimeMs}`,
-      exchange: openTrade.exchange,
-      marketType: openTrade.marketType,
-      symbol: openTrade.symbol,
-      side: openTrade.side,
-      status: 'closed',
-      entryTimeMs: openTrade.entryTimeMs,
-      exitTimeMs: event.eventTimeMs
-    }
-
-    if (renderedTradeIds.has(closedTrade.id)) return
-    renderedTradeIds.add(closedTrade.id)
-    emit({
-      source: event.source,
-      message: `${sourceName}: ${closedTrade.symbol} закрыта, сохраняем клип`,
-      lastEventAtMs: event.eventTimeMs,
-      lastError: undefined
-    })
-
     try {
-      await protectActiveTrades()
-      await createClipForClosedTrade(closedTrade)
+      const stack = layeredTrades.get(positionKey) ?? []
+      while (stack.length > 0) {
+        const layeredTrade = stack.pop()
+        if (!layeredTrade) continue
+        const closedLayeredTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
+        if (closedLayeredTrade) emitQueuedClip(event, sourceName, closedLayeredTrade)
+      }
+      layeredTrades.delete(positionKey)
+
+      const closedTrade = await createClosedTradeClip(openTrade, event, sourceName)
       activeTrades.delete(positionKey)
       await protectActiveTrades()
-      emit({
-        source: event.source,
-        message: `${sourceName}: клип ${closedTrade.symbol} поставлен в очередь`,
-        lastEventAtMs: event.eventTimeMs,
-        lastError: undefined
-      })
+      if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
     } catch (error) {
       activeTrades.delete(positionKey)
+      layeredTrades.delete(positionKey)
       await protectActiveTrades()
-      emit({
-        source: event.source,
-        message: getErrorMessage(error, `${sourceName}: не удалось сохранить клип`),
-        lastEventAtMs: event.eventTimeMs,
-        lastError: getErrorMessage(error, `${sourceName}: не удалось сохранить клип`)
-      })
+      emitClipError(event, sourceName, error)
     }
   }
 
@@ -818,6 +906,7 @@ export const createTerminalTradeWatcher = ({
       if (timer) clearInterval(timer)
       timer = undefined
       activeTrades.clear()
+      layeredTrades.clear()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       protectSince()
