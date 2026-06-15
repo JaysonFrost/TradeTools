@@ -2,7 +2,7 @@ import { CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucid
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
-import { longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { Button } from '../ui/Button'
@@ -30,13 +30,15 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [windowSourceName, setWindowSourceName] = useState('')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
+  const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false)
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState('4455')
-  const [paddingBefore, setPaddingBefore] = useState('2')
-  const [paddingAfter, setPaddingAfter] = useState('2')
-  const [replayBufferSeconds, setReplayBufferSeconds] = useState('30')
+  const [paddingBefore, setPaddingBefore] = useState(String(defaultClipPaddingBeforeSeconds))
+  const [paddingAfter, setPaddingAfter] = useState(String(defaultClipPaddingAfterSeconds))
+  const [replayBufferSeconds, setReplayBufferSeconds] = useState(String(defaultReplayBufferSeconds))
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
@@ -51,6 +53,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setWindowSourceName(settings.recording.windowSourceName)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
+    setSystemAudioEnabled(settings.recording.systemAudioEnabled)
+    setMicrophoneEnabled(settings.recording.microphoneEnabled)
     setHost(settings.obs.host)
     setPort(String(settings.obs.port))
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
@@ -110,7 +114,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
           frameRate: Number(frameRate),
-          segmentSeconds: Number(segmentSeconds)
+          segmentSeconds: Number(segmentSeconds),
+          systemAudioEnabled,
+          microphoneEnabled
         },
         obs: {
           host,
@@ -132,6 +138,13 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     } finally {
       setSaving(false)
     }
+  }
+
+  const applyDefaultClipPreset = () => {
+    setPaddingBefore(String(defaultClipPaddingBeforeSeconds))
+    setPaddingAfter(String(defaultClipPaddingAfterSeconds))
+    setReplayBufferSeconds(String(defaultReplayBufferSeconds))
+    setMessage('Дефолтный пресет включён: 2с до входа, 2с после выхода, буфер 60с.')
   }
 
   const applyLongClipPreset = () => {
@@ -184,7 +197,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         </button>
       </div>
 
-      <div className="mt-5 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
+      <div className="mt-5 flex flex-wrap items-center gap-3 text-sm leading-6 text-zinc-400">
+        <Button variant="ghost" onClick={applyDefaultClipPreset}><Clock3 size={16} className="mr-2" />Пресет 2с до / 2с после</Button>
+        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">буфер 60с</span>
+      </div>
+
+      <div className="mt-3 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до / 2 минуты после</Button>
           <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
@@ -267,6 +285,24 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
             <label className="text-xs font-medium text-zinc-500">
               <span>Буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
               <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
+            </label>
+            <label className="flex min-h-10 items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-violet-500"
+                checked={systemAudioEnabled}
+                onChange={(event) => setSystemAudioEnabled(event.target.checked)}
+              />
+              Звук с ПК
+            </label>
+            <label className="flex min-h-10 items-center gap-2 whitespace-nowrap rounded-2xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-violet-500"
+                checked={microphoneEnabled}
+                onChange={(event) => setMicrophoneEnabled(event.target.checked)}
+              />
+              Микрофон
             </label>
             <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-6">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>
           </>

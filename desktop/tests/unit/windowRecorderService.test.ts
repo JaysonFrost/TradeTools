@@ -1,8 +1,78 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createWindowRecorderService } from '../../src/main/services/recording/windowRecorderService'
+import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 describe('windowRecorderService', () => {
+  const createMissingVatagaWindowFixture = async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-recorder-'))
+    const settings = createDefaultSettings(dataDir)
+    const checkedSourceNames: string[] = []
+    const service = createWindowRecorderService({
+      appDataDir: dataDir,
+      isWindowSourceAvailable: async (source) => {
+        checkedSourceNames.push(source.sourceName)
+        return false
+      }
+    })
+    const recordingSettings = {
+      ...settings,
+      recording: {
+        ...settings.recording,
+        mode: 'window' as const,
+        sourceType: 'window' as const,
+        windowSourceId: 'window:123',
+        windowSourceName: 'Vataga.terminal',
+        systemAudioEnabled: false,
+        microphoneEnabled: false
+      }
+    }
+
+    return {
+      dataDir,
+      service,
+      settings: recordingSettings,
+      getCheckedSourceNames: () => [...checkedSourceNames]
+    }
+  }
+
+  it('does not start native ffmpeg capture when the saved terminal window is closed', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+
+    try {
+      const status = await service.start(settings)
+
+      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(status.active).toBe(false)
+      expect(status.fallbackRequired).toBe(true)
+      expect(status.message).toContain('Окно Vataga.terminal не найдено')
+      expect(status.message).not.toContain("Can't find window")
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the missing saved window message stable without rechecking windows during status polls', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+
+    try {
+      await service.start(settings)
+      const status = await service.getStatus(settings)
+
+      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(status.active).toBe(false)
+      expect(status.fallbackRequired).toBe(true)
+      expect(status.message).toContain('Окно Vataga.terminal не найдено')
+      expect(status.message).not.toBe('Ждём сегменты от встроенного рекордера')
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
   it('reports buffered and required seconds when replay export is requested too early', async () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
@@ -33,6 +103,33 @@ describe('windowRecorderService', () => {
     expect(source).toContain('replayEndMs')
   })
 
+  it('does not read old browser session segments outside the requested replay range', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('buildSessionFiles = async (neededSegments')
+    expect(source).not.toContain('sourceSegments: StoredSegment[], neededSegments')
+    expect(source).not.toContain('firstSequence !== 0')
+  })
+
+  it('reports a readable message when a needed browser segment file is gone', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('assertSegmentFile')
+    expect(source).toContain('Часть буфера встроенной записи уже очищена')
+    expect(source).toContain('getErrorCode(error) ===')
+  })
+
+  it('keeps browser recorder chunks as standalone webm files for ffmpeg concat', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('recorder.start()')
+    expect(controllerSource).not.toContain('recorder.start(chunkDurationMs)')
+    expect(serviceSource).toContain('cleanup?: boolean')
+    expect(serviceSource).toContain('neededSegments.map')
+    expect(serviceSource).not.toContain('appendFile(sessionPath')
+  })
+
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
@@ -44,6 +141,7 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
+    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording' })")
     expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
     expect(serviceSource).toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')
@@ -61,6 +159,20 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
     expect(serviceSource).toContain('не мигает курсор Windows')
     expect(controllerSource).toContain("cursor: 'never'")
+  })
+
+  it('uses Chromium capture for audio-enabled built-in recording and keeps audio in browser exports', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(serviceSource).toContain('settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled')
+    expect(serviceSource).toContain('Звук встроен в видео через Chromium')
+    expect(serviceSource).not.toContain('Звук пишется через Chromium')
+    expect(serviceSource).toContain("'0:a?'")
+    expect(serviceSource).toContain("'-c:a'")
+    expect(serviceSource).toContain("'aac'")
+    expect(controllerSource).toContain('chromeMediaSourceId: sourceId')
+    expect(controllerSource).toContain('getAudioTracks()')
   })
 
   it('keeps free recording segments and exports a stocks-book recording file', async () => {

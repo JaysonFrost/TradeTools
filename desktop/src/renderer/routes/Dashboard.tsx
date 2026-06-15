@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Pause, Play, Square, Video } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
@@ -39,6 +39,9 @@ type VideoPageProps = {
   windowRecorder?: WindowRecorderStatus
   freeRecording?: FreeRecordingStatus
   terminalTrade: TerminalTradeRecordingStatus
+  backgroundRecordingEnabled: boolean
+  onBackgroundRecordingStart: () => void
+  onBackgroundRecordingStop: () => void
   onCreateTestClip: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
@@ -77,28 +80,102 @@ const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
 
 const formatSeconds = (value: number): string => `${Math.max(0, Math.round(value))}с`
 
-const RecorderBufferProgress = ({ settings, windowRecorder }: { settings?: AppSettings, windowRecorder?: WindowRecorderStatus }) => {
-  if (!settings || settings.recording.mode !== 'window') return null
+const createStoppedWindowRecorderStatus = (settings: AppSettings): WindowRecorderStatus => ({
+  enabled: true,
+  active: false,
+  backend: 'browser',
+  mode: settings.recording.mode,
+  sourceId: settings.recording.windowSourceId,
+  sourceName: settings.recording.windowSourceName,
+  segmentCount: 0,
+  bufferedSeconds: 0,
+  lastSegmentAtMs: 0,
+  message: 'Фоновая запись остановлена'
+})
 
-  const targetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
+const RecordingStatusPanel = ({
+  settings,
+  obs,
+  windowRecorder,
+  terminalTrade,
+  backgroundRecordingEnabled,
+  onBackgroundRecordingStart,
+  onBackgroundRecordingStop
+}: {
+  settings?: AppSettings
+  obs: ObsUiState
+  windowRecorder?: WindowRecorderStatus
+  terminalTrade: TerminalTradeRecordingStatus
+  backgroundRecordingEnabled: boolean
+  onBackgroundRecordingStart: () => void
+  onBackgroundRecordingStop: () => void
+}) => {
+  const isWindowMode = settings?.recording.mode === 'window'
+  const targetSeconds = Math.max(1, Math.round(settings?.clip.replayBufferSeconds ?? 1))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
+  const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
+  const terminalStatus = terminalTrade.active
+    ? `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
+    : terminalTrade.message || 'Ждём сделку'
+  const statusText = !isWindowMode
+    ? obs.status
+    : !backgroundRecordingEnabled
+      ? 'Фон остановлен'
+      : windowRecorder?.active
+        ? 'Пишет'
+        : bufferedSeconds > 0
+          ? 'Буфер есть'
+          : 'Ждёт окно'
+  const message = !isWindowMode
+    ? obs.message
+    : !backgroundRecordingEnabled
+      ? 'Автоклипы и свободная запись сейчас выключены.'
+      : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'
+  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
     <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="text-sm font-semibold text-zinc-100">Буфер до входа</div>
-          <div className="mt-1 text-sm text-zinc-400">Накоплено {formatSeconds(bufferedSeconds)} из {formatSeconds(targetSeconds)}</div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишет' || statusText === 'Буфер есть' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
+              {statusText}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>
+          {isWindowMode && (
+            <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
+              <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
+              <div>Буфер: <span className="text-zinc-300">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
+              <div>Сделки: <span className="text-zinc-300">{terminalStatus}</span></div>
+            </div>
+          )}
+          {terminalTrade.lastError && <p className="mt-2 text-xs leading-5 text-amber-300">{terminalTrade.lastError}</p>}
         </div>
-        <div className="text-xs font-semibold text-violet-200">{Math.round(progressPercent)}%</div>
+        {isWindowMode && (
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {backgroundRecordingEnabled ? (
+              <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onBackgroundRecordingStop} type="button">
+                <Square size={16} className="mr-2" />Остановить фоновую запись
+              </button>
+            ) : (
+              <button className={`${buttonBase} border-emerald-400/30 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25`} onClick={onBackgroundRecordingStart} disabled={!settings} type="button">
+                <Play size={16} className="mr-2" />Включить фоновую запись
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-        <div
-          className="h-full rounded-full bg-violet-400 transition-[width] duration-500"
-          style={{ width: `${progressPercent > 0 ? Math.max(3, progressPercent) : 0}%` }}
-        />
-      </div>
+      {isWindowMode && (
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full rounded-full bg-violet-400"
+            style={{ width: `${progressPercent > 0 ? Math.max(3, progressPercent) : 0}%` }}
+          />
+        </div>
+      )}
     </section>
   )
 }
@@ -109,7 +186,8 @@ const FreeRecordingControls = ({
   onStart,
   onPause,
   onResume,
-  onFinish
+  onFinish,
+  backgroundRecordingEnabled
 }: {
   settings?: AppSettings
   freeRecording?: FreeRecordingStatus
@@ -117,11 +195,12 @@ const FreeRecordingControls = ({
   onPause: () => void
   onResume: () => void
   onFinish: () => void
+  backgroundRecordingEnabled: boolean
 }) => {
   const isWindowMode = settings?.recording.mode === 'window'
   const isActive = Boolean(freeRecording?.active)
   const isPaused = Boolean(freeRecording?.paused)
-  const disabled = !settings || !isWindowMode
+  const disabled = !settings || !isWindowMode || !backgroundRecordingEnabled
   const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
   const startedAt = freeRecording?.startedAtMs ? new Date(freeRecording.startedAtMs).toLocaleTimeString('ru-RU') : ''
 
@@ -137,7 +216,7 @@ const FreeRecordingControls = ({
           </div>
           <p className="mt-1 text-sm leading-6 text-zinc-400">
             {disabled
-              ? 'Свободная запись доступна во встроенной записи окна или экрана.'
+              ? backgroundRecordingEnabled ? 'Свободная запись доступна во встроенной записи окна или экрана.' : 'Сначала включите фоновую запись.'
               : isActive
                 ? `${freeRecording?.message ?? 'Записываем терминал'}${startedAt ? ` с ${startedAt}` : ''}.`
                 : 'Записывает выбранное окно или экран без привязки к сделкам.'}
@@ -170,72 +249,17 @@ const FreeRecordingControls = ({
   )
 }
 
-const TerminalTradeControls = ({
-  windowRecorder,
-  terminalTrade
-}: {
-  windowRecorder?: WindowRecorderStatus
-  terminalTrade: TerminalTradeRecordingStatus
-}) => {
-  const recorderActive = Boolean(windowRecorder?.active)
-  const startedAt = terminalTrade.startedAtMs ? new Date(terminalTrade.startedAtMs).toLocaleTimeString('ru-RU') : ''
-
-  return (
-    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="min-w-0">
-          <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
-          <p className="mt-1 text-sm leading-6 text-zinc-400">
-            {terminalTrade.active
-              ? `${terminalTrade.message || 'Идёт сделка'} с ${startedAt}. Активных позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
-              : recorderActive
-                ? terminalTrade.message
-                : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'}
-          </p>
-          {terminalTrade.lastError && <p className="mt-2 text-xs leading-5 text-amber-300">{terminalTrade.lastError}</p>}
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs font-semibold text-zinc-300">
-          {terminalTrade.active ? 'Пишем сделку' : 'Ждём сделку'}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, onCreateTestClip, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
-  const recordingMode = settings?.recording.mode ?? 'window'
-  const videoStatuses = useMemo(() => {
-    return [
-      {
-        name: recordingMode === 'window' ? 'Встроенная запись окна' : 'OBS Replay Buffer',
-        description: recordingMode === 'window' ? windowRecorder?.message ?? 'Выберите окно терминала и сохраните настройки.' : obs.message,
-        status: recordingMode === 'window'
-          ? windowRecorder?.active ? 'Пишет' : 'Нужно настроить'
-          : obs.status,
-        tone: recordingMode === 'window'
-          ? windowRecorder?.active ? 'success' as const : 'warning' as const
-          : obs.connected ? 'success' as const : 'warning' as const
-      },
-      {
-        name: 'Источник сделок',
-        description: windowRecorder?.active
-          ? terminalTrade.message || 'TradeTools автоматически пишет окно терминала и ждёт сделки Vataga, TigerTrade или MetaScalp.'
-          : windowRecorder?.message ?? 'Откройте терминал, чтобы TradeTools начал локальную запись.',
-        status: terminalTrade.active ? 'Пишем сделку' : windowRecorder?.active ? 'Авто' : 'Ждём окно',
-        tone: terminalTrade.lastError ? 'warning' as const : windowRecorder?.active ? 'success' as const : 'warning' as const
-      }
-    ]
-  }, [obs, windowRecorder, recordingMode, terminalTrade])
-
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
-      <section className="col-span-12 grid gap-4 lg:grid-cols-2">
-        {videoStatuses.map((status) => <IntegrationStatusCard key={status.name} {...status} />)}
-      </section>
-      <RecorderBufferProgress settings={settings} windowRecorder={windowRecorder} />
-      <TerminalTradeControls
+      <RecordingStatusPanel
+        settings={settings}
+        obs={obs}
         windowRecorder={windowRecorder}
         terminalTrade={terminalTrade}
+        backgroundRecordingEnabled={backgroundRecordingEnabled}
+        onBackgroundRecordingStart={onBackgroundRecordingStart}
+        onBackgroundRecordingStop={onBackgroundRecordingStop}
       />
       <FreeRecordingControls
         settings={settings}
@@ -244,6 +268,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         onPause={onFreeRecordingPause}
         onResume={onFreeRecordingResume}
         onFinish={onFreeRecordingFinish}
+        backgroundRecordingEnabled={backgroundRecordingEnabled}
       />
       <section className="col-span-12">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -323,6 +348,9 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     progressPercent: 0
   })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
+  const [backgroundRecordingEnabled, setBackgroundRecordingEnabled] = useState(true)
+  const backgroundRecordingEnabledRef = useRef(true)
+  const [recordingEnsureKey, setRecordingEnsureKey] = useState(0)
   const [freeRecording, setFreeRecording] = useState<FreeRecordingStatus>()
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
@@ -343,18 +371,25 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     replayBufferActive: false
   })
 
+  const setBackgroundRecording = (enabled: boolean) => {
+    backgroundRecordingEnabledRef.current = enabled
+    setBackgroundRecordingEnabled(enabled)
+  }
+
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
-        api.recording.getStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
+      const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+        ? createStoppedWindowRecorderStatus(nextSettings)
+        : await api.recording.getStatus()
 
       setAppVersion(version)
       setSettings(nextSettings)
@@ -389,7 +424,9 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     const api = getTradeToolsApi()
     const currentSettings = settings ?? await api.settings.get()
     if (currentSettings.recording.mode === 'window') {
-      const status = await api.recording.getStatus()
+      const status = backgroundRecordingEnabledRef.current
+        ? await api.recording.getStatus()
+        : createStoppedWindowRecorderStatus(currentSettings)
       setWindowRecorder(status)
       setObs({
         status: status.active ? 'Пишет' : 'Нужно настроить',
@@ -413,15 +450,18 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
-      const [pendingClips, nextClipProcessing, nextWindowRecorder, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
-        api.recording.getStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus()
       ])
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
+      const currentSettings = settings ?? await api.settings.get()
+      const nextWindowRecorder = currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+        ? createStoppedWindowRecorderStatus(currentSettings)
+        : await api.recording.getStatus()
       setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
@@ -447,7 +487,9 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       const api = getTradeToolsApi()
       const currentSettings = settings ?? await api.settings.get()
       if (currentSettings.recording.mode === 'window') {
-        const status = await api.recording.getStatus()
+        const status = backgroundRecordingEnabledRef.current
+          ? await api.recording.getStatus()
+          : createStoppedWindowRecorderStatus(currentSettings)
         setWindowRecorder(status)
         setLastCheck({
           ok: status.active,
@@ -513,7 +555,47 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
+  const stopBackgroundRecording = async () => {
+    try {
+      const api = getTradeToolsApi()
+      const currentSettings = settings ?? await api.settings.get()
+      setBackgroundRecording(false)
+      await api.recording.stop()
+      setWindowRecorder(createStoppedWindowRecorderStatus(currentSettings))
+      setClipMessage('Фоновая запись остановлена')
+    } catch (error) {
+      setBackgroundRecording(true)
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось остановить фоновую запись')
+    }
+  }
+
+  const startBackgroundRecording = async (options: { silent?: boolean } = {}) => {
+    try {
+      const api = getTradeToolsApi()
+      const currentSettings = settings ?? await api.settings.get()
+      if (currentSettings.recording.mode !== 'window') {
+        if (!options.silent) setClipMessage('Фоновая запись доступна во встроенном режиме')
+        return
+      }
+
+      setBackgroundRecording(true)
+      setRecordingEnsureKey((current) => current + 1)
+      if (options.silent) return
+
+      const status = await api.recording.start()
+      setWindowRecorder(status)
+      setClipMessage(status.message)
+    } catch (error) {
+      if (!options.silent) setClipMessage(error instanceof Error ? error.message : 'Не удалось включить фоновую запись')
+    }
+  }
+
   const startFreeRecording = async () => {
+    if (!backgroundRecordingEnabledRef.current) {
+      setClipMessage('Сначала включите фоновую запись')
+      return
+    }
+
     try {
       const status = await getTradeToolsApi().recording.startFree()
       setFreeRecording(status)
@@ -560,10 +642,14 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     void loadLocalState()
     let unsubscribeProxyCheck: (() => void) | undefined
     let unsubscribeProxySetup: (() => void) | undefined
+    let unsubscribeRecordingEnsure: (() => void) | undefined
     try {
       const api = getTradeToolsApi()
       unsubscribeProxyCheck = api.proxies.onConfigureChainProgress((progress) => appendProxyProgress('check', progress))
       unsubscribeProxySetup = api.proxies.onSetupChainProgress((progress) => appendProxyProgress('setup', progress))
+      unsubscribeRecordingEnsure = api.recording.onEnsureWindowRecording(() => {
+        if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })
+      })
     } catch {
       // loadLocalState already surfaces Electron API errors.
     }
@@ -572,6 +658,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       window.clearInterval(interval)
       unsubscribeProxyCheck?.()
       unsubscribeProxySetup?.()
+      unsubscribeRecordingEnsure?.()
     }
   }, [])
 
@@ -613,7 +700,10 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           windowRecorder={windowRecorder}
           freeRecording={freeRecording}
           terminalTrade={terminalTrade}
+          backgroundRecordingEnabled={backgroundRecordingEnabled}
           clipProcessing={activeClipProcessing}
+          onBackgroundRecordingStart={() => void startBackgroundRecording()}
+          onBackgroundRecordingStop={() => void stopBackgroundRecording()}
           onCreateTestClip={() => void createTestClip()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
@@ -633,7 +723,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       ) : (
         <SupportDeveloperPage />
       )}
-      <WindowRecorderController settings={settings} onStatusChange={setWindowRecorder} onSettingsChange={setSettings} />
+      <WindowRecorderController settings={settings} enabled={backgroundRecordingEnabled} recordingEnsureKey={recordingEnsureKey} onStatusChange={setWindowRecorder} onSettingsChange={setSettings} />
     </>
   )
 }

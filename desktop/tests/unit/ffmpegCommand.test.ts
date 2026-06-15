@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFfmpegTrimArgs } from '../../src/main/services/video/ffmpegCommand'
+import { buildFfmpegTrimArgs, buildH264VideoArgs } from '../../src/main/services/video/ffmpegCommand'
 
 describe('buildFfmpegTrimArgs', () => {
   it('builds a safe stream-copy trim command argument list', () => {
@@ -66,5 +66,38 @@ describe('buildFfmpegTrimArgs', () => {
       endSeconds: 10,
       mode: 'copy'
     })).toThrow('Trim end must be after start')
+  })
+
+  it('uses platform hardware H.264 encoders for video re-encoding', () => {
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'export' })).toEqual([
+      '-c:v',
+      'h264_mf',
+      '-hw_encoding',
+      '1',
+      '-b:v',
+      '10M',
+      '-pix_fmt',
+      'nv12'
+    ])
+    expect(buildH264VideoArgs({ platform: 'darwin', purpose: 'recording' })).toEqual([
+      '-c:v',
+      'h264_videotoolbox',
+      '-realtime',
+      '1',
+      '-b:v',
+      '8M',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+    expect(buildH264VideoArgs({ platform: 'linux', purpose: 'export' })).toEqual([
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '18',
+      '-pix_fmt',
+      'yuv420p'
+    ])
   })
 })

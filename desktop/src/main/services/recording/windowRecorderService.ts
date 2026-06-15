@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
+import { buildH264VideoArgs } from '../video/ffmpegCommand'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 
 export type WindowCaptureSource = {
@@ -103,6 +104,7 @@ type ReplaySessionFile = {
   path: string
   startedAtMs: number
   endedAtMs: number
+  cleanup?: boolean
 }
 
 type ReplayWriteResult = {
@@ -117,6 +119,7 @@ type ReplayExportResult = {
 
 type WindowRecorderServiceInput = {
   appDataDir: string
+  isWindowSourceAvailable?: (source: { sourceId: string, sourceName: string }) => Promise<boolean>
 }
 
 type NativeRecorderState = {
@@ -168,6 +171,10 @@ const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
 const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
+const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
+const getErrorCode = (error: unknown): string => (
+  typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
+)
 
 const runFfmpeg = async (args: string[]): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -191,7 +198,7 @@ const runFfmpeg = async (args: string[]): Promise<void> => {
   })
 }
 
-export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServiceInput): WindowRecorderService => {
+export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable }: WindowRecorderServiceInput): WindowRecorderService => {
   const segmentsDir = join(appDataDir, 'window-recording', 'segments')
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
@@ -199,19 +206,57 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   let freeRecording: FreeRecordingState | undefined
   let nativeRecorder: NativeRecorderState | undefined
   let nativeLastError = ''
+  let nativeMissingSource: { settingsKey: string, message: string } | undefined
 
   const nativeSettingsKey = (settings: AppSettings): string => [
     settings.recording.sourceType,
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
     settings.recording.frameRate,
-    settings.recording.segmentSeconds
+    settings.recording.segmentSeconds,
+    String(settings.recording.systemAudioEnabled),
+    String(settings.recording.microphoneEnabled)
   ].join('|')
 
   const nativeSourceName = (settings: AppSettings): string => (
     settings.recording.windowSourceName ||
     (settings.recording.sourceType === 'screen' ? 'Экран' : '')
   )
+
+  const clearNativeMissingSource = () => {
+    nativeMissingSource = undefined
+  }
+
+  const savedWindowSourceMissingStatus = async (settings: AppSettings): Promise<WindowRecorderStatus | undefined> => {
+    if (
+      settings.recording.sourceType !== 'window' ||
+      !settings.recording.windowSourceName ||
+      !isWindowSourceAvailable
+    ) {
+      return undefined
+    }
+
+    const available = await isWindowSourceAvailable({
+      sourceId: settings.recording.windowSourceId,
+      sourceName: settings.recording.windowSourceName
+    })
+    if (available) {
+      clearNativeMissingSource()
+      return undefined
+    }
+
+    await stopNativeRecorder()
+    nativeLastError = ''
+    nativeMissingSource = {
+      settingsKey: nativeSettingsKey(settings),
+      message: `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`
+    }
+    return buildStatus(settings, {
+      backend: 'browser',
+      fallbackRequired: true,
+      message: nativeMissingSource.message
+    })
+  }
 
   const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string): string[] => {
     const frameRate = formatFrameRate(settings.recording.frameRate)
@@ -236,16 +281,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       '-map',
       '0:v:0',
       '-an',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      '-tune',
-      'zerolatency',
-      '-crf',
-      '24',
-      '-pix_fmt',
-      'yuv420p',
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording' }),
       '-r',
       frameRate,
       '-fps_mode',
@@ -267,6 +303,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   const stopNativeRecorder = async () => {
+    clearNativeMissingSource()
     const current = nativeRecorder
     if (!current) return
 
@@ -334,6 +371,9 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       return buildStatus(settings)
     }
 
+    const missingWindowStatus = await savedWindowSourceMissingStatus(settings)
+    if (missingWindowStatus) return missingWindowStatus
+
     if (!isNativeRecordingSupported()) {
       return buildStatus(settings, {
         backend: 'browser',
@@ -342,12 +382,12 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       })
     }
 
-    if (!isGdigrabRecorderEnabled()) {
+    if (browserAudioEnabled(settings)) {
       await stopNativeRecorder()
       return buildStatus(settings, {
         backend: 'browser',
         fallbackRequired: true,
-        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows и мешать играм. Пишем через встроенный Chromium-рекордер без курсора.'
+        message: 'Звук встроен в видео через Chromium: системный звук и микрофон идут в тот же клип.'
       })
     }
 
@@ -365,6 +405,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         backend: 'browser',
         fallbackRequired: true,
         message: 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
+      })
+    }
+
+    if (!isGdigrabRecorderEnabled()) {
+      await stopNativeRecorder()
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows. Пишем через встроенный Chromium-рекордер без курсора.'
       })
     }
 
@@ -400,6 +449,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
 
     nativeLastError = ''
+    clearNativeMissingSource()
     nativeRecorder = state
 
     child.stderr.on('data', (chunk) => {
@@ -407,12 +457,14 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     })
     child.on('error', (error) => {
       nativeLastError = isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg').message : error.message
+      clearNativeMissingSource()
       if (nativeRecorder === state) nativeRecorder = undefined
     })
     child.on('exit', (code, signal) => {
       if (!state.stopping) {
         nativeLastError = normalizeFfmpegLog(state.stderr) || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
       }
+      clearNativeMissingSource()
       if (nativeRecorder === state) nativeRecorder = undefined
     })
 
@@ -544,71 +596,47 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     return relevantSegments(settings)
   }
 
-  const buildSessionFiles = async (sourceSegments: StoredSegment[], neededSegments: StoredSegment[], replayId: string): Promise<ReplaySessionFile[]> => {
-    const lastNeededSequenceBySession = new Map<string, number>()
-    const sessionStartedAt = new Map<string, number>()
-
-    for (const segment of neededSegments) {
-      lastNeededSequenceBySession.set(segment.sessionId, Math.max(lastNeededSequenceBySession.get(segment.sessionId) ?? -1, segment.sequence))
-    }
-    for (const segment of sourceSegments) {
-      if (!lastNeededSequenceBySession.has(segment.sessionId)) continue
-      sessionStartedAt.set(segment.sessionId, Math.min(sessionStartedAt.get(segment.sessionId) ?? segment.startedAtMs, segment.startedAtMs))
-    }
-
-    const sessionIds = [...lastNeededSequenceBySession.keys()].sort((left, right) => (
-      (sessionStartedAt.get(left) ?? 0) - (sessionStartedAt.get(right) ?? 0)
-    ))
-    const sessionFiles: ReplaySessionFile[] = []
-
-    for (const sessionId of sessionIds) {
-      const lastSequence = lastNeededSequenceBySession.get(sessionId) ?? -1
-      const sessionSegments = sourceSegments
-        .filter((segment) => segment.sessionId === sessionId && segment.sequence <= lastSequence)
-        .sort((left, right) => left.sequence - right.sequence || left.startedAtMs - right.startedAtMs)
-      const firstSequence = sessionSegments[0]?.sequence
-      if (firstSequence !== 0) throw new Error('Встроенный рекордер уже очистил начало нужной сессии записи. Попробуйте увеличить длительность буфера записи.')
-      const firstSegment = sessionSegments[0]
-      const lastSegment = sessionSegments.at(-1)
-      if (!firstSegment || !lastSegment) continue
-
-      const sessionPath = join(replaysDir, `${toFileTimestamp(lastSegment.endedAtMs)}-${replayId}-${sessionFiles.length}.webm`)
-      await rm(sessionPath, { force: true }).catch(() => undefined)
-      for (const segment of sessionSegments) {
-        await appendFile(sessionPath, await readFile(segment.path))
+  const assertSegmentFile = async (segment: StoredSegment): Promise<void> => {
+    try {
+      await stat(segment.path)
+    } catch (error) {
+      if (getErrorCode(error) === 'ENOENT') {
+        throw new Error('Часть буфера встроенной записи уже очищена. Подождите пару секунд, чтобы накопились новые сегменты, и повторите тест.')
       }
-      sessionFiles.push({
-        path: sessionPath,
-        startedAtMs: firstSegment.startedAtMs,
-        endedAtMs: lastSegment.endedAtMs
-      })
+      throw error
     }
-
-    return sessionFiles
   }
 
-  const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => [
-    '-map',
-    '0:v:0',
-    '-an',
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    '18',
-    '-pix_fmt',
-    'yuv420p',
-    '-r',
-    String(settings.recording.frameRate),
-    '-fps_mode',
-    'cfr',
-    '-avoid_negative_ts',
-    'make_zero',
-    '-movflags',
-    '+faststart',
-    outputPath
-  ]
+  const buildSessionFiles = async (neededSegments: StoredSegment[], _replayId: string): Promise<ReplaySessionFile[]> => {
+    await Promise.all(neededSegments.map(assertSegmentFile))
+    return neededSegments.map((segment) => ({
+      path: segment.path,
+      startedAtMs: segment.startedAtMs,
+      endedAtMs: segment.endedAtMs
+    }))
+  }
+
+  const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => {
+    const audioArgs = browserAudioEnabled(settings)
+      ? ['-map', '0:a?', '-c:a', 'aac', '-b:a', '160k']
+      : ['-an']
+
+    return [
+      '-map',
+      '0:v:0',
+      ...audioArgs,
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
+      '-r',
+      String(settings.recording.frameRate),
+      '-fps_mode',
+      'cfr',
+      '-avoid_negative_ts',
+      'make_zero',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ]
+  }
 
   const trimBrowserReplayFile = async (
     sessionFiles: ReplaySessionFile[],
@@ -705,14 +733,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         '-map',
         '0:v:0',
         '-an',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '18',
-        '-pix_fmt',
-        'yuv420p',
+        ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
         '-r',
         String(settings.recording.frameRate),
         '-fps_mode',
@@ -727,7 +748,6 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   const writeReplayFromSegments = async (
-    sourceSegments: StoredSegment[],
     neededSegments: StoredSegment[],
     replayPath: string,
     settings: AppSettings,
@@ -746,7 +766,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
 
     if (allBrowserSegments) {
-      sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
+      sessionFiles = await buildSessionFiles(neededSegments, replayId)
       await trimBrowserReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs)
       return { sessionFiles, readyClip: true }
     }
@@ -790,7 +810,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     let sessionFiles: ReplaySessionFile[] = []
 
     try {
-      const writeResult = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath, replayStartMs, replayEndMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, replayStartMs, replayEndMs)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(replayEndMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -800,7 +820,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       }
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
-      await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+      await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
     }
   }
 
@@ -895,7 +915,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
     try {
       await rm(replayPath, { force: true }).catch(() => undefined)
-      const writeResult = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath, recording.startedAtMs, endedAtMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, recording.startedAtMs, endedAtMs)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -911,8 +931,20 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       }
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
-      await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+      await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
     }
+  }
+
+  const getWindowRecorderStatus = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
+    if (settings.recording.mode === 'window' && nativeMissingSource?.settingsKey === nativeSettingsKey(settings)) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: nativeMissingSource.message
+      })
+    }
+
+    return buildStatus(settings)
   }
 
   return {
@@ -952,10 +984,11 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         path,
         sizeBytes: fileStat.size
       })
+      clearNativeMissingSource()
       await pruneSegments(settings, endedAtMs)
       return buildStatus(settings)
     },
-    getStatus: buildStatus,
+    getStatus: getWindowRecorderStatus,
     async pauseFreeRecording(settings) {
       if (!freeRecording) return buildFreeRecordingStatus(settings, 'Свободная запись не запущена')
 

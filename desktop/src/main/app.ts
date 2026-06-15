@@ -8,7 +8,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
 import { setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
-import { createWindowRecorderService, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
+import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
@@ -41,10 +41,17 @@ const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcScreenCapturer',
   'AllowWgcScreenZeroHz'
 ]
+const macLoopbackAudioFeatures = [
+  'MacLoopbackAudioForScreenShare',
+  'MacSckSystemAudioLoopbackOverride'
+]
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(windowsAppUserModelId)
   app.commandLine.appendSwitch('disable-features', windowsDesktopCaptureFallbackFeatures.join(','))
+}
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', macLoopbackAudioFeatures.join(','))
 }
 
 const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'неизвестная ошибка'
@@ -227,6 +234,29 @@ const assertHttpUrl = (url: string): string => {
 }
 
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
+
+type DesktopCaptureSource = Awaited<ReturnType<typeof desktopCapturer.getSources>>[number]
+
+const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
+  types: ['window', 'screen'],
+  thumbnailSize: { width: 1, height: 1 },
+  fetchWindowIcons: false
+})
+
+const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => ({
+  id: source.id,
+  name: source.name,
+  displayId: source.display_id,
+  type: source.id.startsWith('screen:') ? 'screen' : 'window'
+})
+
+const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
+  const sources = await listDesktopCaptureSources()
+  return sources.some((source) => (
+    !source.id.startsWith('screen:') &&
+    ((input.sourceId && source.id === input.sourceId) || (input.sourceName && source.name === input.sourceName))
+  ))
+}
 
 const getPackagedUpdateConfigPaths = (): string[] => {
   const candidates = [
@@ -450,7 +480,8 @@ app.whenReady().then(() => {
     getPassword: () => secretStore.getObsPassword()
   })
   const windowRecorderService = createWindowRecorderService({
-    appDataDir: app.getPath('userData')
+    appDataDir: app.getPath('userData'),
+    isWindowSourceAvailable: isCurrentWindowSourceAvailable
   })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
@@ -504,6 +535,20 @@ app.whenReady().then(() => {
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
+  }
+
+  const notifyWindowRecordingNeeded = () => {
+    const windows = BrowserWindow.getAllWindows()
+    const targets = windows.length > 0 ? windows : [createMainWindow()]
+
+    for (const window of targets) {
+      const send = () => window.webContents.send('recording:ensure-window')
+      if (window.webContents.isLoading()) {
+        window.webContents.once('did-finish-load', send)
+      } else {
+        send()
+      }
+    }
   }
 
   const showSystemNotification = (input: { title: string, body: string, onClick?: () => void }): SystemNotificationResult => {
@@ -823,6 +868,7 @@ app.whenReady().then(() => {
 
   let lastObsReplayEnsureAtMs = 0
   let obsReplayBufferReady = false
+  let backgroundWindowRecordingEnabled = true
 
   const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
@@ -839,10 +885,13 @@ app.whenReady().then(() => {
     if (settings.recording.mode === 'obs') {
       return ensureObsReplayBufferActive(force)
     }
+    if (!backgroundWindowRecordingEnabled) return false
 
     const status = await windowRecorderService.getStatus(settings)
     if (!status.active) {
-      return false
+      notifyWindowRecordingNeeded()
+      const started = await windowRecorderService.start(settings)
+      return started.active || started.fallbackRequired === true
     }
 
     return true
@@ -861,6 +910,35 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedCapturePermission = permission === 'media' || permission === 'display-capture'
     callback(allowedCapturePermission && isTrustedRendererUrl(webContents.getURL()))
+  })
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      if (!isTrustedRendererUrl(request.securityOrigin)) {
+        callback({})
+        return
+      }
+
+      const settings = await settingsStore.load()
+      const sources = await listDesktopCaptureSources()
+      const source = sources.find((source) => source.id === settings.recording.windowSourceId) ??
+        sources.find((source) => source.name === settings.recording.windowSourceName) ??
+        sources.find((source) => settings.recording.sourceType === 'screen'
+          ? source.id.startsWith('screen:')
+          : !source.id.startsWith('screen:'))
+
+      if (!source) {
+        callback({})
+        return
+      }
+
+      callback({
+        video: source,
+        audio: settings.recording.systemAudioEnabled ? 'loopback' : undefined
+      })
+    } catch (error) {
+      console.warn('Display media request failed:', error)
+      callback({})
+    }
   })
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
@@ -904,29 +982,26 @@ app.whenReady().then(() => {
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   ipcMain.handle('recording:list-window-sources', async () => {
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 1, height: 1 },
-      fetchWindowIcons: false
-    })
+    const sources = await listDesktopCaptureSources()
 
     return sources
       .filter((source) => source.name.trim().length > 0)
-      .map((source) => ({
-        id: source.id,
-        name: source.name,
-        displayId: source.display_id,
-        type: source.id.startsWith('screen:') ? 'screen' : 'window'
-      }))
+      .map(toWindowCaptureSource)
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
-  ipcMain.handle('recording:start', async () => windowRecorderService.start(await settingsStore.load()))
+  ipcMain.handle('recording:start', async () => {
+    backgroundWindowRecordingEnabled = true
+    return windowRecorderService.start(await settingsStore.load())
+  })
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:stop', async () => windowRecorderService.stop())
+  ipcMain.handle('recording:stop', async () => {
+    backgroundWindowRecordingEnabled = false
+    return windowRecorderService.stop()
+  })
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())
   ))
@@ -1175,6 +1250,7 @@ app.whenReady().then(() => {
     return clip
   })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
+  ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
     const metadataPath = asString(input?.metadataPath)
     const fileName = asString(input?.fileName)

@@ -3,7 +3,7 @@ import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsSer
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
 import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
-import type { ClipProcessingStatus, ClipQueueItem, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
+import type { ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
@@ -135,7 +135,12 @@ const api = {
     resumeFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-resume'),
     finishFree: (): Promise<FreeRecordingFinishResult> => ipcRenderer.invoke('recording:free-finish'),
     stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
-    appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input)
+    appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input),
+    onEnsureWindowRecording: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('recording:ensure-window', listener)
+      return () => ipcRenderer.removeListener('recording:ensure-window', listener)
+    }
   },
   terminalTrade: {
     getStatus: (): Promise<TerminalTradeRecordingStatus> => ipcRenderer.invoke('terminal-trade:get-status')
@@ -146,6 +151,7 @@ const api = {
     createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test'),
     renameFile: (input: { metadataPath: string, fileName: string }): Promise<RenameClipFileResult> => ipcRenderer.invoke('clips:rename-file', input),
     deleteFromQueue: (metadataPath: string): Promise<DeleteClipFromQueueResult> => ipcRenderer.invoke('clips:delete-from-queue', metadataPath),
+    deleteFile: (metadataPath: string): Promise<DeleteClipFileResult> => ipcRenderer.invoke('clips:delete-file', metadataPath),
     openPreview: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:open-preview', videoPath),
     showInFolder: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:show-in-folder', videoPath)
   }

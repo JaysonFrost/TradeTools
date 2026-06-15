@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
-import { defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
 
 export type ProxyRecord = {
   id: string
@@ -26,6 +26,8 @@ export type AppSettings = {
     windowSourceName: string
     frameRate: number
     segmentSeconds: number
+    systemAudioEnabled: boolean
+    microphoneEnabled: boolean
   }
   clip: {
     paddingBeforeSeconds: number
@@ -193,11 +195,13 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     windowSourceId: '',
     windowSourceName: '',
     frameRate: 30,
-    segmentSeconds: 2
+    segmentSeconds: 2,
+    systemAudioEnabled: false,
+    microphoneEnabled: false
   },
   clip: {
-    paddingBeforeSeconds: 2,
-    paddingAfterSeconds: 2,
+    paddingBeforeSeconds: defaultClipPaddingBeforeSeconds,
+    paddingAfterSeconds: defaultClipPaddingAfterSeconds,
     replayBufferSeconds: defaultReplayBufferSeconds,
     replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
@@ -244,7 +248,9 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       windowSourceId: normalizeString(settings.recording?.windowSourceId ?? defaults.recording.windowSourceId),
       windowSourceName: normalizeString(settings.recording?.windowSourceName ?? defaults.recording.windowSourceName),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
-      segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10)
+      segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
+      systemAudioEnabled: settings.recording?.systemAudioEnabled === true,
+      microphoneEnabled: settings.recording?.microphoneEnabled === true
     },
     clip: {
       paddingBeforeSeconds,

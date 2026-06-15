@@ -4,7 +4,7 @@ import type { WindowCaptureSource } from '../../../main/services/recording/windo
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
-import { longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
@@ -81,9 +81,9 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [loadingSources, setLoadingSources] = useState(false)
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
-  const [paddingBefore, setPaddingBefore] = useState('2')
-  const [paddingAfter, setPaddingAfter] = useState('2')
-  const [replayBufferSeconds, setReplayBufferSeconds] = useState('30')
+  const [paddingBefore, setPaddingBefore] = useState(String(defaultClipPaddingBeforeSeconds))
+  const [paddingAfter, setPaddingAfter] = useState(String(defaultClipPaddingAfterSeconds))
+  const [replayBufferSeconds, setReplayBufferSeconds] = useState(String(defaultReplayBufferSeconds))
   const [proxyTitle, setProxyTitle] = useState(defaultProxyTitle())
   const [proxyServer, setProxyServer] = useState('')
   const [proxyLogin, setProxyLogin] = useState('root')
@@ -299,6 +299,13 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     } finally {
       setSaving(false)
     }
+  }
+
+  const applyDefaultClipPreset = () => {
+    setPaddingBefore(String(defaultClipPaddingBeforeSeconds))
+    setPaddingAfter(String(defaultClipPaddingAfterSeconds))
+    setReplayBufferSeconds(String(defaultReplayBufferSeconds))
+    setLocalMessage('Дефолтный пресет включён: 2с до входа, 2с после выхода, буфер 60с.')
   }
 
   const applyLongClipPreset = () => {
@@ -597,6 +604,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const folderFields = step.id === 'folders' ? (
     <div className="grid gap-4 md:grid-cols-2">
+      <div className="md:col-span-2 flex flex-wrap items-center gap-3 text-sm leading-6 text-zinc-400">
+        <Button variant="ghost" onClick={applyDefaultClipPreset}><Clock3 size={16} className="mr-2" />Пресет 2с до / 2с после</Button>
+        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">буфер 60с</span>
+      </div>
       <div className="md:col-span-2 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до / 2 минуты после</Button>

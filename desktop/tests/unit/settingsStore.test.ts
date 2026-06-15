@@ -36,7 +36,9 @@ describe('settingsStore', () => {
         windowSourceId: 'terminal-source',
         windowSourceName: 'Trading terminal',
         frameRate: 24,
-        segmentSeconds: 3
+        segmentSeconds: 3,
+        systemAudioEnabled: true,
+        microphoneEnabled: true
       },
       clip: { paddingBeforeSeconds: 99, outputDir: '/Users/igor/Clips' },
       obs: { host: 'localhost', port: 4455, passwordConfigured: true }
@@ -48,7 +50,9 @@ describe('settingsStore', () => {
       windowSourceId: 'terminal-source',
       windowSourceName: 'Trading terminal',
       frameRate: 24,
-      segmentSeconds: 3
+      segmentSeconds: 3,
+      systemAudioEnabled: true,
+      microphoneEnabled: true
     })
     expect(settings.clip.paddingBeforeSeconds).toBe(99)
     expect(settings.clip.replayBufferSeconds).toBe(99)

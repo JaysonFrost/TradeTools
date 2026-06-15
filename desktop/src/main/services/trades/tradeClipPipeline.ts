@@ -75,6 +75,12 @@ export type DeleteClipFromQueueResult = {
   metadataPath: string
 }
 
+export type DeleteClipFileResult = {
+  ok: true
+  metadataPath: string
+  videoPath: string
+}
+
 export type RenameClipFileResult = {
   ok: true
   clip: ClipQueueItem
@@ -94,6 +100,7 @@ export type TradeClipPipeline = {
   listPendingClips: () => Promise<ClipQueueItem[]>
   renameClipFile: (input: { metadataPath: string, fileName: string }) => Promise<RenameClipFileResult>
   deleteClipFromQueue: (metadataPath: string) => Promise<DeleteClipFromQueueResult>
+  deleteClipFile: (metadataPath: string) => Promise<DeleteClipFileResult>
 }
 
 const parseTradeClipMetadata = async (metadataPath: string): Promise<TradeClipMetadata | undefined> => {
@@ -383,6 +390,24 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       return {
         ok: true,
         metadataPath: resolvedMetadataPath
+      }
+    },
+    async deleteClipFile(metadataPath) {
+      const settings = await deps.getSettings()
+      const resolvedMetadataPath = assertClipMetadataPath(settings, metadataPath)
+      const metadata = await parseTradeClipMetadata(resolvedMetadataPath)
+      if (!metadata) throw new Error('Метаданные клипа не найдены')
+
+      const videoPath = resolve(metadata.videoPath)
+      const queueRoot = resolve(settings.clip.outputDir)
+      if (!isPathInside(queueRoot, videoPath)) throw new Error('Некорректный путь видео клипа')
+
+      await unlink(videoPath)
+      await unlink(resolvedMetadataPath)
+      return {
+        ok: true,
+        metadataPath: resolvedMetadataPath,
+        videoPath
       }
     }
   }

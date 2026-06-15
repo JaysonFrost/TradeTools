@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   diffMetaScalpPositionSnapshots,
+  getVatagaLogsDir,
   parseMetaScalpPositionSnapshot,
   parseTigerTradePositionEvent,
   parseVatagaPositionEvent
@@ -38,6 +39,12 @@ describe('terminalTradeRecorder', () => {
       '@mt': 'Socket {socketId} connected',
       Type: 'Network'
     }))).toBeUndefined()
+  })
+
+  it('finds Vataga logs from macOS Application Support when APPDATA is unavailable', () => {
+    expect(getVatagaLogsDir({
+      HOME: '/Users/trader'
+    })).toBe('/Users/trader/Library/Application Support/Vataga/Vataga.terminal/Logs')
   })
 
   it('parses TigerTrade position updates from WorkLog rows', () => {

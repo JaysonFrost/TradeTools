@@ -6,6 +6,8 @@ import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 
 export type WindowRecorderControllerProps = {
   settings?: AppSettings
+  enabled?: boolean
+  recordingEnsureKey?: number
   onStatusChange: (status: WindowRecorderStatus) => void
   onSettingsChange?: (settings: AppSettings) => void
 }
@@ -15,12 +17,23 @@ type FixedFrameRateStream = {
   stop: () => void
 }
 
-const chooseMimeType = (): string => {
-  const candidates = [
-    'video/webm;codecs=vp8',
-    'video/webm;codecs=vp9',
-    'video/webm'
-  ]
+type RecordingStream = {
+  stream: MediaStream
+  stop: () => void
+}
+
+const chooseMimeType = (hasAudio: boolean): string => {
+  const candidates = hasAudio
+    ? [
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm'
+      ]
+    : [
+        'video/webm;codecs=vp8',
+        'video/webm;codecs=vp9',
+        'video/webm'
+      ]
 
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? ''
 }
@@ -28,6 +41,12 @@ const chooseMimeType = (): string => {
 const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource | undefined => (
   sources.find((source) => source.type === settings.recording.sourceType && source.id === settings.recording.windowSourceId) ??
   sources.find((source) => source.type === settings.recording.sourceType && source.name === settings.recording.windowSourceName)
+)
+
+const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCaptureSource | undefined): boolean => (
+  settings.recording.sourceType === 'window' &&
+  Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName) &&
+  !source
 )
 
 const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => ({
@@ -44,6 +63,78 @@ const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): Me
     cursor: 'never'
   } as unknown as MediaTrackConstraints
 })
+
+const captureSystemAudioStream = async (): Promise<MediaStream> => {
+  const systemStream = await navigator.mediaDevices.getDisplayMedia({
+    audio: true,
+    video: {
+      width: 4,
+      height: 4,
+      frameRate: 1
+    }
+  })
+
+  systemStream.getVideoTracks().forEach((track) => {
+    track.stop()
+    systemStream.removeTrack(track)
+  })
+  return systemStream
+}
+
+const createRecordingStream = (
+  videoStream: MediaStream,
+  audioStreams: Array<MediaStream | undefined>
+): RecordingStream => {
+  const audioTracks = audioStreams.flatMap((audioStream) => audioStream?.getAudioTracks() ?? [])
+  if (audioTracks.length <= 1) {
+    return {
+      stream: new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioTracks
+      ]),
+      stop: () => undefined
+    }
+  }
+
+  const AudioContextConstructor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioContextConstructor) {
+    return {
+      stream: new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioTracks
+      ]),
+      stop: () => undefined
+    }
+  }
+
+  const audioContext = new AudioContextConstructor()
+  const destination = audioContext.createMediaStreamDestination()
+  const sourceNodes = audioStreams
+    .map((audioStream) => {
+      const tracks = audioStream?.getAudioTracks() ?? []
+      if (tracks.length === 0) return undefined
+      const source = audioContext.createMediaStreamSource(new MediaStream(tracks))
+      source.connect(destination)
+      return source
+    })
+    .filter((source): source is MediaStreamAudioSourceNode => source !== undefined)
+
+  void audioContext.resume().catch(() => undefined)
+
+  return {
+    stream: new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...destination.stream.getAudioTracks()
+    ]),
+    stop: () => {
+      sourceNodes.forEach((source) => source.disconnect())
+      destination.stream.getTracks().forEach((track) => track.stop())
+      void audioContext.close().catch(() => undefined)
+    }
+  }
+}
+
+const hasAudioTracks = (stream?: MediaStream): boolean => (stream?.getAudioTracks().length ?? 0) > 0
 
 const createLocalStatus = (settings: AppSettings, message: string, active = false): WindowRecorderStatus => ({
   enabled: settings.recording.mode === 'window',
@@ -151,13 +242,16 @@ const createFixedFrameRateStream = async (
   }
 }
 
-export const WindowRecorderController = ({ settings, onStatusChange, onSettingsChange }: WindowRecorderControllerProps) => {
+export const WindowRecorderController = ({ settings, enabled = true, recordingEnsureKey = 0, onStatusChange, onSettingsChange }: WindowRecorderControllerProps) => {
   useEffect(() => {
     if (!settings) return
 
     let disposed = false
     let stream: MediaStream | undefined
+    let systemAudioStream: MediaStream | undefined
+    let microphoneStream: MediaStream | undefined
     let fixedFrameRateStream: FixedFrameRateStream | undefined
+    let recordingStream: RecordingStream | undefined
     let recorder: MediaRecorder | undefined
     let sessionTimer: number | undefined
     let sourceRetryTimer: number | undefined
@@ -170,12 +264,24 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
       if (statusPollTimer !== undefined) window.clearInterval(statusPollTimer)
       if (recorder?.state === 'recording') recorder.stop()
       fixedFrameRateStream?.stop()
+      recordingStream?.stop()
       stream?.getTracks().forEach((track) => track.stop())
+      systemAudioStream?.getTracks().forEach((track) => track.stop())
+      microphoneStream?.getTracks().forEach((track) => track.stop())
       void getTradeToolsApi().recording.stop().catch(() => undefined)
     }
 
     const handleStartError = (error: unknown) => {
       onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось запустить встроенную запись окна'))
+    }
+
+    if (enabled === false) {
+      void getTradeToolsApi().recording.stop()
+        .then(() => {
+          if (!disposed) onStatusChange(createLocalStatus(settings, 'Фоновая запись остановлена'))
+        })
+        .catch(handleStartError)
+      return cleanup
     }
 
     const scheduleSourceRetry = (start: () => Promise<void>) => {
@@ -192,6 +298,18 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
       if (settings.recording.mode !== 'window') {
         onStatusChange(await api.recording.getStatus())
         return
+      }
+
+      let sources: WindowCaptureSource[] | undefined
+      let source: WindowCaptureSource | undefined
+      if (settings.recording.sourceType === 'window') {
+        sources = await api.recording.listWindowSources()
+        source = resolveSource(sources, settings)
+        if (isSavedWindowSourceMissing(settings, source)) {
+          onStatusChange(createLocalStatus(settings, `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`))
+          scheduleSourceRetry(start)
+          return
+        }
       }
 
       onStatusChange(createLocalStatus(settings, 'Запускаем оптимизированную ffmpeg-запись...'))
@@ -214,8 +332,8 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
       }
 
       onStatusChange(createLocalStatus(settings, optimizedStatus.message || 'Запускаем совместимую запись окна...'))
-      const sources = await api.recording.listWindowSources()
-      let source = resolveSource(sources, settings)
+      sources = sources ?? await api.recording.listWindowSources()
+      source = source ?? resolveSource(sources, settings)
       if (!source && !settings.recording.windowSourceId && !settings.recording.windowSourceName && settings.recording.sourceType === 'window') {
         source = findPreferredTerminalSource(sources)
         if (source) {
@@ -243,8 +361,21 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
       const mediaStream = await navigator.mediaDevices.getUserMedia(
         buildDesktopCaptureConstraints(source.id, settings.recording.frameRate)
       )
+      try {
+        systemAudioStream = settings.recording.systemAudioEnabled
+          ? await captureSystemAudioStream()
+          : undefined
+        microphoneStream = settings.recording.microphoneEnabled
+          ? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          : undefined
+      } catch (error) {
+        mediaStream.getTracks().forEach((track) => track.stop())
+        throw error
+      }
       if (disposed) {
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
+        microphoneStream?.getTracks().forEach((track) => track.stop())
         return
       }
 
@@ -272,37 +403,38 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
           : undefined)
       } catch (error) {
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
+        microphoneStream?.getTracks().forEach((track) => track.stop())
         stream = undefined
         throw error
       }
       if (disposed) {
         fixedFrameRateStream.stop()
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
+        microphoneStream?.getTracks().forEach((track) => track.stop())
         return
       }
 
-      const mimeType = chooseMimeType()
+      recordingStream = createRecordingStream(fixedFrameRateStream.stream, [systemAudioStream, microphoneStream])
+      const mimeType = chooseMimeType(hasAudioTracks(recordingStream.stream))
       const chunkDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
-      const sessionDurationMs = Math.max(chunkDurationMs * 2, Math.min(60_000, settings.clip.replayBufferSeconds * 1000))
 
       const startRecordingSession = () => {
-        if (disposed || !fixedFrameRateStream) return
+        if (disposed || !fixedFrameRateStream || !recordingStream) return
 
         const sessionId = `${source.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        let sequence = 0
-        let chunkStartedAtMs = Date.now()
-        recorder = new MediaRecorder(fixedFrameRateStream.stream, {
+        const chunkStartedAtMs = Date.now()
+        recorder = new MediaRecorder(recordingStream.stream, {
           ...(mimeType ? { mimeType } : {}),
-          videoBitsPerSecond: 6_000_000
+          videoBitsPerSecond: 6_000_000,
+          audioBitsPerSecond: 192_000
         })
         recorder.ondataavailable = (event) => {
           if (event.data.size <= 0) return
 
           const endedAtMs = Date.now()
           const startedAtMs = chunkStartedAtMs
-          chunkStartedAtMs = endedAtMs
-          const currentSequence = sequence
-          sequence += 1
 
           void (async () => {
             if (disposed) return
@@ -311,7 +443,7 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
               sourceId: source.id,
               sourceName: source.name,
               sessionId,
-              sequence: currentSequence,
+              sequence: 0,
               startedAtMs,
               endedAtMs,
               mimeType: event.data.type || mimeType || 'video/webm',
@@ -332,10 +464,10 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
           }
           if (!disposed) startRecordingSession()
         }
-        recorder.start(chunkDurationMs)
+        recorder.start()
         sessionTimer = window.setTimeout(() => {
           if (recorder?.state === 'recording') recorder.stop()
-        }, sessionDurationMs)
+        }, chunkDurationMs)
       }
 
       startRecordingSession()
@@ -351,6 +483,10 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
     settings?.recording.windowSourceName,
     settings?.recording.frameRate,
     settings?.recording.segmentSeconds,
+    settings?.recording.systemAudioEnabled,
+    settings?.recording.microphoneEnabled,
+    enabled,
+    recordingEnsureKey,
     onStatusChange,
     onSettingsChange
   ])

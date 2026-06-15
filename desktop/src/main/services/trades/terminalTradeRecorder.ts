@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { open, readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
@@ -408,9 +408,17 @@ export const createTerminalClosedTrade = (entryTimeMs: number, exitTimeMs: numbe
   exitTimeMs
 })
 
-const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => {
+const getMacApplicationSupportDir = (env: NodeJS.ProcessEnv): string | undefined => {
+  const homeDir = normalizeText(env.HOME)
+  return homeDir ? posix.join(homeDir, 'Library', 'Application Support') : undefined
+}
+
+export const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => {
   const appData = normalizeText(env.APPDATA)
-  return appData ? join(appData, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
+  if (appData) return join(appData, 'Vataga', 'Vataga.terminal', 'Logs')
+
+  const macDataDir = getMacApplicationSupportDir(env)
+  return macDataDir ? posix.join(macDataDir, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
 }
 
 const getTigerTradeRootDir = (env: NodeJS.ProcessEnv): string | undefined => {
