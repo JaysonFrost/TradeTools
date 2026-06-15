@@ -85,6 +85,7 @@ describe('Dashboard layout', () => {
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
     expect(controllerSource).toContain('settings.recording.systemAudioEnabled')
     expect(controllerSource).toContain('settings.recording.microphoneEnabled')
+    expect(controllerSource).toContain('navigator.mediaDevices.getDisplayMedia')
     expect(controllerSource).toContain("navigator.mediaDevices.getUserMedia({ audio: true, video: false })")
     expect(controllerSource).toContain('new MediaStream')
     expect(controllerSource).toContain('createFixedFrameRateStream')

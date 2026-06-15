@@ -31,6 +31,16 @@ describe('main app lifecycle', () => {
     expect(source).toContain('started.fallbackRequired')
   })
 
+  it('routes macOS system audio through display media loopback into the selected capture source', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const packageJson = await readFile(resolve('package.json'), 'utf8')
+
+    expect(source).toContain('setDisplayMediaRequestHandler')
+    expect(source).toContain("audio: settings.recording.systemAudioEnabled ? 'loopback' : undefined")
+    expect(source).toContain('source.id === settings.recording.windowSourceId')
+    expect(packageJson).toContain('NSAudioCaptureUsageDescription')
+  })
+
   it('does not keep Binance API polling code in the main process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

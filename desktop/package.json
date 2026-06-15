@@ -15,13 +15,13 @@
   "type": "module",
   "main": "out/main/app.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node build/ensureElectronMacCapturePermissions.cjs && electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --publish never",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
-    "preview": "electron-vite preview",
+    "preview": "node build/ensureElectronMacCapturePermissions.cjs && electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -92,6 +92,10 @@
     "mac": {
       "icon": "build/icon.icns",
       "category": "public.app-category.video",
+      "extendInfo": {
+        "NSAudioCaptureUsageDescription": "TradeTools records system audio into trade video clips.",
+        "NSMicrophoneUsageDescription": "TradeTools records microphone audio into trade video clips."
+      },
       "target": [
         "dmg",
         "zip"

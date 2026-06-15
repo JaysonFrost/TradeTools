@@ -17,6 +17,11 @@ type FixedFrameRateStream = {
   stop: () => void
 }
 
+type RecordingStream = {
+  stream: MediaStream
+  stop: () => void
+}
+
 const chooseMimeType = (hasAudio: boolean): string => {
   const candidates = hasAudio
     ? [
@@ -38,15 +43,8 @@ const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): W
   sources.find((source) => source.type === settings.recording.sourceType && source.name === settings.recording.windowSourceName)
 )
 
-const buildDesktopAudioConstraints = (sourceId: string): MediaTrackConstraints => ({
-  mandatory: {
-    chromeMediaSource: 'desktop',
-    chromeMediaSourceId: sourceId
-  }
-} as unknown as MediaTrackConstraints)
-
-const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number, includeSystemAudio: boolean): MediaStreamConstraints => ({
-  audio: includeSystemAudio ? buildDesktopAudioConstraints(sourceId) : false,
+const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => ({
+  audio: false,
   video: {
     mandatory: {
       chromeMediaSource: 'desktop',
@@ -60,15 +58,77 @@ const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number, inc
   } as unknown as MediaTrackConstraints
 })
 
+const captureSystemAudioStream = async (): Promise<MediaStream> => {
+  const systemStream = await navigator.mediaDevices.getDisplayMedia({
+    audio: true,
+    video: {
+      width: 4,
+      height: 4,
+      frameRate: 1
+    }
+  })
+
+  systemStream.getVideoTracks().forEach((track) => {
+    track.stop()
+    systemStream.removeTrack(track)
+  })
+  return systemStream
+}
+
 const createRecordingStream = (
   videoStream: MediaStream,
-  desktopStream: MediaStream,
-  microphoneStream?: MediaStream
-): MediaStream => new MediaStream([
-  ...videoStream.getVideoTracks(),
-  ...desktopStream.getAudioTracks(),
-  ...(microphoneStream?.getAudioTracks() ?? [])
-])
+  audioStreams: Array<MediaStream | undefined>
+): RecordingStream => {
+  const audioTracks = audioStreams.flatMap((audioStream) => audioStream?.getAudioTracks() ?? [])
+  if (audioTracks.length <= 1) {
+    return {
+      stream: new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioTracks
+      ]),
+      stop: () => undefined
+    }
+  }
+
+  const AudioContextConstructor = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioContextConstructor) {
+    return {
+      stream: new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioTracks
+      ]),
+      stop: () => undefined
+    }
+  }
+
+  const audioContext = new AudioContextConstructor()
+  const destination = audioContext.createMediaStreamDestination()
+  const sourceNodes = audioStreams
+    .map((audioStream) => {
+      const tracks = audioStream?.getAudioTracks() ?? []
+      if (tracks.length === 0) return undefined
+      const source = audioContext.createMediaStreamSource(new MediaStream(tracks))
+      source.connect(destination)
+      return source
+    })
+    .filter((source): source is MediaStreamAudioSourceNode => source !== undefined)
+
+  void audioContext.resume().catch(() => undefined)
+
+  return {
+    stream: new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...destination.stream.getAudioTracks()
+    ]),
+    stop: () => {
+      sourceNodes.forEach((source) => source.disconnect())
+      destination.stream.getTracks().forEach((track) => track.stop())
+      void audioContext.close().catch(() => undefined)
+    }
+  }
+}
+
+const hasAudioTracks = (stream?: MediaStream): boolean => (stream?.getAudioTracks().length ?? 0) > 0
 
 const createLocalStatus = (settings: AppSettings, message: string, active = false): WindowRecorderStatus => ({
   enabled: settings.recording.mode === 'window',
@@ -182,8 +242,10 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
     let disposed = false
     let stream: MediaStream | undefined
+    let systemAudioStream: MediaStream | undefined
     let microphoneStream: MediaStream | undefined
     let fixedFrameRateStream: FixedFrameRateStream | undefined
+    let recordingStream: RecordingStream | undefined
     let recorder: MediaRecorder | undefined
     let sessionTimer: number | undefined
     let sourceRetryTimer: number | undefined
@@ -196,7 +258,9 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       if (statusPollTimer !== undefined) window.clearInterval(statusPollTimer)
       if (recorder?.state === 'recording') recorder.stop()
       fixedFrameRateStream?.stop()
+      recordingStream?.stop()
       stream?.getTracks().forEach((track) => track.stop())
+      systemAudioStream?.getTracks().forEach((track) => track.stop())
       microphoneStream?.getTracks().forEach((track) => track.stop())
       void getTradeToolsApi().recording.stop().catch(() => undefined)
     }
@@ -277,13 +341,22 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
 
       const mediaStream = await navigator.mediaDevices.getUserMedia(
-        buildDesktopCaptureConstraints(source.id, settings.recording.frameRate, settings.recording.systemAudioEnabled)
+        buildDesktopCaptureConstraints(source.id, settings.recording.frameRate)
       )
-      microphoneStream = settings.recording.microphoneEnabled
-        ? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        : undefined
+      try {
+        systemAudioStream = settings.recording.systemAudioEnabled
+          ? await captureSystemAudioStream()
+          : undefined
+        microphoneStream = settings.recording.microphoneEnabled
+          ? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          : undefined
+      } catch (error) {
+        mediaStream.getTracks().forEach((track) => track.stop())
+        throw error
+      }
       if (disposed) {
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
         microphoneStream?.getTracks().forEach((track) => track.stop())
         return
       }
@@ -312,26 +385,29 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
           : undefined)
       } catch (error) {
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
+        microphoneStream?.getTracks().forEach((track) => track.stop())
         stream = undefined
         throw error
       }
       if (disposed) {
         fixedFrameRateStream.stop()
         mediaStream.getTracks().forEach((track) => track.stop())
+        systemAudioStream?.getTracks().forEach((track) => track.stop())
         microphoneStream?.getTracks().forEach((track) => track.stop())
         return
       }
 
-      const recordingStream = createRecordingStream(fixedFrameRateStream.stream, mediaStream, microphoneStream)
-      const mimeType = chooseMimeType(settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled)
+      recordingStream = createRecordingStream(fixedFrameRateStream.stream, [systemAudioStream, microphoneStream])
+      const mimeType = chooseMimeType(hasAudioTracks(recordingStream.stream))
       const chunkDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
 
       const startRecordingSession = () => {
-        if (disposed || !fixedFrameRateStream) return
+        if (disposed || !fixedFrameRateStream || !recordingStream) return
 
         const sessionId = `${source.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const chunkStartedAtMs = Date.now()
-        recorder = new MediaRecorder(recordingStream, {
+        recorder = new MediaRecorder(recordingStream.stream, {
           ...(mimeType ? { mimeType } : {}),
           videoBitsPerSecond: 6_000_000,
           audioBitsPerSecond: 192_000

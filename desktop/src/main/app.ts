@@ -8,7 +8,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
 import { setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
-import { createWindowRecorderService, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
+import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
@@ -41,10 +41,17 @@ const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcScreenCapturer',
   'AllowWgcScreenZeroHz'
 ]
+const macLoopbackAudioFeatures = [
+  'MacLoopbackAudioForScreenShare',
+  'MacSckSystemAudioLoopbackOverride'
+]
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(windowsAppUserModelId)
   app.commandLine.appendSwitch('disable-features', windowsDesktopCaptureFallbackFeatures.join(','))
+}
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('enable-features', macLoopbackAudioFeatures.join(','))
 }
 
 const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'неизвестная ошибка'
@@ -227,6 +234,21 @@ const assertHttpUrl = (url: string): string => {
 }
 
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
+
+type DesktopCaptureSource = Awaited<ReturnType<typeof desktopCapturer.getSources>>[number]
+
+const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
+  types: ['window', 'screen'],
+  thumbnailSize: { width: 1, height: 1 },
+  fetchWindowIcons: false
+})
+
+const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => ({
+  id: source.id,
+  name: source.name,
+  displayId: source.display_id,
+  type: source.id.startsWith('screen:') ? 'screen' : 'window'
+})
 
 const getPackagedUpdateConfigPaths = (): string[] => {
   const candidates = [
@@ -878,6 +900,35 @@ app.whenReady().then(() => {
     const allowedCapturePermission = permission === 'media' || permission === 'display-capture'
     callback(allowedCapturePermission && isTrustedRendererUrl(webContents.getURL()))
   })
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      if (!isTrustedRendererUrl(request.securityOrigin)) {
+        callback({})
+        return
+      }
+
+      const settings = await settingsStore.load()
+      const sources = await listDesktopCaptureSources()
+      const source = sources.find((source) => source.id === settings.recording.windowSourceId) ??
+        sources.find((source) => source.name === settings.recording.windowSourceName) ??
+        sources.find((source) => settings.recording.sourceType === 'screen'
+          ? source.id.startsWith('screen:')
+          : !source.id.startsWith('screen:'))
+
+      if (!source) {
+        callback({})
+        return
+      }
+
+      callback({
+        video: source,
+        audio: settings.recording.systemAudioEnabled ? 'loopback' : undefined
+      })
+    } catch (error) {
+      console.warn('Display media request failed:', error)
+      callback({})
+    }
+  })
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
   ipcMain.handle('updates:check', () => appUpdateService.checkForUpdates())
@@ -920,20 +971,11 @@ app.whenReady().then(() => {
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   ipcMain.handle('recording:list-window-sources', async () => {
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 1, height: 1 },
-      fetchWindowIcons: false
-    })
+    const sources = await listDesktopCaptureSources()
 
     return sources
       .filter((source) => source.name.trim().length > 0)
-      .map((source) => ({
-        id: source.id,
-        name: source.name,
-        displayId: source.display_id,
-        type: source.id.startsWith('screen:') ? 'screen' : 'window'
-      }))
+      .map(toWindowCaptureSource)
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
