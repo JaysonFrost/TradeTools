@@ -86,6 +86,20 @@ export type RenameClipFileResult = {
   clip: ClipQueueItem
 }
 
+export type ClearClipQueueResult = {
+  ok: true
+  removedCount: number
+  deletedFileCount: number
+}
+
+export type FreeRecordingQueueInput = {
+  videoPath: string
+  fileName: string
+  startedAtMs: number
+  endedAtMs: number
+  durationSeconds: number
+}
+
 export type TradeClipPipelineDeps = {
   getSettings: () => Promise<AppSettings>
   saveReplayBuffer: (input: SaveReplayBufferInput) => Promise<SaveReplayBufferResult>
@@ -96,7 +110,10 @@ export type TradeClipPipelineDeps = {
 }
 
 export type TradeClipPipeline = {
+  addFreeRecordingToQueue: (input: FreeRecordingQueueInput) => Promise<ClipQueueItem>
+  clearQueue: () => Promise<ClearClipQueueResult>
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem>
+  deleteQueueFiles: () => Promise<ClearClipQueueResult>
   listPendingClips: () => Promise<ClipQueueItem[]>
   renameClipFile: (input: { metadataPath: string, fileName: string }) => Promise<RenameClipFileResult>
   deleteClipFromQueue: (metadataPath: string) => Promise<DeleteClipFromQueueResult>
@@ -212,7 +229,106 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     return `${videoPath}.tmp-${process.pid}-${now()}-${temporaryClipSequence}.mp4`
   }
 
+  const listPendingClips = async (): Promise<ClipQueueItem[]> => {
+    const settings = await deps.getSettings()
+    const metadataFiles = await collectJsonFiles(resolve(settings.clip.outputDir))
+    const items = await Promise.all(metadataFiles.map(parseMetadata))
+    return items
+      .filter((item): item is ClipQueueItem => item !== undefined)
+      .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(b.videoPath)))
+  }
+
+  const clearQueue = async (deleteFiles: boolean): Promise<ClearClipQueueResult> => {
+    const settings = await deps.getSettings()
+    const queueRoot = resolve(settings.clip.outputDir)
+    const items = await listPendingClips()
+    let deletedFileCount = 0
+
+    for (const item of items) {
+      const metadataPath = assertClipMetadataPath(settings, item.metadataPath)
+      const videoPath = resolve(item.videoPath)
+      if (deleteFiles && isPathInside(queueRoot, videoPath)) {
+        await unlink(videoPath).then(() => {
+          deletedFileCount += 1
+        }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      }
+      await unlink(metadataPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+    }
+
+    return {
+      ok: true,
+      removedCount: items.length,
+      deletedFileCount
+    }
+  }
+
   return {
+    async addFreeRecordingToQueue(input) {
+      const settings = await deps.getSettings()
+      const queueRoot = resolve(settings.clip.outputDir)
+      const videoPath = resolve(input.videoPath)
+      if (!isPathInside(queueRoot, videoPath)) throw new Error('Некорректный путь свободной записи')
+
+      const videoStat = await stat(videoPath)
+      const outputDetails = await getVideoDetails(videoPath)
+      assertUsableFrameRate(outputDetails, 'Свободная запись')
+      const title = input.fileName.replace(/\.[^.]+$/, '')
+      const metadataPath = join(dirname(videoPath), `${basename(videoPath, extname(videoPath))}.json`)
+      const trade: ClosedTrade = {
+        id: `free-${input.startedAtMs}-${input.endedAtMs}`,
+        exchange: 'TradeTools',
+        marketType: 'Free recording',
+        symbol: 'FREE',
+        side: 'RECORD',
+        status: 'closed',
+        entryTimeMs: input.startedAtMs,
+        exitTimeMs: input.endedAtMs
+      }
+      const item: ClipQueueItem = {
+        id: trade.id,
+        status: 'pending-review',
+        title,
+        fileName: input.fileName,
+        videoPath,
+        metadataPath,
+        symbol: trade.symbol,
+        side: trade.side,
+        exchange: trade.exchange,
+        marketType: trade.marketType,
+        entryTimeMs: input.startedAtMs,
+        exitTimeMs: input.endedAtMs,
+        durationSeconds: input.durationSeconds,
+        createdAtMs: now()
+      }
+      const metadata: TradeClipMetadata = {
+        ...item,
+        replayPath: videoPath,
+        replaySavedAtMs: input.endedAtMs,
+        replayDurationSeconds: input.durationSeconds,
+        ...(outputDetails.averageFrameRate ? { replayFrameRate: outputDetails.averageFrameRate } : {}),
+        outputDurationSeconds: outputDetails.durationSeconds || input.durationSeconds,
+        ...(outputDetails.averageFrameRate ? { outputFrameRate: outputDetails.averageFrameRate } : {}),
+        outputSizeBytes: videoStat.size,
+        videoDiagnostics: {
+          replay: outputDetails,
+          output: outputDetails
+        },
+        trade,
+        trim: {
+          startSeconds: 0,
+          endSeconds: input.durationSeconds,
+          durationSeconds: input.durationSeconds
+        }
+      }
+
+      await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
+      return item
+    },
+    clearQueue: () => clearQueue(false),
     async createClipForClosedTrade(trade) {
       const settings = await deps.getSettings()
       const replaySave = await deps.saveReplayBuffer({ settings, trade })
@@ -320,14 +436,8 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
       return item
     },
-    async listPendingClips() {
-      const settings = await deps.getSettings()
-      const metadataFiles = await collectJsonFiles(resolve(settings.clip.outputDir))
-      const items = await Promise.all(metadataFiles.map(parseMetadata))
-      return items
-        .filter((item): item is ClipQueueItem => item !== undefined)
-        .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(a.videoPath)))
-    },
+    deleteQueueFiles: () => clearQueue(true),
+    listPendingClips,
     async renameClipFile(input) {
       const settings = await deps.getSettings()
       const resolvedMetadataPath = assertClipMetadataPath(settings, input.metadataPath)

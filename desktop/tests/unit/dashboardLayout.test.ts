@@ -100,6 +100,17 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
   })
 
+  it('auto-saves video settings and refreshes window sources every minute', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+
+    expect(settingsPanelSource).toContain('saveCurrentSettings')
+    expect(settingsPanelSource).toContain('window.setInterval')
+    expect(settingsPanelSource).toContain('60_000')
+    expect(settingsPanelSource).toContain('Настройки применены')
+    expect(settingsPanelSource).not.toContain('Нажмите «Сохранить»')
+    expect(settingsPanelSource).not.toContain("{saving ? 'Сохраняем...' : 'Сохранить'}")
+  })
+
   it('shows one recording status panel with background recording controls', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
@@ -124,6 +135,27 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).toContain('recording.finishFree()')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-start'")
     expect(appSource).toContain("ipcMain.handle('recording:free-finish'")
+  })
+
+  it('shows finished free recordings in the review queue and has bulk queue actions', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const pipelineSource = await readFile(resolve('src/main/services/trades/tradeClipPipeline.ts'), 'utf8')
+
+    expect(dashboardSource).toContain('onClearQueue')
+    expect(dashboardSource).toContain('onDeleteQueueFiles')
+    expect(dashboardSource).toContain('Очистить очередь')
+    expect(dashboardSource).toContain('Удалить все файлы')
+    expect(dashboardSource).toContain('Свободная запись добавлена в очередь')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:clear-queue'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:delete-queue-files'")
+    expect(appSource).toContain('clipPipeline.addFreeRecordingToQueue')
+    expect(appSource).toContain("ipcMain.handle('clips:clear-queue'")
+    expect(appSource).toContain("ipcMain.handle('clips:delete-queue-files'")
+    expect(pipelineSource).toContain('addFreeRecordingToQueue')
+    expect(pipelineSource).toContain('clearQueue')
+    expect(pipelineSource).toContain('deleteQueueFiles')
   })
 
   it('restarts background window recording only when main asks while background recording is enabled', async () => {

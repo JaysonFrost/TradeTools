@@ -3,7 +3,7 @@ import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsSer
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
 import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
-import type { ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
+import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
@@ -149,6 +149,8 @@ const api = {
     listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),
     getProcessingStatus: (): Promise<ClipProcessingStatus> => ipcRenderer.invoke('clips:get-processing-status'),
     createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test'),
+    clearQueue: (): Promise<ClearClipQueueResult> => ipcRenderer.invoke('clips:clear-queue'),
+    deleteQueueFiles: (): Promise<ClearClipQueueResult> => ipcRenderer.invoke('clips:delete-queue-files'),
     renameFile: (input: { metadataPath: string, fileName: string }): Promise<RenameClipFileResult> => ipcRenderer.invoke('clips:rename-file', input),
     deleteFromQueue: (metadataPath: string): Promise<DeleteClipFromQueueResult> => ipcRenderer.invoke('clips:delete-from-queue', metadataPath),
     deleteFile: (metadataPath: string): Promise<DeleteClipFileResult> => ipcRenderer.invoke('clips:delete-file', metadataPath),

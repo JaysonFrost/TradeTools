@@ -997,7 +997,11 @@ app.whenReady().then(() => {
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-finish', async () => {
+    const result = await windowRecorderService.finishFreeRecording(await settingsStore.load())
+    await clipPipeline.addFreeRecordingToQueue(result)
+    return result
+  })
   ipcMain.handle('recording:stop', async () => {
     backgroundWindowRecordingEnabled = false
     return windowRecorderService.stop()
@@ -1249,6 +1253,8 @@ app.whenReady().then(() => {
     if (!clip) throw new Error('Тестовый клип не был обработан')
     return clip
   })
+  ipcMain.handle('clips:clear-queue', () => clipPipeline.clearQueue())
+  ipcMain.handle('clips:delete-queue-files', () => clipPipeline.deleteQueueFiles())
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
