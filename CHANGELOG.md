@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-06-15
+
+### Fixed
+
+- Fixed the development renderer crash caused by mismatched `react` and `react-dom` patch versions.
+- Reissued the 0.2.8 recorder changes under a new version so installed clients can update normally.
+
 ## [0.2.6] - 2026-06-11
 
 ### Added
