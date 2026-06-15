@@ -33,7 +33,34 @@ describe('windowRecorderService', () => {
     expect(source).toContain('replayEndMs')
   })
 
-  it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
+  it('does not read old browser session segments outside the requested replay range', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('buildSessionFiles = async (neededSegments')
+    expect(source).not.toContain('sourceSegments: StoredSegment[], neededSegments')
+    expect(source).not.toContain('firstSequence !== 0')
+  })
+
+  it('reports a readable message when a needed browser segment file is gone', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('assertSegmentFile')
+    expect(source).toContain('Часть буфера встроенной записи уже очищена')
+    expect(source).toContain('getErrorCode(error) ===')
+  })
+
+  it('keeps browser recorder chunks as standalone webm files for ffmpeg concat', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('recorder.start()')
+    expect(controllerSource).not.toContain('recorder.start(chunkDurationMs)')
+    expect(serviceSource).toContain('cleanup?: boolean')
+    expect(serviceSource).toContain('neededSegments.map')
+    expect(serviceSource).not.toContain('appendFile(sessionPath')
+  })
+
+  it('uses ffmpeg gdigrab for Windows window capture before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -44,8 +71,9 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
-    expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
-    expect(serviceSource).toContain('Фоновый GDI-захват отключён')
+    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording' })")
+    expect(serviceSource).not.toContain('TRADETOOLS_ENABLE_GDIGRAB')
+    expect(serviceSource).not.toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')
     expect(controllerSource).toContain('recording.start()')
     expect(controllerSource).toContain('recording.stop()')

@@ -506,6 +506,20 @@ app.whenReady().then(() => {
     window.focus()
   }
 
+  const notifyWindowRecordingNeeded = () => {
+    const windows = BrowserWindow.getAllWindows()
+    const targets = windows.length > 0 ? windows : [createMainWindow()]
+
+    for (const window of targets) {
+      const send = () => window.webContents.send('recording:ensure-window')
+      if (window.webContents.isLoading()) {
+        window.webContents.once('did-finish-load', send)
+      } else {
+        send()
+      }
+    }
+  }
+
   const showSystemNotification = (input: { title: string, body: string, onClick?: () => void }): SystemNotificationResult => {
     const windowsShortcutReady = ensureWindowsNotificationShortcut()
 
@@ -842,7 +856,9 @@ app.whenReady().then(() => {
 
     const status = await windowRecorderService.getStatus(settings)
     if (!status.active) {
-      return false
+      notifyWindowRecordingNeeded()
+      const started = await windowRecorderService.start(settings)
+      return started.active || started.fallbackRequired === true
     }
 
     return true
@@ -1175,6 +1191,7 @@ app.whenReady().then(() => {
     return clip
   })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
+  ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
     const metadataPath = asString(input?.metadataPath)
     const fileName = asString(input?.fileName)

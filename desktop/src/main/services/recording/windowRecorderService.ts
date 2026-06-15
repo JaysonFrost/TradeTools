@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import type { AppSettings } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
+import { buildH264VideoArgs } from '../video/ffmpegCommand'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 
 export type WindowCaptureSource = {
@@ -103,6 +104,7 @@ type ReplaySessionFile = {
   path: string
   startedAtMs: number
   endedAtMs: number
+  cleanup?: boolean
 }
 
 type ReplayWriteResult = {
@@ -165,9 +167,11 @@ const formatFilePeriodTimestamp = (timeMs: number): string => {
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
-const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
+const getErrorCode = (error: unknown): string => (
+  typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
+)
 
 const runFfmpeg = async (args: string[]): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -236,16 +240,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       '-map',
       '0:v:0',
       '-an',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'ultrafast',
-      '-tune',
-      'zerolatency',
-      '-crf',
-      '24',
-      '-pix_fmt',
-      'yuv420p',
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording' }),
       '-r',
       frameRate,
       '-fps_mode',
@@ -339,15 +334,6 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         backend: 'browser',
         fallbackRequired: true,
         message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
-      })
-    }
-
-    if (!isGdigrabRecorderEnabled()) {
-      await stopNativeRecorder()
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows и мешать играм. Пишем через встроенный Chromium-рекордер без курсора.'
       })
     }
 
@@ -544,61 +530,31 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     return relevantSegments(settings)
   }
 
-  const buildSessionFiles = async (sourceSegments: StoredSegment[], neededSegments: StoredSegment[], replayId: string): Promise<ReplaySessionFile[]> => {
-    const lastNeededSequenceBySession = new Map<string, number>()
-    const sessionStartedAt = new Map<string, number>()
-
-    for (const segment of neededSegments) {
-      lastNeededSequenceBySession.set(segment.sessionId, Math.max(lastNeededSequenceBySession.get(segment.sessionId) ?? -1, segment.sequence))
-    }
-    for (const segment of sourceSegments) {
-      if (!lastNeededSequenceBySession.has(segment.sessionId)) continue
-      sessionStartedAt.set(segment.sessionId, Math.min(sessionStartedAt.get(segment.sessionId) ?? segment.startedAtMs, segment.startedAtMs))
-    }
-
-    const sessionIds = [...lastNeededSequenceBySession.keys()].sort((left, right) => (
-      (sessionStartedAt.get(left) ?? 0) - (sessionStartedAt.get(right) ?? 0)
-    ))
-    const sessionFiles: ReplaySessionFile[] = []
-
-    for (const sessionId of sessionIds) {
-      const lastSequence = lastNeededSequenceBySession.get(sessionId) ?? -1
-      const sessionSegments = sourceSegments
-        .filter((segment) => segment.sessionId === sessionId && segment.sequence <= lastSequence)
-        .sort((left, right) => left.sequence - right.sequence || left.startedAtMs - right.startedAtMs)
-      const firstSequence = sessionSegments[0]?.sequence
-      if (firstSequence !== 0) throw new Error('Встроенный рекордер уже очистил начало нужной сессии записи. Попробуйте увеличить длительность буфера записи.')
-      const firstSegment = sessionSegments[0]
-      const lastSegment = sessionSegments.at(-1)
-      if (!firstSegment || !lastSegment) continue
-
-      const sessionPath = join(replaysDir, `${toFileTimestamp(lastSegment.endedAtMs)}-${replayId}-${sessionFiles.length}.webm`)
-      await rm(sessionPath, { force: true }).catch(() => undefined)
-      for (const segment of sessionSegments) {
-        await appendFile(sessionPath, await readFile(segment.path))
+  const assertSegmentFile = async (segment: StoredSegment): Promise<void> => {
+    try {
+      await stat(segment.path)
+    } catch (error) {
+      if (getErrorCode(error) === 'ENOENT') {
+        throw new Error('Часть буфера встроенной записи уже очищена. Подождите пару секунд, чтобы накопились новые сегменты, и повторите тест.')
       }
-      sessionFiles.push({
-        path: sessionPath,
-        startedAtMs: firstSegment.startedAtMs,
-        endedAtMs: lastSegment.endedAtMs
-      })
+      throw error
     }
+  }
 
-    return sessionFiles
+  const buildSessionFiles = async (neededSegments: StoredSegment[], _replayId: string): Promise<ReplaySessionFile[]> => {
+    await Promise.all(neededSegments.map(assertSegmentFile))
+    return neededSegments.map((segment) => ({
+      path: segment.path,
+      startedAtMs: segment.startedAtMs,
+      endedAtMs: segment.endedAtMs
+    }))
   }
 
   const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => [
     '-map',
     '0:v:0',
     '-an',
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    '18',
-    '-pix_fmt',
-    'yuv420p',
+    ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
     '-r',
     String(settings.recording.frameRate),
     '-fps_mode',
@@ -705,14 +661,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         '-map',
         '0:v:0',
         '-an',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '18',
-        '-pix_fmt',
-        'yuv420p',
+        ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
         '-r',
         String(settings.recording.frameRate),
         '-fps_mode',
@@ -727,7 +676,6 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
   }
 
   const writeReplayFromSegments = async (
-    sourceSegments: StoredSegment[],
     neededSegments: StoredSegment[],
     replayPath: string,
     settings: AppSettings,
@@ -746,7 +694,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }
 
     if (allBrowserSegments) {
-      sessionFiles = await buildSessionFiles(sourceSegments, neededSegments, replayId)
+      sessionFiles = await buildSessionFiles(neededSegments, replayId)
       await trimBrowserReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs)
       return { sessionFiles, readyClip: true }
     }
@@ -790,7 +738,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     let sessionFiles: ReplaySessionFile[] = []
 
     try {
-      const writeResult = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath, replayStartMs, replayEndMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, replayStartMs, replayEndMs)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(replayEndMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -800,7 +748,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       }
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
-      await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+      await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
     }
   }
 
@@ -895,7 +843,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
 
     try {
       await rm(replayPath, { force: true }).catch(() => undefined)
-      const writeResult = await writeReplayFromSegments(sourceSegments, neededSegments, replayPath, settings, replayId, listPath, recording.startedAtMs, endedAtMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, recording.startedAtMs, endedAtMs)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -911,7 +859,7 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
       }
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
-      await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+      await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
     }
   }
 

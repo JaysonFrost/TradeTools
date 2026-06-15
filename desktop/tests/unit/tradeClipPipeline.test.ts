@@ -228,6 +228,48 @@ describe('tradeClipPipeline', () => {
     await expect(pipeline.listPendingClips()).resolves.toEqual([])
   })
 
+  it('deletes a queued clip video file and removes it from the review queue', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-delete-file-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-delete-file-replays-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 10-15-00.mp4')
+    await writeFile(replayPath, 'fake video')
+    const saveTimeMs = new Date(2026, 4, 13, 10, 15, 0).getTime()
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 1800,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'trimmed video')
+      }),
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+    })
+    const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
+
+    await expect(pipeline.deleteClipFile(clip.metadataPath)).resolves.toEqual({
+      ok: true,
+      metadataPath: clip.metadataPath,
+      videoPath: clip.videoPath
+    })
+    await expect(access(clip.metadataPath)).rejects.toThrow()
+    await expect(access(clip.videoPath)).rejects.toThrow()
+    await expect(pipeline.listPendingClips()).resolves.toEqual([])
+  })
+
   it('renames a queued clip video file and updates metadata', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-rename-queue-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-rename-replays-'))

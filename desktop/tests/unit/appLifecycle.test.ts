@@ -22,6 +22,15 @@ describe('main app lifecycle', () => {
     expect(source).toContain('terminalTradeWatcher.start()')
   })
 
+  it('wakes the renderer recorder when a terminal trade opens before the window buffer is active', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('notifyWindowRecordingNeeded')
+    expect(source).toContain("webContents.send('recording:ensure-window')")
+    expect(source).toContain('await windowRecorderService.start(settings)')
+    expect(source).toContain('started.fallbackRequired')
+  })
+
   it('does not keep Binance API polling code in the main process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

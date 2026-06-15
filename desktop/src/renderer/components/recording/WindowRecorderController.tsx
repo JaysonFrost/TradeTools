@@ -6,6 +6,8 @@ import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 
 export type WindowRecorderControllerProps = {
   settings?: AppSettings
+  enabled?: boolean
+  recordingEnsureKey?: number
   onStatusChange: (status: WindowRecorderStatus) => void
   onSettingsChange?: (settings: AppSettings) => void
 }
@@ -151,7 +153,7 @@ const createFixedFrameRateStream = async (
   }
 }
 
-export const WindowRecorderController = ({ settings, onStatusChange, onSettingsChange }: WindowRecorderControllerProps) => {
+export const WindowRecorderController = ({ settings, enabled = true, recordingEnsureKey = 0, onStatusChange, onSettingsChange }: WindowRecorderControllerProps) => {
   useEffect(() => {
     if (!settings) return
 
@@ -176,6 +178,15 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
 
     const handleStartError = (error: unknown) => {
       onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось запустить встроенную запись окна'))
+    }
+
+    if (enabled === false) {
+      void getTradeToolsApi().recording.stop()
+        .then(() => {
+          if (!disposed) onStatusChange(createLocalStatus(settings, 'Фоновая запись остановлена'))
+        })
+        .catch(handleStartError)
+      return cleanup
     }
 
     const scheduleSourceRetry = (start: () => Promise<void>) => {
@@ -283,14 +294,12 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
 
       const mimeType = chooseMimeType()
       const chunkDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
-      const sessionDurationMs = Math.max(chunkDurationMs * 2, Math.min(60_000, settings.clip.replayBufferSeconds * 1000))
 
       const startRecordingSession = () => {
         if (disposed || !fixedFrameRateStream) return
 
         const sessionId = `${source.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        let sequence = 0
-        let chunkStartedAtMs = Date.now()
+        const chunkStartedAtMs = Date.now()
         recorder = new MediaRecorder(fixedFrameRateStream.stream, {
           ...(mimeType ? { mimeType } : {}),
           videoBitsPerSecond: 6_000_000
@@ -300,9 +309,6 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
 
           const endedAtMs = Date.now()
           const startedAtMs = chunkStartedAtMs
-          chunkStartedAtMs = endedAtMs
-          const currentSequence = sequence
-          sequence += 1
 
           void (async () => {
             if (disposed) return
@@ -311,7 +317,7 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
               sourceId: source.id,
               sourceName: source.name,
               sessionId,
-              sequence: currentSequence,
+              sequence: 0,
               startedAtMs,
               endedAtMs,
               mimeType: event.data.type || mimeType || 'video/webm',
@@ -332,10 +338,10 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
           }
           if (!disposed) startRecordingSession()
         }
-        recorder.start(chunkDurationMs)
+        recorder.start()
         sessionTimer = window.setTimeout(() => {
           if (recorder?.state === 'recording') recorder.stop()
-        }, sessionDurationMs)
+        }, chunkDurationMs)
       }
 
       startRecordingSession()
@@ -351,6 +357,8 @@ export const WindowRecorderController = ({ settings, onStatusChange, onSettingsC
     settings?.recording.windowSourceName,
     settings?.recording.frameRate,
     settings?.recording.segmentSeconds,
+    enabled,
+    recordingEnsureKey,
     onStatusChange,
     onSettingsChange
   ])

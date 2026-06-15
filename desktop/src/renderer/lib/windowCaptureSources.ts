@@ -19,7 +19,14 @@ const terminalNamePatterns = [
   /cscalp/i,
   /atas/i,
   /quik/i,
-  /dxtrade/i
+  /dxtrade/i,
+  /parallels/i,
+  /windows app/i,
+  /remote desktop/i,
+  /crossover|cross\s?over/i,
+  /whisky/i,
+  /wine/i,
+  /iterm2?|warp|wezterm|alacritty|kitty|hyper/i
 ]
 
 const ignoredWindowPatterns = [

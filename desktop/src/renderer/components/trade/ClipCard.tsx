@@ -20,6 +20,7 @@ const formatDuration = (seconds: number): string => {
 export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
   const [previewing, setPreviewing] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deletingFile, setDeletingFile] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [editingFileName, setEditingFileName] = useState(false)
   const [fileNameInput, setFileNameInput] = useState(clip.fileName)
@@ -53,6 +54,19 @@ export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
       setDeleteMessage(error instanceof Error ? error.message : 'Не удалось убрать клип из очереди')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const deleteFile = async () => {
+    setDeletingFile(true)
+    setDeleteMessage('')
+    try {
+      await getTradeToolsApi().clips.deleteFile(clip.metadataPath)
+      onDeleted?.(clip)
+    } catch (error) {
+      setDeleteMessage(error instanceof Error ? error.message : 'Не удалось удалить файл клипа')
+    } finally {
+      setDeletingFile(false)
     }
   }
 
@@ -157,9 +171,17 @@ export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
               variant="ghost"
               className="border-red-500/25 text-red-100 hover:bg-red-500/10"
               onClick={() => void deleteFromQueue()}
-              disabled={deleting}
+              disabled={deleting || deletingFile}
             >
               <Trash2 size={16} className="mr-2" />{deleting ? 'Удаляем...' : 'Убрать из очереди'}
+            </Button>
+            <Button
+              variant="ghost"
+              className="border-red-500/30 text-red-100 hover:bg-red-500/10"
+              onClick={() => void deleteFile()}
+              disabled={deleting || deletingFile}
+            >
+              <Trash2 size={16} className="mr-2" />{deletingFile ? 'Удаляем...' : 'Удалить файл'}
             </Button>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">

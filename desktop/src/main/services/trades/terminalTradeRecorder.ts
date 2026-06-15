@@ -408,9 +408,15 @@ export const createTerminalClosedTrade = (entryTimeMs: number, exitTimeMs: numbe
   exitTimeMs
 })
 
-const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => {
+const getMacApplicationSupportDir = (env: NodeJS.ProcessEnv): string | undefined => {
+  const homeDir = normalizeText(env.HOME)
+  return homeDir ? join(homeDir, 'Library', 'Application Support') : undefined
+}
+
+export const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => {
   const appData = normalizeText(env.APPDATA)
-  return appData ? join(appData, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
+  const dataDir = appData || getMacApplicationSupportDir(env)
+  return dataDir ? join(dataDir, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
 }
 
 const getTigerTradeRootDir = (env: NodeJS.ProcessEnv): string | undefined => {
