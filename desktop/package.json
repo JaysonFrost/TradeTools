@@ -1,6 +1,6 @@
 {
   "name": "tradetools",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "TradeTools desktop app for automatic trade video clipping and proxy management.",
   "author": "JaysonFrost",
   "license": "MIT",
@@ -40,8 +40,8 @@
     "keytar": "^7.9.0",
     "lucide-react": "^1.14.0",
     "obs-websocket-js": "^5.0.8",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.6",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-qr-code": "^2.0.21",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0",
