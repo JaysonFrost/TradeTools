@@ -117,23 +117,23 @@ const RecordingStatusPanel = ({
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
   const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
-  const terminalStatus = terminalTrade.active
-    ? `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
-    : terminalTrade.message || 'Ждём сделку'
+  const hasActiveTrade = terminalTrade.active
+  const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
+  const showStatusBadge = !isWindowMode || !backgroundRecordingEnabled || hasActiveTrade
   const statusText = !isWindowMode
     ? obs.status
     : !backgroundRecordingEnabled
       ? 'Фон остановлен'
-      : windowRecorder?.active
-        ? 'Пишет'
-        : bufferedSeconds > 0
-          ? 'Буфер есть'
-          : 'Ждёт окно'
+      : hasActiveTrade
+        ? 'Пишем сделку'
+        : ''
   const message = !isWindowMode
     ? obs.message
     : !backgroundRecordingEnabled
       ? 'Автоклипы и свободная запись сейчас выключены.'
-      : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'
+      : hasActiveTrade
+        ? terminalStatus
+        : ''
   const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
@@ -142,12 +142,14 @@ const RecordingStatusPanel = ({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишет' || statusText === 'Буфер есть' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
-              {statusText}
-            </span>
+            {showStatusBadge && (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишем сделку' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
+                {statusText}
+              </span>
+            )}
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>
-          {isWindowMode && (
+          {message && <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>}
+          {isWindowMode && hasActiveTrade && (
             <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
               <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
               <div>Буфер: <span className="text-zinc-300">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
@@ -170,7 +172,7 @@ const RecordingStatusPanel = ({
           </div>
         )}
       </div>
-      {isWindowMode && (
+      {isWindowMode && hasActiveTrade && (
         <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
           <div
             className="h-full rounded-full bg-violet-400"

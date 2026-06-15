@@ -158,6 +158,16 @@ describe('Dashboard layout', () => {
     expect(pipelineSource).toContain('deleteQueueFiles')
   })
 
+  it('does not show noisy background recorder messages while waiting for a trade', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+
+    expect(dashboardSource).not.toContain("windowRecorder?.message ??")
+    expect(dashboardSource).not.toContain("'Ждёт окно'")
+    expect(dashboardSource).not.toContain('Ожидаем сделку в Vataga, TigerTrade или MetaScalp.')
+    expect(dashboardSource).toContain('terminalTrade.active')
+    expect(dashboardSource).toContain('Пишем сделку')
+  })
+
   it('restarts background window recording only when main asks while background recording is enabled', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

@@ -243,12 +243,17 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
   fetchWindowIcons: false
 })
 
-const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => ({
-  id: source.id,
-  name: source.name,
-  displayId: source.display_id,
-  type: source.id.startsWith('screen:') ? 'screen' : 'window'
-})
+const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => {
+  const type = source.id.startsWith('screen:') ? 'screen' : 'window'
+  const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
+
+  return {
+    id: source.id,
+    name: source.name.trim() || fallbackName,
+    displayId: source.display_id,
+    type
+  }
+}
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
   const sources = await listDesktopCaptureSources()
@@ -985,7 +990,6 @@ app.whenReady().then(() => {
     const sources = await listDesktopCaptureSources()
 
     return sources
-      .filter((source) => source.name.trim().length > 0)
       .map(toWindowCaptureSource)
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))

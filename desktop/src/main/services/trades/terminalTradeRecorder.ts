@@ -263,15 +263,16 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
   const account = normalizeAnyText(fields.Account)
   const size = parseNumericValue(fields.Size)
   if (!symbol || !account || !Number.isFinite(size)) return undefined
+  const normalizedSymbol = normalizeTerminalSymbol(symbol)
 
   const eventTimeMs = parseLocalDateTime(match[1], match[2], match[3], match[4], match[5], match[6], match[7] ?? '0')
   if (!eventTimeMs) return undefined
 
   return {
     source: 'tigertrade',
-    positionId: `${account}:${symbol}`.toUpperCase(),
+    positionId: `${account}:${normalizedSymbol}`.toUpperCase(),
     exchange: normalizeExchangeName(account || match[8], 'TIGERTRADE'),
-    symbol: normalizeTerminalSymbol(symbol),
+    symbol: normalizedSymbol,
     side: normalizeSideFromSize(size),
     isClosed: isNearlyZero(size),
     eventTimeMs

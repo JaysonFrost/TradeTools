@@ -54,7 +54,7 @@ describe('terminalTradeRecorder', () => {
 
     expect(event).toEqual({
       source: 'tigertrade',
-      positionId: 'BINANCE SPOT:USDC/USDT',
+      positionId: 'BINANCE SPOT:USDCUSDT',
       exchange: 'BINANCE',
       symbol: 'USDCUSDT',
       side: 'SHORT',
@@ -70,6 +70,18 @@ describe('terminalTradeRecorder', () => {
 
     expect(event?.isClosed).toBe(true)
     expect(event?.positionId).toBe('BINANCE FUTURES:ETHUSDT')
+  })
+
+  it('matches TigerTrade open and close rows when the symbol slash differs', () => {
+    const openEvent = parseTigerTradePositionEvent(
+      '11.06.2026 10:07:45.162 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=USDC/USDT;Account=BINANCE SPOT;Price=0.9995;Size=22;Comission=0;Executions=1'
+    )
+    const closeEvent = parseTigerTradePositionEvent(
+      '11.06.2026 10:08:45.162 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=USDCUSDT;Account=BINANCE SPOT;Price=1.0000;Size=0;Comission=0;Executions=2'
+    )
+
+    expect(openEvent?.positionId).toBe('BINANCE SPOT:USDCUSDT')
+    expect(closeEvent?.positionId).toBe(openEvent?.positionId)
   })
 
   it('normalizes MetaScalp API position snapshots', () => {

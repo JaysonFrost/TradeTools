@@ -161,6 +161,14 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain("cursor: 'never'")
   })
 
+  it('auto-selects the first screen when screen capture has no saved source', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain("candidate.type === 'screen'")
+    expect(controllerSource).toContain('Автоматически выбрали экран')
+    expect(controllerSource).not.toContain('Выбранный экран не найден. Обновите список источников.')
+  })
+
   it('uses Chromium capture for audio-enabled built-in recording and keeps audio in browser exports', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
