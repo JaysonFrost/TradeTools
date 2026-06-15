@@ -169,6 +169,7 @@ const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').repl
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
+const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
 const getErrorCode = (error: unknown): string => (
   typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
 )
@@ -209,7 +210,9 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
     settings.recording.frameRate,
-    settings.recording.segmentSeconds
+    settings.recording.segmentSeconds,
+    String(settings.recording.systemAudioEnabled),
+    String(settings.recording.microphoneEnabled)
   ].join('|')
 
   const nativeSourceName = (settings: AppSettings): string => (
@@ -334,6 +337,15 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
         backend: 'browser',
         fallbackRequired: true,
         message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
+      })
+    }
+
+    if (browserAudioEnabled(settings)) {
+      await stopNativeRecorder()
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Звук пишется через Chromium: системный звук и микрофон доступны в совместимом рекордере.'
       })
     }
 
@@ -550,21 +562,27 @@ export const createWindowRecorderService = ({ appDataDir }: WindowRecorderServic
     }))
   }
 
-  const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => [
-    '-map',
-    '0:v:0',
-    '-an',
-    ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
-    '-r',
-    String(settings.recording.frameRate),
-    '-fps_mode',
-    'cfr',
-    '-avoid_negative_ts',
-    'make_zero',
-    '-movflags',
-    '+faststart',
-    outputPath
-  ]
+  const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => {
+    const audioArgs = browserAudioEnabled(settings)
+      ? ['-map', '0:a?', '-c:a', 'aac', '-b:a', '160k']
+      : ['-an']
+
+    return [
+      '-map',
+      '0:v:0',
+      ...audioArgs,
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
+      '-r',
+      String(settings.recording.frameRate),
+      '-fps_mode',
+      'cfr',
+      '-avoid_negative_ts',
+      'make_zero',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ]
+  }
 
   const trimBrowserReplayFile = async (
     sessionFiles: ReplaySessionFile[],

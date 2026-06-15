@@ -91,6 +91,19 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain("cursor: 'never'")
   })
 
+  it('uses Chromium capture for audio-enabled built-in recording and keeps audio in browser exports', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(serviceSource).toContain('settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled')
+    expect(serviceSource).toContain('Звук пишется через Chromium')
+    expect(serviceSource).toContain("'0:a?'")
+    expect(serviceSource).toContain("'-c:a'")
+    expect(serviceSource).toContain("'aac'")
+    expect(controllerSource).toContain('chromeMediaSourceId: sourceId')
+    expect(controllerSource).toContain('getAudioTracks()')
+  })
+
   it('keeps free recording segments and exports a stocks-book recording file', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

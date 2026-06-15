@@ -25,7 +25,9 @@ describe('settings', () => {
       windowSourceId: '',
       windowSourceName: '',
       frameRate: 30,
-      segmentSeconds: 2
+      segmentSeconds: 2,
+      systemAudioEnabled: false,
+      microphoneEnabled: false
     })
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
@@ -119,7 +121,9 @@ describe('settings', () => {
         windowSourceId: ' screen:1 ',
         windowSourceName: ' Terminal ',
         frameRate: 999,
-        segmentSeconds: 0
+        segmentSeconds: 0,
+        systemAudioEnabled: true,
+        microphoneEnabled: false
       }
     }, '/app-data')
 
@@ -129,7 +133,9 @@ describe('settings', () => {
       windowSourceId: 'screen:1',
       windowSourceName: 'Terminal',
       frameRate: 60,
-      segmentSeconds: 1
+      segmentSeconds: 1,
+      systemAudioEnabled: true,
+      microphoneEnabled: false
     })
   })
 

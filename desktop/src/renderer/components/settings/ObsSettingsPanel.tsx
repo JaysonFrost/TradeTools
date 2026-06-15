@@ -30,6 +30,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [windowSourceName, setWindowSourceName] = useState('')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
+  const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false)
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
@@ -51,6 +53,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setWindowSourceName(settings.recording.windowSourceName)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
+    setSystemAudioEnabled(settings.recording.systemAudioEnabled)
+    setMicrophoneEnabled(settings.recording.microphoneEnabled)
     setHost(settings.obs.host)
     setPort(String(settings.obs.port))
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
@@ -110,7 +114,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
           frameRate: Number(frameRate),
-          segmentSeconds: Number(segmentSeconds)
+          segmentSeconds: Number(segmentSeconds),
+          systemAudioEnabled,
+          microphoneEnabled
         },
         obs: {
           host,
@@ -267,6 +273,24 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
             <label className="text-xs font-medium text-zinc-500">
               <span>Буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
               <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
+            </label>
+            <label className="flex min-h-10 items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 text-sm font-semibold text-zinc-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-violet-500"
+                checked={systemAudioEnabled}
+                onChange={(event) => setSystemAudioEnabled(event.target.checked)}
+              />
+              Звук компьютера
+            </label>
+            <label className="flex min-h-10 items-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 text-sm font-semibold text-zinc-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-violet-500"
+                checked={microphoneEnabled}
+                onChange={(event) => setMicrophoneEnabled(event.target.checked)}
+              />
+              Микрофон
             </label>
             <p className="self-end text-xs leading-5 text-zinc-500 md:col-span-2 xl:col-span-6">Если window capture замирает на Windows, выберите экран. На macOS может потребоваться разрешение записи экрана.</p>
           </>
