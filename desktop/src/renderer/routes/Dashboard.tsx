@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pause, Play, Square, Video } from 'lucide-react'
+import { ListX, Pause, Play, Square, Trash2, Video } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
@@ -43,6 +43,8 @@ type VideoPageProps = {
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
   onCreateTestClip: () => void
+  onClearQueue: () => void
+  onDeleteQueueFiles: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
   onFreeRecordingStart: () => void
@@ -115,23 +117,23 @@ const RecordingStatusPanel = ({
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
   const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
-  const terminalStatus = terminalTrade.active
-    ? `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
-    : terminalTrade.message || 'Ждём сделку'
+  const hasActiveTrade = terminalTrade.active
+  const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
+  const showStatusBadge = !isWindowMode || !backgroundRecordingEnabled || hasActiveTrade
   const statusText = !isWindowMode
     ? obs.status
     : !backgroundRecordingEnabled
       ? 'Фон остановлен'
-      : windowRecorder?.active
-        ? 'Пишет'
-        : bufferedSeconds > 0
-          ? 'Буфер есть'
-          : 'Ждёт окно'
+      : hasActiveTrade
+        ? 'Пишем сделку'
+        : ''
   const message = !isWindowMode
     ? obs.message
     : !backgroundRecordingEnabled
       ? 'Автоклипы и свободная запись сейчас выключены.'
-      : windowRecorder?.message ?? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись.'
+      : hasActiveTrade
+        ? terminalStatus
+        : ''
   const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
@@ -140,12 +142,14 @@ const RecordingStatusPanel = ({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишет' || statusText === 'Буфер есть' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
-              {statusText}
-            </span>
+            {showStatusBadge && (
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишем сделку' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
+                {statusText}
+              </span>
+            )}
           </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>
-          {isWindowMode && (
+          {message && <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>}
+          {isWindowMode && hasActiveTrade && (
             <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
               <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
               <div>Буфер: <span className="text-zinc-300">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
@@ -168,7 +172,7 @@ const RecordingStatusPanel = ({
           </div>
         )}
       </div>
-      {isWindowMode && (
+      {isWindowMode && hasActiveTrade && (
         <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
           <div
             className="h-full rounded-full bg-violet-400"
@@ -249,7 +253,7 @@ const FreeRecordingControls = ({
   )
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
       <RecordingStatusPanel
@@ -274,9 +278,18 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
+            <p className="mt-1 text-xs text-zinc-500">Очистить - убрать из списка. Удалить файлы - стереть видео с диска.</p>
             {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
           </div>
-          <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25 sm:self-auto" onClick={onCreateTestClip}>Создать тестовый клип</button>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
+              <ListX size={16} className="mr-2" />Очистить очередь
+            </button>
+            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
+              <Trash2 size={16} className="mr-2" />Удалить все файлы
+            </button>
+            <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25 sm:self-auto" onClick={onCreateTestClip} type="button">Создать тестовый клип</button>
+          </div>
         </div>
         {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} /></div>}
         <div className="space-y-3">
@@ -630,9 +643,30 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setClipMessage('Сохраняем свободную запись...')
       const result = await getTradeToolsApi().recording.finishFree()
       setFreeRecording(await getTradeToolsApi().recording.getFreeStatus())
-      setClipMessage(`Свободная запись сохранена: ${result.fileName}`)
+      setClipMessage(`Свободная запись добавлена в очередь: ${result.fileName}`)
+      await loadLocalState()
     } catch (error) {
       setClipMessage(error instanceof Error ? error.message : 'Не удалось сохранить свободную запись')
+    }
+  }
+
+  const clearQueue = async () => {
+    try {
+      const result = await getTradeToolsApi().clips.clearQueue()
+      setClips([])
+      setClipMessage(result.removedCount > 0 ? `Очередь очищена: ${result.removedCount}` : 'Очередь уже пустая')
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось очистить очередь')
+    }
+  }
+
+  const deleteQueueFiles = async () => {
+    try {
+      const result = await getTradeToolsApi().clips.deleteQueueFiles()
+      setClips([])
+      setClipMessage(result.removedCount > 0 ? `Удалены файлы очереди: ${result.deletedFileCount}` : 'Очередь уже пустая')
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось удалить файлы очереди')
     }
   }
 
@@ -705,6 +739,8 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           onBackgroundRecordingStart={() => void startBackgroundRecording()}
           onBackgroundRecordingStop={() => void stopBackgroundRecording()}
           onCreateTestClip={() => void createTestClip()}
+          onClearQueue={() => void clearQueue()}
+          onDeleteQueueFiles={() => void deleteQueueFiles()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
           onFreeRecordingStart={() => void startFreeRecording()}

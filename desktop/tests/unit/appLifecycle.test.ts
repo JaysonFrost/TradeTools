@@ -45,6 +45,13 @@ describe('main app lifecycle', () => {
     expect(packageJson).toContain('NSAudioCaptureUsageDescription')
   })
 
+  it('keeps unnamed desktop capture windows selectable instead of dropping them', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('source.name.trim() ||')
+    expect(source).not.toContain("filter((source) => source.name.trim().length > 0)")
+  })
+
   it('does not keep Binance API polling code in the main process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

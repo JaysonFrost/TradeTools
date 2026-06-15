@@ -334,6 +334,21 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       onStatusChange(createLocalStatus(settings, optimizedStatus.message || 'Запускаем совместимую запись окна...'))
       sources = sources ?? await api.recording.listWindowSources()
       source = source ?? resolveSource(sources, settings)
+      if (!source && settings.recording.sourceType === 'screen') {
+        const screenSource = sources.find((candidate) => candidate.type === 'screen')
+        if (screenSource) {
+          onStatusChange(createLocalStatus(settings, `Автоматически выбрали экран: ${screenSource.name}`))
+          const updated = await api.settings.update({
+            recording: {
+              ...settings.recording,
+              windowSourceId: screenSource.id,
+              windowSourceName: screenSource.name
+            }
+          })
+          if (!disposed) onSettingsChange?.(updated)
+          return
+        }
+      }
       if (!source && !settings.recording.windowSourceId && !settings.recording.windowSourceName && settings.recording.sourceType === 'window') {
         source = findPreferredTerminalSource(sources)
         if (source) {
@@ -352,7 +367,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
       if (!source) {
         onStatusChange(createLocalStatus(settings, settings.recording.sourceType === 'screen'
-          ? 'Выбранный экран не найден. Обновите список источников.'
+          ? 'Экран для записи не найден. Обновите список источников.'
           : 'Откройте торговый терминал. TradeTools сам выберет подходящее окно и начнёт запись.'))
         scheduleSourceRetry(start)
         return

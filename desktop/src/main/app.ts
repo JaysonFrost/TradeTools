@@ -243,12 +243,17 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
   fetchWindowIcons: false
 })
 
-const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => ({
-  id: source.id,
-  name: source.name,
-  displayId: source.display_id,
-  type: source.id.startsWith('screen:') ? 'screen' : 'window'
-})
+const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => {
+  const type = source.id.startsWith('screen:') ? 'screen' : 'window'
+  const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
+
+  return {
+    id: source.id,
+    name: source.name.trim() || fallbackName,
+    displayId: source.display_id,
+    type
+  }
+}
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
   const sources = await listDesktopCaptureSources()
@@ -985,7 +990,6 @@ app.whenReady().then(() => {
     const sources = await listDesktopCaptureSources()
 
     return sources
-      .filter((source) => source.name.trim().length > 0)
       .map(toWindowCaptureSource)
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
@@ -997,7 +1001,11 @@ app.whenReady().then(() => {
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:free-finish', async () => windowRecorderService.finishFreeRecording(await settingsStore.load()))
+  ipcMain.handle('recording:free-finish', async () => {
+    const result = await windowRecorderService.finishFreeRecording(await settingsStore.load())
+    await clipPipeline.addFreeRecordingToQueue(result)
+    return result
+  })
   ipcMain.handle('recording:stop', async () => {
     backgroundWindowRecordingEnabled = false
     return windowRecorderService.stop()
@@ -1249,6 +1257,8 @@ app.whenReady().then(() => {
     if (!clip) throw new Error('Тестовый клип не был обработан')
     return clip
   })
+  ipcMain.handle('clips:clear-queue', () => clipPipeline.clearQueue())
+  ipcMain.handle('clips:delete-queue-files', () => clipPipeline.deleteQueueFiles())
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {

@@ -270,6 +270,129 @@ describe('tradeClipPipeline', () => {
     await expect(pipeline.listPendingClips()).resolves.toEqual([])
   })
 
+  it('adds a finished free recording to the review queue', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-free-recording-queue-'))
+    const dayDir = join(dataDir, '2026-06-15')
+    const videoPath = join(dayDir, 'Запись стаканов 15.06.26 12-00-00 - 15.06.26 12-01-00.mp4')
+    await mkdir(dayDir, { recursive: true })
+    await writeFile(videoPath, 'free recording video')
+    const startedAtMs = Date.parse('2026-06-15T12:00:00.000Z')
+    const endedAtMs = Date.parse('2026-06-15T12:01:00.000Z')
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          ...createDefaultSettings(dataDir).clip,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({ ok: false, message: 'not used', requestedAtMs: 0 })),
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 60,
+        averageFrameRate: 30
+      }))
+    })
+
+    const clip = await pipeline.addFreeRecordingToQueue({
+      videoPath,
+      fileName: 'Запись стаканов 15.06.26 12-00-00 - 15.06.26 12-01-00.mp4',
+      startedAtMs,
+      endedAtMs,
+      durationSeconds: 60
+    })
+
+    expect(clip.title).toBe('Запись стаканов 15.06.26 12-00-00 - 15.06.26 12-01-00')
+    expect(clip.symbol).toBe('FREE')
+    await expect(pipeline.listPendingClips()).resolves.toMatchObject([{
+      id: clip.id,
+      videoPath,
+      durationSeconds: 60
+    }])
+    await expect(access(clip.metadataPath)).resolves.toBeUndefined()
+  })
+
+  it('clears all queued metadata while keeping video files on disk', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-clear-queue-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-clear-queue-replays-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 10-20-00.mp4')
+    await writeFile(replayPath, 'fake video')
+    const saveTimeMs = new Date(2026, 4, 13, 10, 20, 0).getTime()
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 1800,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'trimmed video')
+      }),
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+    })
+    const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
+
+    await expect(pipeline.clearQueue()).resolves.toEqual({
+      ok: true,
+      removedCount: 1,
+      deletedFileCount: 0
+    })
+    await expect(access(clip.metadataPath)).rejects.toThrow()
+    await expect(access(clip.videoPath)).resolves.toBeUndefined()
+    await expect(pipeline.listPendingClips()).resolves.toEqual([])
+  })
+
+  it('deletes every queued video file and clears the queue', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-delete-queue-files-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-delete-queue-files-replays-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 10-25-00.mp4')
+    await writeFile(replayPath, 'fake video')
+    const saveTimeMs = new Date(2026, 4, 13, 10, 25, 0).getTime()
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 1800,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'trimmed video')
+      }),
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+    })
+    const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
+
+    await expect(pipeline.deleteQueueFiles()).resolves.toEqual({
+      ok: true,
+      removedCount: 1,
+      deletedFileCount: 1
+    })
+    await expect(access(clip.metadataPath)).rejects.toThrow()
+    await expect(access(clip.videoPath)).rejects.toThrow()
+    await expect(pipeline.listPendingClips()).resolves.toEqual([])
+  })
+
   it('renames a queued clip video file and updates metadata', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-rename-queue-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-rename-replays-'))

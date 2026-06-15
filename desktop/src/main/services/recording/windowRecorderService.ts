@@ -170,6 +170,7 @@ const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').repl
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
 const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
+const isMissingNativeWindowError = (value: string): boolean => /Can't find window|Error opening input file title=/i.test(value)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
 const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
 const getErrorCode = (error: unknown): string => (
@@ -227,6 +228,16 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     nativeMissingSource = undefined
   }
 
+  const markNativeMissingSource = (input: { settingsKey: string, sourceName: string }): string => {
+    const message = `Окно ${input.sourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`
+    nativeLastError = ''
+    nativeMissingSource = {
+      settingsKey: input.settingsKey,
+      message
+    }
+    return message
+  }
+
   const savedWindowSourceMissingStatus = async (settings: AppSettings): Promise<WindowRecorderStatus | undefined> => {
     if (
       settings.recording.sourceType !== 'window' ||
@@ -246,15 +257,14 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }
 
     await stopNativeRecorder()
-    nativeLastError = ''
-    nativeMissingSource = {
+    const message = markNativeMissingSource({
       settingsKey: nativeSettingsKey(settings),
-      message: `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`
-    }
+      sourceName: settings.recording.windowSourceName
+    })
     return buildStatus(settings, {
       backend: 'browser',
       fallbackRequired: true,
-      message: nativeMissingSource.message
+      message
     })
   }
 
@@ -461,15 +471,33 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       if (nativeRecorder === state) nativeRecorder = undefined
     })
     child.on('exit', (code, signal) => {
-      if (!state.stopping) {
-        nativeLastError = normalizeFfmpegLog(state.stderr) || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
+      if (state.stopping) {
+        clearNativeMissingSource()
+      } else {
+        const stderr = normalizeFfmpegLog(state.stderr)
+        if (isMissingNativeWindowError(stderr) && state.sourceName) {
+          markNativeMissingSource({
+            settingsKey: state.settingsKey,
+            sourceName: state.sourceName
+          })
+        } else {
+          nativeLastError = stderr || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
+          clearNativeMissingSource()
+        }
       }
-      clearNativeMissingSource()
       if (nativeRecorder === state) nativeRecorder = undefined
     })
 
     await sleep(nativeRecorderStartupGraceMs)
     if (nativeRecorder !== state || child.exitCode !== null) {
+      if (nativeMissingSource?.settingsKey === settingsKey) {
+        return buildStatus(settings, {
+          backend: 'browser',
+          fallbackRequired: true,
+          message: nativeMissingSource.message
+        })
+      }
+
       return buildStatus(settings, {
         backend: 'browser',
         fallbackRequired: true,

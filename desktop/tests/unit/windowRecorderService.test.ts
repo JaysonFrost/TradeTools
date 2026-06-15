@@ -73,6 +73,16 @@ describe('windowRecorderService', () => {
     }
   })
 
+  it('treats gdigrab missing-window exits as a closed terminal window instead of raw ffmpeg spam', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain('isMissingNativeWindowError')
+    expect(source).toContain("Can't find window")
+    expect(source).toContain('markNativeMissingSource')
+    expect(source).toContain('nativeLastError = \'\'')
+    expect(source).not.toContain('ffmpeg-рекордер остановился: [gdigrab')
+  })
+
   it('reports buffered and required seconds when replay export is requested too early', async () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
@@ -159,6 +169,14 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
     expect(serviceSource).toContain('не мигает курсор Windows')
     expect(controllerSource).toContain("cursor: 'never'")
+  })
+
+  it('auto-selects the first screen when screen capture has no saved source', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain("candidate.type === 'screen'")
+    expect(controllerSource).toContain('Автоматически выбрали экран')
+    expect(controllerSource).not.toContain('Выбранный экран не найден. Обновите список источников.')
   })
 
   it('uses Chromium capture for audio-enabled built-in recording and keeps audio in browser exports', async () => {

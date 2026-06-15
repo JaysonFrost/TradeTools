@@ -1,5 +1,5 @@
 import { CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
@@ -44,6 +44,46 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [obsPassword, setObsPassword] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const hydratedSettingsRef = useRef(false)
+  const lastSavedSnapshotRef = useRef('')
+
+  const buildSettingsSnapshot = (password = obsPassword): string => JSON.stringify({
+    recordingMode,
+    sourceType,
+    windowSourceId,
+    windowSourceName,
+    frameRate,
+    segmentSeconds,
+    systemAudioEnabled,
+    microphoneEnabled,
+    host,
+    port,
+    paddingBefore,
+    paddingAfter,
+    replayBufferSeconds,
+    replaySourceDir,
+    outputDir,
+    obsPassword: password
+  })
+
+  const buildSettingsSnapshotFromSettings = (nextSettings: AppSettings): string => JSON.stringify({
+    recordingMode: nextSettings.recording.mode,
+    sourceType: nextSettings.recording.sourceType,
+    windowSourceId: nextSettings.recording.windowSourceId,
+    windowSourceName: nextSettings.recording.windowSourceName,
+    frameRate: String(nextSettings.recording.frameRate),
+    segmentSeconds: String(nextSettings.recording.segmentSeconds),
+    systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
+    microphoneEnabled: nextSettings.recording.microphoneEnabled,
+    host: nextSettings.obs.host,
+    port: String(nextSettings.obs.port),
+    paddingBefore: String(nextSettings.clip.paddingBeforeSeconds),
+    paddingAfter: String(nextSettings.clip.paddingAfterSeconds),
+    replayBufferSeconds: String(nextSettings.clip.replayBufferSeconds),
+    replaySourceDir: nextSettings.clip.replaySourceDir,
+    outputDir: nextSettings.clip.outputDir,
+    obsPassword: ''
+  })
 
   useEffect(() => {
     if (!settings) return
@@ -62,11 +102,15 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
     setReplaySourceDir(settings.clip.replaySourceDir)
     setOutputDir(settings.clip.outputDir)
+    setObsPassword('')
+    lastSavedSnapshotRef.current = buildSettingsSnapshotFromSettings(settings)
+    hydratedSettingsRef.current = true
   }, [settings])
 
-  const refreshWindowSources = async () => {
+  const refreshWindowSources = async (options: { announce?: boolean } = {}) => {
+    const announce = options.announce !== false
     setLoadingSources(true)
-    setMessage('')
+    if (announce) setMessage('')
     try {
       const sources = await getTradeToolsApi().recording.listWindowSources()
       setWindowSources(sources)
@@ -76,12 +120,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       if (preferredSource) {
         setWindowSourceId(preferredSource.id)
         setWindowSourceName(preferredSource.name)
-        setMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
+        if (announce) setMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
         return
       }
-      setMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
+      if (announce) setMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
+      if (announce) setMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
     } finally {
       setLoadingSources(false)
     }
@@ -89,17 +133,19 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   useEffect(() => {
     if (recordingMode !== 'window') return
-    void refreshWindowSources()
-  }, [recordingMode])
+    void refreshWindowSources({ announce: false })
+    const interval = window.setInterval(() => void refreshWindowSources({ announce: false }), 60_000)
+    return () => window.clearInterval(interval)
+  }, [recordingMode, sourceType, windowSourceId, windowSourceName])
 
   const filteredSources = windowSources.filter((source) => source.type === sourceType)
 
-  const save = async () => {
+  const saveCurrentSettings = async (snapshot = buildSettingsSnapshot()) => {
     setSaving(true)
-    setMessage('')
     try {
       const api = getTradeToolsApi()
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
+      const submittedPassword = obsPassword.trim()
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
@@ -107,7 +153,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
         : parsedReplayBufferSeconds
       const updated = await api.settings.update({
-        obsPassword: obsPassword.trim() || undefined,
+        obsPassword: submittedPassword || undefined,
         recording: {
           mode: recordingMode,
           sourceType,
@@ -131,14 +177,43 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         }
       })
       onSaved(updated)
-      setObsPassword('')
-      setMessage('Настройки сохранены')
+      lastSavedSnapshotRef.current = submittedPassword ? buildSettingsSnapshot('') : snapshot
+      if (submittedPassword) setObsPassword('')
+      setMessage('Настройки применены')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки')
     } finally {
       setSaving(false)
     }
   }
+
+  useEffect(() => {
+    if (!settings || !hydratedSettingsRef.current) return
+    const snapshot = buildSettingsSnapshot()
+    if (snapshot === lastSavedSnapshotRef.current) return
+
+    const timeout = window.setTimeout(() => {
+      void saveCurrentSettings(snapshot)
+    }, 500)
+    return () => window.clearTimeout(timeout)
+  }, [
+    recordingMode,
+    sourceType,
+    windowSourceId,
+    windowSourceName,
+    frameRate,
+    segmentSeconds,
+    systemAudioEnabled,
+    microphoneEnabled,
+    host,
+    port,
+    paddingBefore,
+    paddingAfter,
+    replayBufferSeconds,
+    replaySourceDir,
+    outputDir,
+    obsPassword
+  ])
 
   const applyDefaultClipPreset = () => {
     setPaddingBefore(String(defaultClipPaddingBeforeSeconds))
@@ -164,7 +239,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       const selectedPath = await api.dialog.selectDirectory(currentPath.trim() || undefined)
       if (!selectedPath) return
       setValue(selectedPath)
-      setMessage('Папка выбрана. Нажмите «Сохранить», чтобы применить настройки.')
+      setMessage('Папка выбрана, настройки применяются')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось открыть выбор папки')
     }
@@ -177,7 +252,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Запись видео</h2>
           <p className="mt-1 text-sm text-zinc-500">Выберите OBS Replay Buffer или встроенную запись окна/экрана.</p>
         </div>
-        <Button onClick={save} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
+        {saving && <span className="text-sm text-violet-200">Применяем...</span>}
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
@@ -269,7 +344,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                   <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
                   {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                 </select>
-                <Button variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
+                <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>
                   <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
                 </Button>
               </div>
