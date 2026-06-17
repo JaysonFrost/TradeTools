@@ -6,6 +6,13 @@ export type ClipPathTrade = {
   symbol: string
   side: string
   entryTimeMs: number
+  manualTitle?: string
+}
+
+export type ClipPathCaptureTarget = {
+  id?: string
+  name: string
+  type?: string
 }
 
 export type ClipFileNames = {
@@ -41,6 +48,11 @@ const formatExchange = (value: string): string => {
     .join(' ')
 }
 
+const formatCaptureTargetSuffix = (captureTarget?: ClipPathCaptureTarget): string => {
+  const name = captureTarget?.name.trim()
+  return name ? ` - ${name}` : ''
+}
+
 export const toSafeClipFileBaseName = (value: string): string => {
   return value
     .replace(/\.mp4$/iu, '')
@@ -50,9 +62,10 @@ export const toSafeClipFileBaseName = (value: string): string => {
     .replace(/[. ]+$/g, '')
 }
 
-export const buildClipFileNames = (trade: ClipPathTrade): ClipFileNames => {
+export const buildClipFileNames = (trade: ClipPathTrade, captureTarget?: ClipPathCaptureTarget): ClipFileNames => {
   const { titleTimestamp } = formatDateParts(trade.entryTimeMs)
-  const title = `${formatSymbol(trade.symbol)} ${formatExchange(trade.exchange)} ${titleTimestamp}`
+  const titlePrefix = trade.manualTitle?.trim() || `${formatSymbol(trade.symbol)} ${formatExchange(trade.exchange)}`.trim()
+  const title = `${titlePrefix} ${titleTimestamp}${formatCaptureTargetSuffix(captureTarget)}`
   const safeFileName = toSafeClipFileBaseName(title)
 
   return {
@@ -62,9 +75,9 @@ export const buildClipFileNames = (trade: ClipPathTrade): ClipFileNames => {
   }
 }
 
-export const buildClipOutputPaths = (dataDir: string, trade: ClipPathTrade): ClipOutputPaths => {
+export const buildClipOutputPaths = (dataDir: string, trade: ClipPathTrade, captureTarget?: ClipPathCaptureTarget): ClipOutputPaths => {
   const { day } = formatDateParts(trade.entryTimeMs)
-  const names = buildClipFileNames(trade)
+  const names = buildClipFileNames(trade, captureTarget)
   const dayFolder = join(dataDir, day)
 
   return {

@@ -1,6 +1,6 @@
 import { access, copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { AppSettings } from '../settings/settings'
+import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
 import { buildClipFileNames, buildClipOutputPaths, toSafeClipFileBaseName } from '../video/clipPaths'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
@@ -26,6 +26,7 @@ export type ClipQueueItem = {
   exitTimeMs: number
   durationSeconds: number
   createdAtMs: number
+  captureTarget?: CaptureTargetRef
 }
 
 export type ClipProcessingStatus = {
@@ -35,6 +36,8 @@ export type ClipProcessingStatus = {
   progressPercent: number
   startedAtMs?: number
   queuedCount?: number
+  activeJobId?: string
+  queuedJobs?: Array<{ id: string, title: string }>
 }
 
 export type TradeClipMetadata = ClipQueueItem & {
@@ -50,6 +53,7 @@ export type TradeClipMetadata = ClipQueueItem & {
     output: VideoDetails
   }
   trade: ClosedTrade
+  captureTarget?: CaptureTargetRef
   trim: {
     startSeconds: number
     endSeconds: number
@@ -68,6 +72,8 @@ export type SaveReplayBufferResult = {
 export type SaveReplayBufferInput = {
   settings: AppSettings
   trade: ClosedTrade
+  captureTarget?: CaptureTargetRef
+  signal?: AbortSignal
 }
 
 export type DeleteClipFromQueueResult = {
@@ -100,10 +106,19 @@ export type FreeRecordingQueueInput = {
   durationSeconds: number
 }
 
+export type CreateClipOptions = {
+  captureTarget?: CaptureTargetRef
+  signal?: AbortSignal
+}
+
+export type ManualBufferClipInput = CreateClipOptions & {
+  requestedAtMs?: number
+}
+
 export type TradeClipPipelineDeps = {
   getSettings: () => Promise<AppSettings>
   saveReplayBuffer: (input: SaveReplayBufferInput) => Promise<SaveReplayBufferResult>
-  runFfmpeg?: (args: string[]) => Promise<void>
+  runFfmpeg?: (args: string[], signal?: AbortSignal) => Promise<void>
   getVideoDurationSeconds?: VideoDurationProbe
   getVideoDetails?: VideoDetailsProbe
   now?: () => number
@@ -112,7 +127,8 @@ export type TradeClipPipelineDeps = {
 export type TradeClipPipeline = {
   addFreeRecordingToQueue: (input: FreeRecordingQueueInput) => Promise<ClipQueueItem>
   clearQueue: () => Promise<ClearClipQueueResult>
-  createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem>
+  createClipForClosedTrade: (trade: ClosedTrade, options?: CreateClipOptions) => Promise<ClipQueueItem>
+  createManualBufferClip: (input?: ManualBufferClipInput) => Promise<ClipQueueItem>
   deleteQueueFiles: () => Promise<ClearClipQueueResult>
   listPendingClips: () => Promise<ClipQueueItem[]>
   renameClipFile: (input: { metadataPath: string, fileName: string }) => Promise<RenameClipFileResult>
@@ -147,7 +163,8 @@ const toClipQueueItem = (metadata: TradeClipMetadata): ClipQueueItem => ({
   entryTimeMs: metadata.entryTimeMs,
   exitTimeMs: metadata.exitTimeMs,
   durationSeconds: metadata.durationSeconds,
-  createdAtMs: metadata.createdAtMs
+  createdAtMs: metadata.createdAtMs,
+  ...(metadata.captureTarget ? { captureTarget: metadata.captureTarget } : {})
 })
 
 const parseMetadata = async (metadataPath: string): Promise<ClipQueueItem | undefined> => {
@@ -205,20 +222,39 @@ const assertUsableFrameRate = (details: VideoDetails, sourceLabel: string): void
   throw new Error(`${sourceLabel} содержит только ${frameRate.toFixed(1)} fps. TradeTools не может восстановить кадры, которых нет в исходной записи. Проверьте в OBS: Settings > Video > Common FPS Values, Output > Encoder overload, Game/Display Capture и Replay Buffer output.`)
 }
 
+const createAbortError = (): Error => new Error('Сохранение клипа отменено')
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted) throw createAbortError()
+}
+
 export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipPipeline => {
   const getVideoDetails = deps.getVideoDetails ?? (
     deps.getVideoDurationSeconds
       ? async (path: string): Promise<VideoDetails> => ({ durationSeconds: await deps.getVideoDurationSeconds?.(path) ?? 0 })
       : probeVideoDetails
   )
-  const runFfmpeg = deps.runFfmpeg ?? (async (args) => {
+  const runFfmpeg = deps.runFfmpeg ?? (async (args, signal) => {
     const { spawn } = await import('node:child_process')
     await new Promise<void>((resolve, reject) => {
+      throwIfAborted(signal)
       const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: 'ignore' })
+      let settled = false
+      const settle = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        callback()
+      }
+      const onAbort = () => {
+        child.kill('SIGTERM')
+        settle(() => reject(createAbortError()))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
       child.on('error', (error) => {
-        reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error)
+        settle(() => reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error))
       })
-      child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code ?? 'unknown'}`)))
+      child.on('exit', (code) => settle(() => code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code ?? 'unknown'}`))))
     })
   })
   const now = deps.now ?? (() => Date.now())
@@ -264,6 +300,133 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       removedCount: items.length,
       deletedFileCount
     }
+  }
+
+  const createClipForClosedTrade = async (trade: ClosedTrade, options: CreateClipOptions = {}): Promise<ClipQueueItem> => {
+    const settings = await deps.getSettings()
+    const captureTarget = options.captureTarget ?? trade.recordingTarget
+    const targetTrade: ClosedTrade = captureTarget
+      ? { ...trade, recordingTarget: captureTarget }
+      : trade
+
+    throwIfAborted(options.signal)
+    const replaySave = await deps.saveReplayBuffer({
+      settings,
+      trade: targetTrade,
+      ...(captureTarget ? { captureTarget } : {}),
+      ...(options.signal ? { signal: options.signal } : {})
+    })
+    throwIfAborted(options.signal)
+    if (!replaySave.ok) throw new Error(replaySave.message)
+
+    const replayPath = replaySave.replayPath ?? await waitForNewestReplayFile({
+      directory: settings.clip.replaySourceDir,
+      afterMs: replaySave.requestedAtMs
+    })
+    if (!replayPath) {
+      throw new Error(settings.recording.mode === 'window'
+        ? 'Встроенный рекордер не вернул replay-файл. Проверьте, что выбранное окно терминала открыто и запись активна.'
+        : `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`
+      )
+    }
+
+    const replayStat = await stat(replayPath)
+    const replaySavedAtMs = replayStat.mtimeMs
+    const replayDetails = await getVideoDetails(replayPath)
+    assertUsableFrameRate(replayDetails, settings.recording.mode === 'window' ? 'Встроенный replay-файл' : 'OBS replay-файл')
+    const replayDurationSeconds = replayDetails.durationSeconds
+    const paths = buildClipOutputPaths(settings.clip.outputDir, targetTrade, captureTarget)
+    const readyClip = replaySave.readyClip === true && settings.recording.mode === 'window'
+    const trim = readyClip
+      ? {
+          startSeconds: 0,
+          endSeconds: replayDurationSeconds,
+          durationSeconds: replayDurationSeconds
+        }
+      : planReplayTrim({
+          tradeEntryTimeMs: targetTrade.entryTimeMs,
+          tradeExitTimeMs: targetTrade.exitTimeMs,
+          replaySavedAtMs,
+          replayDurationSeconds,
+          paddingBeforeSeconds: settings.clip.paddingBeforeSeconds,
+          paddingAfterSeconds: settings.clip.paddingAfterSeconds
+        })
+
+    await mkdir(paths.dayFolder, { recursive: true })
+    let outputDetails: VideoDetails
+    let metadataReplayPath = replayPath
+    const temporaryVideoPath = nextTemporaryClipPath(paths.videoPath)
+    try {
+      throwIfAborted(options.signal)
+      if (readyClip) {
+        await copyFile(replayPath, temporaryVideoPath)
+      } else {
+        const ffmpegArgs = buildFfmpegTrimArgs({
+          inputPath: replayPath,
+          outputPath: temporaryVideoPath,
+          startSeconds: trim.startSeconds,
+          endSeconds: trim.endSeconds,
+          mode: 'reencode',
+          targetFrameRate: usableTargetFrameRate(replayDetails)
+        })
+        await (options.signal ? runFfmpeg(ffmpegArgs, options.signal) : runFfmpeg(ffmpegArgs))
+      }
+      throwIfAborted(options.signal)
+      outputDetails = await getVideoDetails(temporaryVideoPath)
+      assertUsableFrameRate(outputDetails, 'Готовый клип')
+      const outputDurationSeconds = outputDetails.durationSeconds
+      if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
+        throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
+      }
+      await rename(temporaryVideoPath, paths.videoPath)
+      if (readyClip) metadataReplayPath = paths.videoPath
+    } catch (error) {
+      await unlink(temporaryVideoPath).catch(() => undefined)
+      throw error
+    }
+    const outputStat = await stat(paths.videoPath)
+
+    const names = buildClipFileNames(targetTrade, captureTarget)
+    const item: ClipQueueItem = {
+      id: `${targetTrade.id}-${targetTrade.entryTimeMs}${captureTarget ? `-${captureTarget.id}` : ''}`,
+      status: 'pending-review',
+      title: names.title,
+      fileName: names.videoFileName,
+      videoPath: paths.videoPath,
+      metadataPath: paths.metadataPath,
+      symbol: targetTrade.symbol,
+      side: targetTrade.side,
+      exchange: targetTrade.exchange,
+      marketType: targetTrade.marketType,
+      entryTimeMs: targetTrade.entryTimeMs,
+      exitTimeMs: targetTrade.exitTimeMs,
+      durationSeconds: trim.durationSeconds,
+      createdAtMs: now(),
+      ...(captureTarget ? { captureTarget } : {})
+    }
+    const metadata: TradeClipMetadata = {
+      ...item,
+      replayPath: metadataReplayPath,
+      replaySavedAtMs,
+      replayDurationSeconds,
+      ...(replayDetails.averageFrameRate ? { replayFrameRate: replayDetails.averageFrameRate } : {}),
+      outputDurationSeconds: outputDetails.durationSeconds,
+      ...(outputDetails.averageFrameRate ? { outputFrameRate: outputDetails.averageFrameRate } : {}),
+      outputSizeBytes: outputStat.size,
+      videoDiagnostics: {
+        replay: replayDetails,
+        output: outputDetails
+      },
+      trade: targetTrade,
+      ...(captureTarget ? { captureTarget } : {}),
+      trim
+    }
+
+    await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
+    if (settings.recording.mode === 'obs' && resolve(replayPath) !== resolve(paths.videoPath)) {
+      await unlink(replayPath).catch(() => undefined)
+    }
+    return item
   }
 
   return {
@@ -329,115 +492,26 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       return item
     },
     clearQueue: () => clearQueue(false),
-    async createClipForClosedTrade(trade) {
+    createClipForClosedTrade,
+    async createManualBufferClip(input = {}) {
       const settings = await deps.getSettings()
-      const replaySave = await deps.saveReplayBuffer({ settings, trade })
-      if (!replaySave.ok) throw new Error(replaySave.message)
-
-      const replayPath = replaySave.replayPath ?? await waitForNewestReplayFile({
-        directory: settings.clip.replaySourceDir,
-        afterMs: replaySave.requestedAtMs
-      })
-      if (!replayPath) {
-        throw new Error(settings.recording.mode === 'window'
-          ? 'Встроенный рекордер не вернул replay-файл. Проверьте, что выбранное окно терминала открыто и запись активна.'
-          : `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`
-        )
+      const requestedAtMs = input.requestedAtMs ?? now()
+      const captureTarget = input.captureTarget
+      const targetId = captureTarget?.id.replace(/[^a-z0-9:-]+/gi, '-') ?? 'default'
+      const trade: ClosedTrade = {
+        id: `manual-buffer-${requestedAtMs}-${targetId}`,
+        exchange: 'TradeTools',
+        marketType: 'Manual buffer',
+        symbol: 'BUFFER',
+        side: 'BUFFER',
+        status: 'closed',
+        entryTimeMs: requestedAtMs - Math.max(1, settings.clip.replayBufferSeconds) * 1000,
+        exitTimeMs: requestedAtMs,
+        ...(captureTarget ? { recordingTarget: captureTarget } : {}),
+        manualTitle: 'Буфер TradeTools'
       }
 
-      const replayStat = await stat(replayPath)
-      const replaySavedAtMs = replayStat.mtimeMs
-      const replayDetails = await getVideoDetails(replayPath)
-      assertUsableFrameRate(replayDetails, settings.recording.mode === 'window' ? 'Встроенный replay-файл' : 'OBS replay-файл')
-      const replayDurationSeconds = replayDetails.durationSeconds
-      const paths = buildClipOutputPaths(settings.clip.outputDir, trade)
-      const readyClip = replaySave.readyClip === true && settings.recording.mode === 'window'
-      const trim = readyClip
-        ? {
-            startSeconds: 0,
-            endSeconds: replayDurationSeconds,
-            durationSeconds: replayDurationSeconds
-          }
-        : planReplayTrim({
-            tradeEntryTimeMs: trade.entryTimeMs,
-            tradeExitTimeMs: trade.exitTimeMs,
-            replaySavedAtMs,
-            replayDurationSeconds,
-            paddingBeforeSeconds: settings.clip.paddingBeforeSeconds,
-            paddingAfterSeconds: settings.clip.paddingAfterSeconds
-          })
-
-      await mkdir(paths.dayFolder, { recursive: true })
-      let outputDetails: VideoDetails
-      let metadataReplayPath = replayPath
-      const temporaryVideoPath = nextTemporaryClipPath(paths.videoPath)
-      try {
-        if (readyClip) {
-          await copyFile(replayPath, temporaryVideoPath)
-        } else {
-          const ffmpegArgs = buildFfmpegTrimArgs({
-            inputPath: replayPath,
-            outputPath: temporaryVideoPath,
-            startSeconds: trim.startSeconds,
-            endSeconds: trim.endSeconds,
-            mode: 'reencode',
-            targetFrameRate: usableTargetFrameRate(replayDetails)
-          })
-          await runFfmpeg(ffmpegArgs)
-        }
-        outputDetails = await getVideoDetails(temporaryVideoPath)
-        assertUsableFrameRate(outputDetails, 'Готовый клип')
-        const outputDurationSeconds = outputDetails.durationSeconds
-        if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
-          throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
-        }
-        await rename(temporaryVideoPath, paths.videoPath)
-        if (readyClip) metadataReplayPath = paths.videoPath
-      } catch (error) {
-        await unlink(temporaryVideoPath).catch(() => undefined)
-        throw error
-      }
-      const outputStat = await stat(paths.videoPath)
-
-      const names = buildClipFileNames(trade)
-      const item: ClipQueueItem = {
-        id: `${trade.id}-${trade.entryTimeMs}`,
-        status: 'pending-review',
-        title: names.title,
-        fileName: names.videoFileName,
-        videoPath: paths.videoPath,
-        metadataPath: paths.metadataPath,
-        symbol: trade.symbol,
-        side: trade.side,
-        exchange: trade.exchange,
-        marketType: trade.marketType,
-        entryTimeMs: trade.entryTimeMs,
-        exitTimeMs: trade.exitTimeMs,
-        durationSeconds: trim.durationSeconds,
-        createdAtMs: now()
-      }
-      const metadata: TradeClipMetadata = {
-        ...item,
-        replayPath: metadataReplayPath,
-        replaySavedAtMs,
-        replayDurationSeconds,
-        ...(replayDetails.averageFrameRate ? { replayFrameRate: replayDetails.averageFrameRate } : {}),
-        outputDurationSeconds: outputDetails.durationSeconds,
-        ...(outputDetails.averageFrameRate ? { outputFrameRate: outputDetails.averageFrameRate } : {}),
-        outputSizeBytes: outputStat.size,
-        videoDiagnostics: {
-          replay: replayDetails,
-          output: outputDetails
-        },
-        trade,
-        trim
-      }
-
-      await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
-      if (settings.recording.mode === 'obs' && resolve(replayPath) !== resolve(paths.videoPath)) {
-        await unlink(replayPath).catch(() => undefined)
-      }
-      return item
+      return createClipForClosedTrade(trade, input)
     },
     deleteQueueFiles: () => clearQueue(true),
     listPendingClips,

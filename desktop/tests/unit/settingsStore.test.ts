@@ -49,6 +49,13 @@ describe('settingsStore', () => {
       sourceType: 'screen',
       windowSourceId: 'terminal-source',
       windowSourceName: 'Trading terminal',
+      captureTargets: [{
+        id: 'terminal-source',
+        name: 'Trading terminal',
+        type: 'screen'
+      }],
+      saveTargetMode: 'all',
+      saveTargetId: '',
       frameRate: 24,
       segmentSeconds: 3,
       systemAudioEnabled: true,

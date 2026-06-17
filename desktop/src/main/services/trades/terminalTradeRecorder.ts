@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { open, readdir, stat } from 'node:fs/promises'
 import { join, posix } from 'node:path'
-import type { AppSettings } from '../settings/settings'
+import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
 
@@ -21,6 +21,7 @@ export type OpenTerminalTrade = Omit<ClosedTrade, 'status' | 'exitTimeMs'> & {
   status: 'open'
   positionId: string
   size?: number
+  recordingTarget?: CaptureTargetRef
 }
 
 export type TerminalPositionEvent = {
@@ -49,6 +50,7 @@ export type TerminalTradeWatcherInput = {
   ensureVideoRecordingReady: () => Promise<boolean>
   protectSince: (timeMs?: number) => void
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
+  resolveRecordingTarget?: (event: TerminalPositionEvent) => Promise<CaptureTargetRef | undefined>
   onStatusChange?: (status: TerminalTradeRecordingStatus) => void
   env?: NodeJS.ProcessEnv
   pollIntervalMs?: number
@@ -526,6 +528,7 @@ export const createTerminalTradeWatcher = ({
   ensureVideoRecordingReady,
   protectSince,
   createClipForClosedTrade,
+  resolveRecordingTarget,
   onStatusChange,
   env = process.env,
   pollIntervalMs = defaultPollIntervalMs
@@ -607,7 +610,15 @@ export const createTerminalTradeWatcher = ({
 
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
-  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = ''): OpenTerminalTrade => ({
+  const resolveTradeRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
+    try {
+      return await resolveRecordingTarget?.(event)
+    } catch {
+      return undefined
+    }
+  }
+
+  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = '', recordingTarget?: CaptureTargetRef): OpenTerminalTrade => ({
     id: `${event.source}-${event.positionId}${idSuffix}`,
     positionId: positionKey,
     exchange: event.exchange,
@@ -616,7 +627,8 @@ export const createTerminalTradeWatcher = ({
     side: event.side,
     status: 'open',
     entryTimeMs: event.eventTimeMs,
-    size: event.size
+    size: event.size,
+    ...(recordingTarget ? { recordingTarget } : {})
   })
 
   const createClosedTradeClip = async (
@@ -632,7 +644,8 @@ export const createTerminalTradeWatcher = ({
       side: openTrade.side,
       status: 'closed',
       entryTimeMs: openTrade.entryTimeMs,
-      exitTimeMs: event.eventTimeMs
+      exitTimeMs: event.eventTimeMs,
+      ...(openTrade.recordingTarget ? { recordingTarget: openTrade.recordingTarget } : {})
     }
 
     if (renderedTradeIds.has(closedTrade.id)) return undefined
@@ -685,7 +698,7 @@ export const createTerminalTradeWatcher = ({
         if (isPositionReversal(openTrade.size, event.size)) {
           try {
             const closedTrade = await closePositionTrade(openTrade, event, sourceName)
-            activeTrades.set(positionKey, createOpenTrade(event, positionKey))
+            activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
             if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
           } catch (error) {
             activeTrades.delete(positionKey)
@@ -697,7 +710,7 @@ export const createTerminalTradeWatcher = ({
           if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
         }
       } else {
-        activeTrades.set(positionKey, createOpenTrade(event, positionKey))
+        activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
       }
 
       await ensureVideoRecordingReady().catch(() => false)

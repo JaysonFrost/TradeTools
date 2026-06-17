@@ -157,6 +157,26 @@ describe('windowRecorderService', () => {
     expect(serviceSource).not.toContain('appendFile(sessionPath')
   })
 
+  it('filters built-in replay segments by the requested capture target', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('captureTarget?: CaptureTargetRef')
+    expect(serviceSource).toContain('targetMatchesSegment')
+    expect(serviceSource).toContain('relevantSegments(settings, captureTarget')
+    expect(serviceSource).toContain('waitForSegmentsUntil(settings, replayEndMs, timeoutMs, captureTarget)')
+    expect(serviceSource).toContain('exportReplay(settings, trade, captureTarget')
+  })
+
+  it('lets the renderer run one Chromium recorder per selected capture target', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('resolveRecordingTargets')
+    expect(controllerSource).toContain('settings.recording.captureTargets')
+    expect(controllerSource).toContain('startBrowserRecorder')
+    expect(controllerSource).toContain('browserRecorders')
+    expect(controllerSource).toContain('targets.length > 1')
+  })
+
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

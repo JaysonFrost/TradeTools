@@ -23,11 +23,21 @@ const FieldHint = ({ text }: { text: string }) => (
   </span>
 )
 
+const toCaptureTarget = (source: WindowCaptureSource): AppSettings['recording']['captureTargets'][number] => ({
+  id: source.id,
+  name: source.name,
+  type: source.type,
+  ...(source.displayId ? { displayId: source.displayId } : {})
+})
+
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
   const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
+  const [captureTargets, setCaptureTargets] = useState<AppSettings['recording']['captureTargets']>([])
+  const [saveTargetMode, setSaveTargetMode] = useState<AppSettings['recording']['saveTargetMode']>('all')
+  const [saveTargetId, setSaveTargetId] = useState('')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
@@ -52,6 +62,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     sourceType,
     windowSourceId,
     windowSourceName,
+    captureTargets,
+    saveTargetMode,
+    saveTargetId,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -71,6 +84,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     sourceType: nextSettings.recording.sourceType,
     windowSourceId: nextSettings.recording.windowSourceId,
     windowSourceName: nextSettings.recording.windowSourceName,
+    captureTargets: nextSettings.recording.captureTargets,
+    saveTargetMode: nextSettings.recording.saveTargetMode,
+    saveTargetId: nextSettings.recording.saveTargetId,
     frameRate: String(nextSettings.recording.frameRate),
     segmentSeconds: String(nextSettings.recording.segmentSeconds),
     systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
@@ -91,6 +107,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
+    setCaptureTargets(settings.recording.captureTargets)
+    setSaveTargetMode(settings.recording.saveTargetMode)
+    setSaveTargetId(settings.recording.saveTargetId)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
@@ -120,6 +139,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       if (preferredSource) {
         setWindowSourceId(preferredSource.id)
         setWindowSourceName(preferredSource.name)
+        setCaptureTargets([toCaptureTarget(preferredSource)])
+        setSaveTargetMode('selected')
+        setSaveTargetId(preferredSource.id)
         if (announce) setMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
         return
       }
@@ -139,6 +161,21 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   }, [recordingMode, sourceType, windowSourceId, windowSourceName])
 
   const filteredSources = windowSources.filter((source) => source.type === sourceType)
+  const screenSources = windowSources.filter((source) => source.type === 'screen')
+  const selectedCaptureTargetIds = new Set(captureTargets.map((target) => target.id))
+
+  const toggleScreenCaptureTarget = (source: WindowCaptureSource, checked: boolean) => {
+    const target = toCaptureTarget(source)
+    setCaptureTargets((current) => {
+      const nextTargets = checked
+        ? [...current.filter((candidate) => candidate.id !== target.id), target]
+        : current.filter((candidate) => candidate.id !== target.id)
+      if (!nextTargets.some((candidate) => candidate.id === saveTargetId)) {
+        setSaveTargetId(nextTargets[0]?.id ?? '')
+      }
+      return nextTargets
+    })
+  }
 
   const saveCurrentSettings = async (snapshot = buildSettingsSnapshot()) => {
     setSaving(true)
@@ -149,6 +186,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
+      const selectedCaptureTarget = selectedSource ? toCaptureTarget(selectedSource) : undefined
+      const nextCaptureTargets = sourceType === 'screen'
+        ? captureTargets.filter((target) => target.type === 'screen')
+        : selectedCaptureTarget ? [selectedCaptureTarget] : captureTargets.filter((target) => target.type === 'window')
       const replayBufferSecondsValue = recordingMode === 'window'
         ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
         : parsedReplayBufferSeconds
@@ -159,6 +200,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           sourceType,
           windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
+          captureTargets: nextCaptureTargets,
+          saveTargetMode,
+          saveTargetId,
           frameRate: Number(frameRate),
           segmentSeconds: Number(segmentSeconds),
           systemAudioEnabled,
@@ -201,6 +245,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     sourceType,
     windowSourceId,
     windowSourceName,
+    captureTargets,
+    saveTargetMode,
+    saveTargetId,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -315,6 +362,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                       setSourceType('window')
                       setWindowSourceId('')
                       setWindowSourceName('')
+                      setCaptureTargets([])
+                      setSaveTargetMode('selected')
+                      setSaveTargetId('')
                     }}
                     type="button"
                   >
@@ -326,6 +376,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                       setSourceType('screen')
                       setWindowSourceId('')
                       setWindowSourceName('')
+                      setCaptureTargets([])
+                      setSaveTargetMode('all')
+                      setSaveTargetId('')
                     }}
                     type="button"
                   >
@@ -339,6 +392,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                     const source = windowSources.find((candidate) => candidate.id === event.target.value)
                     setWindowSourceId(event.target.value)
                     setWindowSourceName(source?.name ?? '')
+                    setCaptureTargets(source ? [toCaptureTarget(source)] : [])
+                    setSaveTargetMode(source?.type === 'screen' ? saveTargetMode : 'selected')
+                    setSaveTargetId(source?.id ?? '')
                   }}
                 >
                   <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
@@ -349,6 +405,59 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 </Button>
               </div>
             </label>
+            {sourceType === 'screen' && (
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs font-medium text-zinc-500 md:col-span-2 xl:col-span-6">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="font-semibold text-zinc-300">Мониторы для записи</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {screenSources.map((source) => (
+                        <label key={source.id} className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-zinc-200">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-violet-500"
+                            checked={selectedCaptureTargetIds.has(source.id)}
+                            onChange={(event) => toggleScreenCaptureTarget(source, event.target.checked)}
+                          />
+                          {source.name}
+                        </label>
+                      ))}
+                      {screenSources.length === 0 && <span className="text-zinc-500">Экраны не найдены</span>}
+                    </div>
+                  </div>
+                  <div className="min-w-[220px]">
+                    <div className="flex rounded-2xl border border-white/10 bg-black/30 p-1">
+                      <button
+                        className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${saveTargetMode === 'all' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                        onClick={() => setSaveTargetMode('all')}
+                        type="button"
+                      >
+                        Все мониторы
+                      </button>
+                      <button
+                        className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${saveTargetMode === 'selected' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                        onClick={() => setSaveTargetMode('selected')}
+                        type="button"
+                      >
+                        Выбранный монитор
+                      </button>
+                    </div>
+                    {saveTargetMode === 'selected' && (
+                      <select
+                        className={`${inputClass} appearance-none`}
+                        value={saveTargetId}
+                        onChange={(event) => setSaveTargetId(event.target.value)}
+                      >
+                        <option value="">Выберите монитор</option>
+                        {captureTargets.filter((target) => target.type === 'screen').map((target) => (
+                          <option key={target.id} value={target.id}>{target.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <label className="text-xs font-medium text-zinc-500">
               FPS записи
               <input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" />

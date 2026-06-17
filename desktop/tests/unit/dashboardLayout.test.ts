@@ -100,6 +100,20 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
   })
 
+  it('supports multi-monitor capture target selection in built-in recording settings', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(settingsPanelSource).toContain('captureTargets')
+    expect(settingsPanelSource).toContain('saveTargetMode')
+    expect(settingsPanelSource).toContain('saveTargetId')
+    expect(settingsPanelSource).toContain('Все мониторы')
+    expect(settingsPanelSource).toContain('Выбранный монитор')
+    expect(settingsPanelSource).toContain('Мониторы для записи')
+    expect(controllerSource).toContain('resolveRecordingTargets')
+    expect(controllerSource).toContain('settings.recording.captureTargets')
+  })
+
   it('auto-saves video settings and refreshes window sources every minute', async () => {
     const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
 
@@ -156,6 +170,49 @@ describe('Dashboard layout', () => {
     expect(pipelineSource).toContain('addFreeRecordingToQueue')
     expect(pipelineSource).toContain('clearQueue')
     expect(pipelineSource).toContain('deleteQueueFiles')
+  })
+
+  it('lets users save the latest buffer manually and cancel clip rendering', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(dashboardSource).toContain('Сохранить последний буфер')
+    expect(dashboardSource).not.toContain('Создать тестовый клип')
+    expect(dashboardSource).toContain('manualBufferTargetId')
+    expect(dashboardSource).toContain('clips.createBuffer')
+    expect(dashboardSource).toContain('clips.cancelRender')
+    expect(dashboardSource).toContain('Отменить')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:create-buffer'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:cancel-render'")
+    expect(appSource).toContain("ipcMain.handle('clips:create-buffer'")
+    expect(appSource).toContain("ipcMain.handle('clips:cancel-render'")
+  })
+
+  it('places manual buffer saving next to background recording controls', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const recordingPanelStart = dashboardSource.indexOf('const RecordingStatusPanel')
+    const freeRecordingStart = dashboardSource.indexOf('const FreeRecordingControls')
+    const recordingPanelSource = dashboardSource.slice(recordingPanelStart, freeRecordingStart)
+    const queueSectionSource = dashboardSource.slice(dashboardSource.indexOf('Очередь проверки'))
+
+    expect(recordingPanelSource).toContain('Сохранить последний буфер')
+    expect(recordingPanelSource).toContain('onCreateBuffer')
+    expect(recordingPanelSource).toContain('manualBufferTargetId')
+    expect(recordingPanelSource.indexOf('Сохранить последний буфер')).toBeGreaterThan(recordingPanelSource.indexOf('Остановить фоновую запись'))
+    expect(queueSectionSource).not.toContain('Сохранить последний буфер')
+  })
+
+  it('makes free recording finish immediately instead of pausing first', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const freeRecordingSource = dashboardSource.slice(
+      dashboardSource.indexOf('const FreeRecordingControls'),
+      dashboardSource.indexOf('const DiagnosticsLogPanel')
+    )
+
+    expect(freeRecordingSource).toContain('Завершить')
+    expect(freeRecordingSource).not.toContain('Закончить')
+    expect(freeRecordingSource.indexOf('onClick={onFinish}')).toBeLessThan(freeRecordingSource.indexOf('onClick={onPause}'))
   })
 
   it('does not show noisy background recorder messages while waiting for a trade', async () => {

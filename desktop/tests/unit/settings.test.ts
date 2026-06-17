@@ -24,6 +24,9 @@ describe('settings', () => {
       sourceType: 'window',
       windowSourceId: '',
       windowSourceName: '',
+      captureTargets: [],
+      saveTargetMode: 'all',
+      saveTargetId: '',
       frameRate: 30,
       segmentSeconds: 2,
       systemAudioEnabled: false,
@@ -132,11 +135,45 @@ describe('settings', () => {
       sourceType: 'screen',
       windowSourceId: 'screen:1',
       windowSourceName: 'Terminal',
+      captureTargets: [{
+        id: 'screen:1',
+        name: 'Terminal',
+        type: 'screen'
+      }],
+      saveTargetMode: 'all',
+      saveTargetId: '',
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,
       microphoneEnabled: false
     })
+  })
+
+  it('normalizes selected multi-monitor capture targets', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        windowSourceId: 'screen:1',
+        windowSourceName: 'Screen 1',
+        captureTargets: [
+          { id: ' screen:1 ', name: ' Экран 1 ', type: 'screen', displayId: ' 1001 ' },
+          { id: 'window:vataga', name: 'Vataga', type: 'window' },
+          { id: '', name: 'Broken', type: 'screen' }
+        ],
+        saveTargetMode: 'selected',
+        saveTargetId: ' screen:1 '
+      }
+    }, '/app-data')
+
+    expect(settings.recording.captureTargets).toEqual([{
+      id: 'screen:1',
+      name: 'Экран 1',
+      type: 'screen',
+      displayId: '1001'
+    }])
+    expect(settings.recording.saveTargetMode).toBe('selected')
+    expect(settings.recording.saveTargetId).toBe('screen:1')
   })
 
   it('normalizes proxy records and system notification settings without raw proxy passwords', () => {

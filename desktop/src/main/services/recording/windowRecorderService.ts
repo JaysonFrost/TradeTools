@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join } from 'node:path'
-import type { AppSettings } from '../settings/settings'
+import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
 import { buildH264VideoArgs } from '../video/ffmpegCommand'
@@ -38,11 +38,20 @@ export type WindowRecorderStatus = {
   bufferedSeconds: number
   lastSegmentAtMs: number
   message: string
+  sources?: Array<{
+    sourceId: string
+    sourceName: string
+    segmentCount: number
+    bufferedSeconds: number
+    lastSegmentAtMs: number
+  }>
 }
 
 export type WindowReplaySaveInput = {
   settings: AppSettings
   trade: ClosedTrade
+  captureTarget?: CaptureTargetRef
+  signal?: AbortSignal
 }
 
 export type WindowReplaySaveResult = {
@@ -232,24 +241,43 @@ export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
   }
 }
 
-const runFfmpeg = async (args: string[]): Promise<void> => {
+const createAbortError = (): Error => new Error('Сохранение клипа отменено')
+
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (signal?.aborted) throw createAbortError()
+}
+
+const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
+    throwIfAborted(signal)
     const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: ['ignore', 'ignore', 'pipe'] })
     let stderr = ''
+    let settled = false
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      callback()
+    }
+    const onAbort = () => {
+      child.kill('SIGTERM')
+      settle(() => reject(createAbortError()))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
 
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)
     })
     child.on('error', (error) => {
-      reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error)
+      settle(() => reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error))
     })
     child.on('exit', (code) => {
       if (code === 0) {
-        resolve()
+        settle(resolve)
         return
       }
 
-      reject(new Error(`ffmpeg exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
+      settle(() => reject(new Error(`ffmpeg exited with code ${code ?? 'unknown'}: ${stderr.trim()}`)))
     })
   })
 }
@@ -612,15 +640,46 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     await pruneDiskFiles(keepPaths)
   }
 
-  const relevantSegments = (settings: AppSettings): StoredSegment[] => {
+  const primaryCaptureTarget = (settings: AppSettings): CaptureTargetRef | undefined => (
+    settings.recording.captureTargets.find((target) => target.id === settings.recording.saveTargetId) ??
+    settings.recording.captureTargets[0] ??
+    (settings.recording.windowSourceId ? {
+      id: settings.recording.windowSourceId,
+      name: settings.recording.windowSourceName,
+      type: settings.recording.sourceType
+    } : undefined)
+  )
+
+  const targetMatchesSegment = (segment: StoredSegment, captureTarget: CaptureTargetRef): boolean => (
+    segment.sourceId === captureTarget.id ||
+    (Boolean(captureTarget.name) && segment.sourceName === captureTarget.name)
+  )
+
+  const relevantSegments = (settings: AppSettings, captureTarget?: CaptureTargetRef): StoredSegment[] => {
+    const target = captureTarget ?? primaryCaptureTarget(settings)
     const sourceId = settings.recording.windowSourceId
     const sourceName = settings.recording.windowSourceName
     return segments
-      .filter((segment) => (
-        sourceId ? segment.sourceId === sourceId || segment.sourceName === sourceName : segment.sourceName === sourceName
-      ))
+      .filter((segment) => target
+        ? targetMatchesSegment(segment, target)
+        : (sourceId ? segment.sourceId === sourceId || segment.sourceName === sourceName : segment.sourceName === sourceName))
       .sort((a, b) => a.startedAtMs - b.startedAtMs)
   }
+
+  const buildSourceStatuses = (settings: AppSettings) => settings.recording.captureTargets.map((target) => {
+    const sourceSegments = relevantSegments(settings, target)
+    const first = sourceSegments[0]
+    const last = sourceSegments.at(-1)
+    const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
+
+    return {
+      sourceId: target.id,
+      sourceName: target.name,
+      segmentCount: sourceSegments.length,
+      bufferedSeconds: Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds),
+      lastSegmentAtMs: last?.endedAtMs ?? 0
+    }
+  })
 
   const buildStatus = async (
     settings: AppSettings,
@@ -661,22 +720,23 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       segmentCount: sourceSegments.length,
       bufferedSeconds,
       lastSegmentAtMs: last?.endedAtMs ?? 0,
-      message: override.message ?? defaultMessage
+      message: override.message ?? defaultMessage,
+      sources: buildSourceStatuses(settings)
     }
   }
 
-  const waitForSegmentsUntil = async (settings: AppSettings, targetEndMs: number, timeoutMs: number): Promise<StoredSegment[]> => {
+  const waitForSegmentsUntil = async (settings: AppSettings, targetEndMs: number, timeoutMs: number, captureTarget?: CaptureTargetRef): Promise<StoredSegment[]> => {
     const deadlineMs = Date.now() + timeoutMs
     while (Date.now() <= deadlineMs) {
       await pruneSegments(settings)
-      const sourceSegments = relevantSegments(settings)
+      const sourceSegments = relevantSegments(settings, captureTarget)
       if (sourceSegments.some((segment) => segment.endedAtMs >= targetEndMs - exportToleranceMs)) {
         return sourceSegments
       }
       await sleep(pollIntervalMs)
     }
 
-    return relevantSegments(settings)
+    return relevantSegments(settings, captureTarget)
   }
 
   const assertSegmentFile = async (segment: StoredSegment): Promise<void> => {
@@ -727,7 +787,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     replayPath: string,
     settings: AppSettings,
     replayStartMs: number,
-    replayEndMs: number
+    replayEndMs: number,
+    signal?: AbortSignal
   ): Promise<void> => {
     const firstSession = sessionFiles[0]
     if (!firstSession) throw new Error('Нет сегментов встроенной записи для сборки клипа')
@@ -747,7 +808,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         '-i',
         firstSession.path,
         ...browserReplayEncodeArgs(settings, replayPath)
-      ])
+      ], signal)
       return
     }
 
@@ -770,10 +831,10 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '-i',
       listPath,
       ...browserReplayEncodeArgs(settings, replayPath)
-    ])
+    ], signal)
   }
 
-  const concatNativeReplayFile = async (neededSegments: StoredSegment[], listPath: string, replayPath: string, settings: AppSettings): Promise<void> => {
+  const concatNativeReplayFile = async (neededSegments: StoredSegment[], listPath: string, replayPath: string, settings: AppSettings, signal?: AbortSignal): Promise<void> => {
     const concatList = neededSegments
       .map((segment) => `file '${escapeConcatPath(segment.path)}'`)
       .join('\n')
@@ -800,7 +861,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         '-movflags',
         '+faststart',
         replayPath
-      ])
+      ], signal)
       return
     } catch {
       await runFfmpeg([
@@ -826,7 +887,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         '-movflags',
         '+faststart',
         replayPath
-      ])
+      ], signal)
     }
   }
 
@@ -837,31 +898,33 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     replayId: string,
     listPath: string,
     replayStartMs: number,
-    replayEndMs: number
+    replayEndMs: number,
+    signal?: AbortSignal
   ): Promise<ReplayWriteResult> => {
     const allNativeSegments = neededSegments.every((segment) => segment.backend === 'ffmpeg')
     const allBrowserSegments = neededSegments.every((segment) => segment.backend === 'browser')
     let sessionFiles: ReplaySessionFile[] = []
 
     if (allNativeSegments) {
-      await concatNativeReplayFile(neededSegments, listPath, replayPath, settings)
+      await concatNativeReplayFile(neededSegments, listPath, replayPath, settings, signal)
       return { sessionFiles, readyClip: true }
     }
 
     if (allBrowserSegments) {
       sessionFiles = await buildSessionFiles(neededSegments, replayId)
-      await trimBrowserReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs)
+      await trimBrowserReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs, signal)
       return { sessionFiles, readyClip: true }
     }
 
     throw new Error('Во время записи переключился backend записи. Дождитесь новой записи после перезапуска рекордера.')
   }
 
-  const exportReplay = async (settings: AppSettings, trade: ClosedTrade): Promise<ReplayExportResult> => {
+  const exportReplay = async (settings: AppSettings, trade: ClosedTrade, captureTarget?: CaptureTargetRef, signal?: AbortSignal): Promise<ReplayExportResult> => {
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
-    const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs)
+    const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs, captureTarget)
+    throwIfAborted(signal)
     const firstSourceSegment = sourceSegments[0]
     const lastSourceSegment = sourceSegments.at(-1)
     const bufferedSeconds = firstSourceSegment && lastSourceSegment
@@ -885,7 +948,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     let sessionFiles: ReplaySessionFile[] = []
 
     try {
-      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, exportReplayStartMs, exportReplayEndMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, exportReplayStartMs, exportReplayEndMs, signal)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(exportReplayEndMs)
       await utimes(replayPath, savedAt, savedAt)
@@ -1094,7 +1157,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       return buildFreeRecordingStatus(settings, 'Свободная запись началась')
     },
     stop: stopNativeRecorder,
-    async saveReplayBuffer({ settings, trade }) {
+    async saveReplayBuffer({ settings, trade, captureTarget, signal }) {
       const requestedAtMs = Date.now()
       if (settings.recording.mode !== 'window') {
         return {
@@ -1113,7 +1176,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       ))
 
       try {
-        const replay = await exportReplay(settings, trade)
+        const replay = await exportReplay(settings, trade, captureTarget, signal)
         return {
           ok: true,
           requestedAtMs,

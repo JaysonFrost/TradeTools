@@ -698,6 +698,110 @@ describe('tradeClipPipeline', () => {
     expect(metadata.trim).toEqual({ startSeconds: 0, endSeconds: 131, durationSeconds: 131 })
   })
 
+  it('passes the selected capture target to built-in replay export and records it in metadata', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-targeted-clip-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-targeted-replays-'))
+    const replayPath = join(replayDir, 'screen-ready.mp4')
+    const saveTimeMs = Date.parse('2026-06-17T18:00:10.000Z')
+    const captureTarget = { id: 'screen:1', name: 'Экран 1', type: 'screen' as const, displayId: '1' }
+    await writeFile(replayPath, 'ready built-in clip')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const saveReplayBuffer = vi.fn(async () => ({
+      ok: true,
+      message: 'Встроенный replay сохранён',
+      requestedAtMs: saveTimeMs,
+      replayPath,
+      readyClip: true
+    }))
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window',
+          sourceType: 'screen',
+          captureTargets: [captureTarget],
+          saveTargetMode: 'selected',
+          saveTargetId: captureTarget.id
+        },
+        clip: {
+          ...defaultSettings.clip,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer,
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 10,
+        averageFrameRate: 30
+      }))
+    })
+
+    const clip = await (pipeline.createClipForClosedTrade as any)(createSimulatedClosedTrade(saveTimeMs, 3_000), { captureTarget })
+
+    expect(saveReplayBuffer).toHaveBeenCalledWith(expect.objectContaining({ captureTarget }))
+    expect(clip.fileName).toContain('Экран 1')
+    const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.captureTarget).toEqual(captureTarget)
+    expect(metadata.trade.recordingTarget).toEqual(captureTarget)
+  })
+
+  it('creates a manual buffer clip without a fake BTC trade', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-manual-buffer-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-manual-buffer-replays-'))
+    const replayPath = join(replayDir, 'manual-buffer.mp4')
+    const requestedAtMs = Date.parse('2026-06-17T18:10:00.000Z')
+    const captureTarget = { id: 'screen:2', name: 'Экран 2', type: 'screen' as const, displayId: '2' }
+    await writeFile(replayPath, 'manual buffer clip')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(requestedAtMs), new Date(requestedAtMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window',
+          sourceType: 'screen',
+          captureTargets: [captureTarget],
+          saveTargetMode: 'selected',
+          saveTargetId: captureTarget.id
+        },
+        clip: {
+          ...defaultSettings.clip,
+          replayBufferSeconds: 60,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs,
+        replayPath,
+        readyClip: true
+      })),
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 60,
+        averageFrameRate: 30
+      })),
+      now: () => requestedAtMs
+    })
+
+    const clip = await (pipeline as any).createManualBufferClip({ requestedAtMs, captureTarget })
+
+    expect(clip.title).toContain('Буфер')
+    expect(clip.title).toContain('Экран 2')
+    expect(clip.title).not.toContain('BTC')
+    expect(clip.symbol).toBe('BUFFER')
+    const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.trade).toMatchObject({
+      exchange: 'TradeTools',
+      marketType: 'Manual buffer',
+      symbol: 'BUFFER',
+      side: 'BUFFER'
+    })
+    expect(metadata.captureTarget).toEqual(captureTarget)
+  })
+
   it('keeps an existing valid clip when a duplicate render produces an invalid mp4', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-atomic-output-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-atomic-output-replays-'))

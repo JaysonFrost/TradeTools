@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, FileText, ListX, Pause, Play, RefreshCw, Square, Trash2, Video } from 'lucide-react'
+import { Copy, FileText, ListX, Pause, Play, RefreshCw, Square, Trash2, Video, XCircle } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
@@ -43,7 +43,8 @@ type VideoPageProps = {
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
-  onCreateTestClip: () => void
+  onCreateBuffer: (captureTargetId?: string) => void
+  onCancelClipRender: (jobId?: string) => void
   onClearQueue: () => void
   onDeleteQueueFiles: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
@@ -67,14 +68,19 @@ type ProxyPageProps = {
   onSettingsSaved: (settings: AppSettings) => void
 }
 
-const ClipProcessingBar = ({ status }: { status: ClipProcessingStatus }) => (
+const ClipProcessingBar = ({ status, onCancel }: { status: ClipProcessingStatus, onCancel: (jobId?: string) => void }) => (
   <div className="rounded-3xl border border-violet-400/20 bg-violet-500/[0.07] p-4">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <div className="text-sm font-semibold text-violet-100">{status.title || 'Клип сделки'}</div>
         <div className="mt-1 text-sm text-zinc-400">{status.message}</div>
       </div>
-      <div className="text-xs font-semibold text-violet-200">{Math.round(status.progressPercent)}%</div>
+      <div className="flex items-center gap-2">
+        <div className="text-xs font-semibold text-violet-200">{Math.round(status.progressPercent)}%</div>
+        <button className="inline-flex cursor-pointer items-center rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100 transition hover:bg-red-500/15" onClick={() => onCancel(status.activeJobId)} type="button">
+          <XCircle size={14} className="mr-1" />Отменить
+        </button>
+      </div>
     </div>
     <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
       <div
@@ -107,7 +113,8 @@ const RecordingStatusPanel = ({
   terminalTrade,
   backgroundRecordingEnabled,
   onBackgroundRecordingStart,
-  onBackgroundRecordingStop
+  onBackgroundRecordingStop,
+  onCreateBuffer
 }: {
   settings?: AppSettings
   obs: ObsUiState
@@ -116,8 +123,11 @@ const RecordingStatusPanel = ({
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
+  onCreateBuffer: (captureTargetId?: string) => void
 }) => {
+  const [manualBufferTargetId, setManualBufferTargetId] = useState('')
   const isWindowMode = settings?.recording.mode === 'window'
+  const manualBufferTargets = settings?.recording.mode === 'window' ? settings.recording.captureTargets : []
   const targetSeconds = Math.max(1, Math.round(settings?.clip.replayBufferSeconds ?? 1))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
@@ -174,6 +184,19 @@ const RecordingStatusPanel = ({
                 <Play size={16} className="mr-2" />Включить фоновую запись
               </button>
             )}
+            {manualBufferTargets.length > 1 && (
+              <select
+                className="min-h-10 cursor-pointer rounded-2xl border border-white/10 bg-black/20 px-3 text-sm text-zinc-100 outline-none"
+                value={manualBufferTargetId}
+                onChange={(event) => setManualBufferTargetId(event.target.value)}
+              >
+                <option value="">Все мониторы</option>
+                {manualBufferTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+              </select>
+            )}
+            <button className={`${buttonBase} border-violet-400/30 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25`} onClick={() => onCreateBuffer(manualBufferTargetId || undefined)} disabled={!settings || !backgroundRecordingEnabled} type="button">
+              <Video size={16} className="mr-2" />Сохранить последний буфер
+            </button>
           </div>
         )}
       </div>
@@ -237,6 +260,11 @@ const FreeRecordingControls = ({
               <Video size={16} className="mr-2" />Начать
             </button>
           )}
+          {isActive && (
+            <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onFinish} type="button">
+              <Square size={16} className="mr-2" />Завершить
+            </button>
+          )}
           {isActive && !isPaused && (
             <button className={`${buttonBase} border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]`} onClick={onPause} type="button">
               <Pause size={16} className="mr-2" />Пауза
@@ -245,11 +273,6 @@ const FreeRecordingControls = ({
           {isActive && isPaused && (
             <button className={`${buttonBase} border-emerald-400/30 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25`} onClick={onResume} type="button">
               <Play size={16} className="mr-2" />Продолжить
-            </button>
-          )}
-          {isActive && (
-            <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onFinish} type="button">
-              <Square size={16} className="mr-2" />Закончить
             </button>
           )}
         </div>
@@ -297,8 +320,7 @@ const DiagnosticsLogPanel = ({
   </details>
 )
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => {
-  return (
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
       <RecordingStatusPanel
         settings={settings}
@@ -308,6 +330,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         backgroundRecordingEnabled={backgroundRecordingEnabled}
         onBackgroundRecordingStart={onBackgroundRecordingStart}
         onBackgroundRecordingStop={onBackgroundRecordingStop}
+        onCreateBuffer={onCreateBuffer}
       />
       <FreeRecordingControls
         settings={settings}
@@ -333,10 +356,9 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
             <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
               <Trash2 size={16} className="mr-2" />Удалить все файлы
             </button>
-            <button className="cursor-pointer whitespace-nowrap rounded-2xl border border-violet-400/30 bg-violet-500/15 px-4 py-2 text-sm font-medium text-violet-100 transition hover:bg-violet-500/25 sm:self-auto" onClick={onCreateTestClip} type="button">Создать тестовый клип</button>
           </div>
         </div>
-        {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} /></div>}
+        {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
         <div className="space-y-3">
           {clips.length > 0 ? clips.map((clip) => (
             <ClipCard key={clip.id} clip={clip} onDeleted={onClipDeleted} onRenamed={onClipRenamed} />
@@ -349,7 +371,6 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
       </section>
     </div>
   )
-}
 
 const ProxyPage = ({ settings, runtimeState, onRuntimeStateChange, onSettingsSaved }: ProxyPageProps) => {
   const proxyStatuses = useMemo(() => [
@@ -582,35 +603,38 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
-  const createTestClip = async () => {
+  const createBuffer = async (captureTargetId?: string) => {
     const startedAtMs = Date.now()
     setLocalClipProcessing({
       active: true,
-      title: 'Тестовый клип',
+      title: 'Буфер TradeTools',
       message: settings?.recording.mode === 'window'
-        ? 'Собираем встроенный replay и режем клип'
+        ? 'Сохраняем последний встроенный буфер'
         : 'Сохраняем OBS replay и режем клип',
       progressPercent: 35,
       startedAtMs
     })
     setClipMessage(settings?.recording.mode === 'window'
-      ? 'Создаём тестовый клип: собираем встроенный replay из окна и режем ffmpeg...'
-      : 'Создаём тестовый клип: сохраняем OBS replay, ищем файл и режем ffmpeg...'
+      ? 'Сохраняем последний буфер встроенной записи...'
+      : 'Сохраняем последний OBS replay...'
     )
     try {
       const api = getTradeToolsApi()
-      const clip = await api.clips.createTest()
+      const createdClips = await api.clips.createBuffer({ captureTargetId })
+      const firstClip = createdClips[0]
       setLocalClipProcessing({
         active: true,
-        title: clip.title,
+        title: firstClip?.title ?? 'Буфер TradeTools',
         message: 'Клип сохранён, обновляем очередь',
         progressPercent: 95,
         startedAtMs
       })
-      setClipMessage(`Клип создан: ${clip.title}`)
+      setClipMessage(createdClips.length > 1
+        ? `Буферы сохранены: ${createdClips.length}`
+        : `Буфер сохранён: ${firstClip?.title ?? 'готово'}`)
       await loadLocalState()
     } catch (error) {
-      setClipMessage(error instanceof Error ? error.message : 'Не удалось создать клип')
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось сохранить буфер')
     } finally {
       setLocalClipProcessing({
         active: false,
@@ -618,6 +642,17 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
         message: '',
         progressPercent: 0
       })
+    }
+  }
+
+  const cancelClipRender = async (jobId?: string) => {
+    try {
+      const api = getTradeToolsApi()
+      const result = await api.clips.cancelRender(jobId)
+      setClipMessage(result.cancelledCount > 0 ? 'Сохранение отменено' : 'Нет задач для отмены')
+      await loadLocalState()
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось отменить сохранение')
     }
   }
 
@@ -804,7 +839,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
         onClose={() => setSetupWizardMode(undefined)}
         onSaved={onSettingsSaved}
         onRunHealthCheck={runHealthCheck}
-        onCreateTestClip={createTestClip}
+        onCreateTestClip={() => createBuffer()}
       />
       {activePage === 'video' ? (
         <VideoPage
@@ -819,7 +854,8 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clipProcessing={activeClipProcessing}
           onBackgroundRecordingStart={() => void startBackgroundRecording()}
           onBackgroundRecordingStop={() => void stopBackgroundRecording()}
-          onCreateTestClip={() => void createTestClip()}
+          onCreateBuffer={(captureTargetId) => void createBuffer(captureTargetId)}
+          onCancelClipRender={(jobId) => void cancelClipRender(jobId)}
           onClearQueue={() => void clearQueue()}
           onDeleteQueueFiles={() => void deleteQueueFiles()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}

@@ -408,4 +408,57 @@ describe('terminalTradeRecorder', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   })
+
+  it('attaches the resolved terminal capture target to the closed trade', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-target-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_17.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const target = { id: 'window:tiger', name: 'TigerTrade Terminal', type: 'window' as const }
+    const defaultSettings = createDefaultSettings(rootDir)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const resolveRecordingTarget = vi.fn(async () => target)
+    const watcher = (createTerminalTradeWatcher as any)({
+      getSettings: async () => defaultSettings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      resolveRecordingTarget,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().message).toContain('TigerTrade')
+      })
+      await sleep(50)
+      await appendFile(logPath, [
+        '17.06.2026 10:00:00.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=SIRENUSDT;Account=BINANCE FUTURES;Price=0;Size=1;Comission=0;Executions=1',
+        '17.06.2026 10:00:05.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=SIRENUSDT;Account=BINANCE FUTURES;Price=0;Size=0;Comission=0;Executions=2'
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+
+      expect(resolveRecordingTarget).toHaveBeenCalledWith(expect.objectContaining({ source: 'tigertrade' }))
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'SIRENUSDT',
+        recordingTarget: target
+      })
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
 })

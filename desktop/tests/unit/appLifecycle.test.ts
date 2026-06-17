@@ -86,10 +86,53 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain('activeClipRenderJob')
     expect(appSource).toContain('applyWindowRecorderProtection')
     expect(appSource).toContain('watcherProtectedSinceMs')
-    expect(appSource).toContain("createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false })")
+    expect(appSource).toContain('createClipForClosedTrade: queueClipForClosedTrade')
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())")
     expect(watcherSource).toContain('поставлен в очередь')
     expect(watcherSource).not.toContain('клип ${closedTrade.symbol} сохранён')
+  })
+
+  it('expands built-in multi-monitor trades into target-specific render jobs', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('selectClipRenderTargets')
+    expect(source).toContain("settings.recording.saveTargetMode === 'all'")
+    expect(source).toContain('captureTarget: target')
+    expect(source).toContain('recordingTarget: target')
+    expect(source).toContain('queueClipForClosedTrade')
+    expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
+    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+  })
+
+  it('updates built-in window recording targets when a terminal trade comes from another window', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('resolveTerminalRecordingTarget')
+    expect(source).toContain('nextCaptureTargets')
+    expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('captureTargets: nextCaptureTargets')
+  })
+
+  it('can cancel queued and active clip render jobs', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(source).toContain('abortController: AbortController')
+    expect(source).toContain('activeJobId')
+    expect(source).toContain('queuedJobs')
+    expect(source).toContain('abortController.abort()')
+    expect(source).toContain("ipcMain.handle('clips:cancel-render'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:cancel-render'")
+  })
+
+  it('creates manual buffer clips without routing through the fake BTC test trade', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(source).toContain("ipcMain.handle('clips:create-buffer'")
+    expect(source).toContain('createManualBufferClip')
+    expect(source).not.toContain('createSimulatedClosedTrade(Date.now()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:create-buffer'")
   })
 
   it('records clip render failures and queue activity in the user diagnostics log', async () => {
