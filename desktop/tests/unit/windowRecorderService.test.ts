@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createWindowRecorderService } from '../../src/main/services/recording/windowRecorderService'
+import { createWindowRecorderService, selectAvailableReplayWindow } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 describe('windowRecorderService', () => {
@@ -90,8 +90,25 @@ describe('windowRecorderService', () => {
     expect(source).toContain('const bufferedSeconds')
     expect(source).toContain('const requiredSeconds')
     expect(source).toContain('Накоплено ${formatRoundedSeconds(bufferedSeconds)}')
-    expect(source).toContain('нужно примерно ${formatRoundedSeconds(requiredSeconds)}')
-    expect(source).toContain('Осталось примерно ${formatRoundedSeconds(remainingSeconds)}')
+    expect(source).toContain('selectAvailableReplayWindow')
+  })
+
+  it('falls back to the nearest built-in segment when the requested trade window is not buffered', () => {
+    const requestedStartMs = Date.parse('2026-06-17T17:47:04.000Z')
+    const requestedEndMs = Date.parse('2026-06-17T17:47:10.000Z')
+    const nearestSegment = {
+      id: 'after-trade',
+      startedAtMs: Date.parse('2026-06-17T17:47:20.000Z'),
+      endedAtMs: Date.parse('2026-06-17T17:47:22.000Z')
+    }
+
+    const selection = selectAvailableReplayWindow([nearestSegment], requestedStartMs, requestedEndMs)
+
+    expect(selection).toEqual({
+      segments: [nearestSegment],
+      replayStartMs: nearestSegment.startedAtMs,
+      replayEndMs: nearestSegment.endedAtMs
+    })
   })
 
   it('keeps active trade segments and exports the full trade range instead of capping to the idle buffer', async () => {

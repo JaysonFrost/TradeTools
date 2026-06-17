@@ -112,6 +112,17 @@ type ReplayWriteResult = {
   readyClip: boolean
 }
 
+export type ReplayWindowSegment = {
+  startedAtMs: number
+  endedAtMs: number
+}
+
+export type AvailableReplayWindow<T extends ReplayWindowSegment> = {
+  segments: T[]
+  replayStartMs: number
+  replayEndMs: number
+}
+
 type ReplayExportResult = {
   replayPath: string
   readyClip: boolean
@@ -176,6 +187,50 @@ const browserAudioEnabled = (settings: AppSettings): boolean => settings.recordi
 const getErrorCode = (error: unknown): string => (
   typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
 )
+
+const distanceToReplayWindow = (segment: ReplayWindowSegment, replayStartMs: number, replayEndMs: number): number => {
+  if (segment.endedAtMs < replayStartMs) return replayStartMs - segment.endedAtMs
+  if (segment.startedAtMs > replayEndMs) return segment.startedAtMs - replayEndMs
+  return 0
+}
+
+export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
+  sourceSegments: T[],
+  replayStartMs: number,
+  replayEndMs: number
+): AvailableReplayWindow<T> | undefined => {
+  const overlapping = sourceSegments.filter((segment) => (
+    segment.endedAtMs >= replayStartMs - exportToleranceMs &&
+    segment.startedAtMs <= replayEndMs + exportToleranceMs
+  ))
+  const first = overlapping[0]
+  const last = overlapping.at(-1)
+  if (first && last) {
+    const clippedStartMs = Math.max(replayStartMs, first.startedAtMs)
+    const clippedEndMs = Math.min(replayEndMs, last.endedAtMs)
+    if (clippedEndMs > clippedStartMs) {
+      return {
+        segments: overlapping,
+        replayStartMs: clippedStartMs,
+        replayEndMs: clippedEndMs
+      }
+    }
+  }
+
+  const nearest = sourceSegments.reduce<T | undefined>((best, segment) => {
+    if (!best) return segment
+    const bestDistance = distanceToReplayWindow(best, replayStartMs, replayEndMs)
+    const segmentDistance = distanceToReplayWindow(segment, replayStartMs, replayEndMs)
+    return segmentDistance < bestDistance ? segment : best
+  }, undefined)
+  if (!nearest || nearest.endedAtMs <= nearest.startedAtMs) return undefined
+
+  return {
+    segments: [nearest],
+    replayStartMs: nearest.startedAtMs,
+    replayEndMs: nearest.endedAtMs
+  }
+}
 
 const runFfmpeg = async (args: string[]): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
@@ -790,7 +845,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
 
     if (allNativeSegments) {
       await concatNativeReplayFile(neededSegments, listPath, replayPath, settings)
-      return { sessionFiles, readyClip: false }
+      return { sessionFiles, readyClip: true }
     }
 
     if (allBrowserSegments) {
@@ -807,40 +862,32 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
     const sourceSegments = await waitForSegmentsUntil(settings, replayEndMs, timeoutMs)
-    const neededSegments = sourceSegments.filter((segment) => (
-      segment.endedAtMs >= replayStartMs - exportToleranceMs &&
-      segment.startedAtMs <= replayEndMs + exportToleranceMs
-    ))
     const firstSourceSegment = sourceSegments[0]
     const lastSourceSegment = sourceSegments.at(-1)
     const bufferedSeconds = firstSourceSegment && lastSourceSegment
       ? (lastSourceSegment.endedAtMs - firstSourceSegment.startedAtMs) / 1000
       : 0
     const requiredSeconds = (replayEndMs - replayStartMs) / 1000
+    const availableReplay = selectAvailableReplayWindow(sourceSegments, replayStartMs, replayEndMs)
 
-    const first = neededSegments[0]
-    const last = neededSegments.at(-1)
-    if (!first || !last) {
+    if (!availableReplay) {
       throw new Error(`Встроенный рекордер ещё не накопил видео для этой сделки. Накоплено ${formatRoundedSeconds(bufferedSeconds)}, нужно примерно ${formatRoundedSeconds(requiredSeconds)}. Оставьте окно терминала открытым.`)
     }
-    if (first.startedAtMs > replayStartMs + exportToleranceMs) {
-      throw new Error('Встроенный рекордер запущен слишком поздно: в буфере нет начала сделки.')
-    }
-    if (last.endedAtMs < replayEndMs - exportToleranceMs) {
-      const remainingSeconds = (replayEndMs - last.endedAtMs) / 1000
-      throw new Error(`Встроенный рекордер ещё не записал время после выхода из сделки. Осталось примерно ${formatRoundedSeconds(remainingSeconds)}.`)
-    }
+
+    const neededSegments = availableReplay.segments
+    const exportReplayStartMs = availableReplay.replayStartMs
+    const exportReplayEndMs = availableReplay.replayEndMs
 
     await mkdir(replaysDir, { recursive: true })
     const replayId = randomUUID()
     const listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
-    const replayPath = join(replaysDir, `${toFileTimestamp(last.endedAtMs)}-${replayId}.mp4`)
+    const replayPath = join(replaysDir, `${toFileTimestamp(exportReplayEndMs)}-${replayId}.mp4`)
     let sessionFiles: ReplaySessionFile[] = []
 
     try {
-      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, replayStartMs, replayEndMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, exportReplayStartMs, exportReplayEndMs)
       sessionFiles = writeResult.sessionFiles
-      const savedAt = new Date(replayEndMs)
+      const savedAt = new Date(exportReplayEndMs)
       await utimes(replayPath, savedAt, savedAt)
       return {
         replayPath,

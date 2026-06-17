@@ -269,16 +269,17 @@ const DiagnosticsLogPanel = ({
   onCopy: () => void
   onShowFile: () => void
 }) => (
-  <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <FileText size={16} className="text-violet-200" />
-          <h2 className="m-0 text-base font-semibold">Диагностика</h2>
-        </div>
-        <p className="mt-1 break-all text-xs text-zinc-500">{logs.path || 'Файл логов будет создан после первого события.'}</p>
-      </div>
-      <div className="flex shrink-0 flex-wrap gap-2">
+  <details className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-base font-semibold [&::-webkit-details-marker]:hidden">
+      <span className="flex items-center gap-2">
+        <FileText size={16} className="text-violet-200" />
+        Логи
+      </span>
+      <span className="text-xs font-medium text-zinc-500">Показать</span>
+    </summary>
+    <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <p className="min-w-0 break-all text-xs text-zinc-500">{logs.path || 'Файл логов будет создан после первого события.'}</p>
+      <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
         <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08]" onClick={onRefresh} type="button">
           <RefreshCw size={14} className="mr-2" />Обновить
         </button>
@@ -293,7 +294,7 @@ const DiagnosticsLogPanel = ({
     <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/30 p-3 text-xs leading-5 text-zinc-300">
       {logs.text || 'Лог пока пуст. Ошибки сохранения клипов появятся здесь.'}
     </pre>
-  </section>
+  </details>
 )
 
 const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => {
