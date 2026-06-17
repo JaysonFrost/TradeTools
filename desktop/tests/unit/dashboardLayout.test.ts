@@ -332,6 +332,21 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status'")
   })
 
+  it('shows diagnostics logs and lets users copy text or open the log file', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(dashboardSource).toContain('DiagnosticsLogPanel')
+    expect(dashboardSource).toContain('logs.get()')
+    expect(dashboardSource).toContain('clipboard.writeText(logs.text)')
+    expect(dashboardSource).toContain('logs.showFile()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('logs:get'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('logs:show-file'")
+    expect(appSource).toContain("ipcMain.handle('logs:get'")
+    expect(appSource).toContain("ipcMain.handle('logs:show-file'")
+  })
+
   it('removes Binance API key wiring from the video UI and preload bridge', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

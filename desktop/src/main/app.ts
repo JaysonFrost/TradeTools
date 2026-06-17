@@ -20,6 +20,7 @@ import { createTerminalTradeWatcher } from './services/trades/terminalTradeRecor
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
+import { createAppLogService } from './services/logging/appLogService'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -478,6 +479,7 @@ const createMainWindow = (): BrowserWindow => {
 
 app.whenReady().then(() => {
   ensureWindowsNotificationShortcut()
+  const appLog = createAppLogService({ appDataDir: app.getPath('userData') })
   const settingsStore = createSettingsStore(app.getPath('userData'))
   const secretStore = createSecretStore()
   const obsService = createObsService({
@@ -773,6 +775,15 @@ app.whenReady().then(() => {
           activeClipRenderJob = job
           applyWindowRecorderProtection()
           const startedAtMs = Date.now()
+          void appLog.info('clip-queue', 'Clip render started', {
+            jobId: job.id,
+            tradeId: job.trade.id,
+            symbol: job.trade.symbol,
+            side: job.trade.side,
+            entryTimeMs: job.trade.entryTimeMs,
+            exitTimeMs: job.trade.exitTimeMs,
+            queuedCount: clipRenderQueue.length
+          })
           setClipProcessingStatus({
             active: true,
             title: job.title,
@@ -792,9 +803,25 @@ app.whenReady().then(() => {
               startedAtMs,
               queuedCount: clipRenderQueue.length
             })
+            void appLog.info('clip-queue', 'Clip render finished', {
+              jobId: job.id,
+              tradeId: job.trade.id,
+              videoPath: clip.videoPath,
+              metadataPath: clip.metadataPath,
+              queuedCount: clipRenderQueue.length
+            })
             await notifyClipCreated(clip)
             job.resolve?.(clip)
           } catch (error) {
+            void appLog.error('clip-queue', 'Clip render failed', error, {
+              jobId: job.id,
+              tradeId: job.trade.id,
+              symbol: job.trade.symbol,
+              side: job.trade.side,
+              entryTimeMs: job.trade.entryTimeMs,
+              exitTimeMs: job.trade.exitTimeMs,
+              queuedCount: clipRenderQueue.length
+            })
             setClipProcessingStatus({
               active: false,
               title: job.title,
@@ -847,6 +874,14 @@ app.whenReady().then(() => {
       protectedSinceMs,
       resolve: resolveCompletion,
       reject: rejectCompletion
+    })
+    void appLog.info('clip-queue', 'Clip render queued', {
+      tradeId: trade.id,
+      symbol: trade.symbol,
+      side: trade.side,
+      entryTimeMs: trade.entryTimeMs,
+      exitTimeMs: trade.exitTimeMs,
+      queuedCount: clipRenderQueue.length
     })
     applyWindowRecorderProtection()
     if (activeClipRenderJob) {
@@ -908,7 +943,14 @@ app.whenReady().then(() => {
     protectSince: setWatcherProtectedSince,
     createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false }),
     onStatusChange: (status) => {
-      if (status.lastError) console.warn(`Terminal trade watcher: ${status.lastError}`)
+      if (status.lastError) {
+        console.warn(`Terminal trade watcher: ${status.lastError}`)
+        void appLog.warn('terminal-trade', status.lastError, {
+          source: status.source,
+          activeTradeCount: status.activeTradeCount,
+          lastEventAtMs: status.lastEventAtMs
+        })
+      }
     }
   })
 
@@ -925,13 +967,21 @@ app.whenReady().then(() => {
 
       const settings = await settingsStore.load()
       const sources = await listDesktopCaptureSources()
+      const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)
       const source = sources.find((source) => source.id === settings.recording.windowSourceId) ??
         sources.find((source) => source.name === settings.recording.windowSourceName) ??
-        sources.find((source) => settings.recording.sourceType === 'screen'
+        (hasSavedCaptureSource ? undefined : sources.find((source) => settings.recording.sourceType === 'screen'
           ? source.id.startsWith('screen:')
-          : !source.id.startsWith('screen:'))
+          : !source.id.startsWith('screen:')))
 
       if (!source) {
+        if (hasSavedCaptureSource) {
+          void appLog.warn('recording', 'Saved capture source is missing; not falling back to another window', {
+            sourceType: settings.recording.sourceType,
+            sourceId: settings.recording.windowSourceId,
+            sourceName: settings.recording.windowSourceName
+          })
+        }
         callback({})
         return
       }
@@ -946,6 +996,11 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('logs:get', () => appLog.getSnapshot())
+  ipcMain.handle('logs:show-file', async () => {
+    await appLog.info('diagnostics', 'Log file requested')
+    shell.showItemInFolder(appLog.getPath())
+  })
   ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
   ipcMain.handle('updates:check', () => appUpdateService.checkForUpdates())
   ipcMain.handle('updates:download', () => appUpdateService.downloadUpdate())
