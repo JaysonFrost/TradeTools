@@ -15,6 +15,14 @@ export type WindowCaptureSource = {
   type: AppSettings['recording']['sourceType']
 }
 
+export type ScreenCaptureBounds = {
+  displayId: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export type WindowRecordingSegmentInput = {
   sourceId: string
   sourceName: string
@@ -140,6 +148,7 @@ type ReplayExportResult = {
 type WindowRecorderServiceInput = {
   appDataDir: string
   isWindowSourceAvailable?: (source: { sourceId: string, sourceName: string }) => Promise<boolean>
+  getDisplayBounds?: () => ScreenCaptureBounds[]
 }
 
 type NativeRecorderState = {
@@ -153,6 +162,13 @@ type NativeRecorderState = {
   outputPattern: string
   stderr: string
   stopping: boolean
+}
+
+type NativeRecorderTarget = {
+  sourceId: string
+  sourceName: string
+  inputName: string
+  bounds?: ScreenCaptureBounds
 }
 
 type FreeRecordingInterval = {
@@ -282,30 +298,61 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
   })
 }
 
-export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable }: WindowRecorderServiceInput): WindowRecorderService => {
+export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable, getDisplayBounds }: WindowRecorderServiceInput): WindowRecorderService => {
   const segmentsDir = join(appDataDir, 'window-recording', 'segments')
   const replaysDir = join(appDataDir, 'window-recording', 'replays')
   const segments: StoredSegment[] = []
   let protectedSinceMs = 0
   let freeRecording: FreeRecordingState | undefined
-  let nativeRecorder: NativeRecorderState | undefined
+  let nativeRecorders: NativeRecorderState[] = []
   let nativeLastError = ''
   let nativeMissingSource: { settingsKey: string, message: string } | undefined
 
-  const nativeSettingsKey = (settings: AppSettings): string => [
+  const nativeSettingsKey = (settings: AppSettings, target?: NativeRecorderTarget): string => [
     settings.recording.sourceType,
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
     settings.recording.frameRate,
     settings.recording.segmentSeconds,
     String(settings.recording.systemAudioEnabled),
-    String(settings.recording.microphoneEnabled)
+    String(settings.recording.microphoneEnabled),
+    target?.sourceId ?? '',
+    target?.sourceName ?? '',
+    target?.bounds ? `${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}` : ''
   ].join('|')
 
   const nativeSourceName = (settings: AppSettings): string => (
     settings.recording.windowSourceName ||
     (settings.recording.sourceType === 'screen' ? 'Экран' : '')
   )
+
+  const evenCaptureSize = (value: number): number => {
+    const size = Math.max(2, Math.trunc(value))
+    return size % 2 === 0 ? size : size - 1
+  }
+
+  const nativeWindowTarget = (settings: AppSettings): NativeRecorderTarget => ({
+    sourceId: settings.recording.windowSourceId || 'window',
+    sourceName: nativeSourceName(settings),
+    inputName: `title=${settings.recording.windowSourceName}`
+  })
+
+  const nativeScreenTargets = (settings: AppSettings): NativeRecorderTarget[] => {
+    const displays = new Map((getDisplayBounds?.() ?? []).map((display) => [display.displayId, display]))
+    return settings.recording.captureTargets
+      .filter((target) => target.type === 'screen' && target.id.startsWith('screen:') && target.displayId)
+      .flatMap((target) => {
+        const bounds = displays.get(target.displayId ?? '')
+        return bounds
+          ? [{
+              sourceId: target.id,
+              sourceName: target.name,
+              inputName: 'desktop',
+              bounds
+            }]
+          : []
+      })
+  }
 
   const clearNativeMissingSource = () => {
     nativeMissingSource = undefined
@@ -351,12 +398,19 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     })
   }
 
-  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string): string[] => {
+  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget): string[] => {
     const frameRate = formatFrameRate(settings.recording.frameRate)
     const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
-    const inputName = settings.recording.sourceType === 'screen'
-      ? 'desktop'
-      : `title=${settings.recording.windowSourceName}`
+    const boundsArgs = target.bounds
+      ? [
+          '-offset_x',
+          String(Math.trunc(target.bounds.x)),
+          '-offset_y',
+          String(Math.trunc(target.bounds.y)),
+          '-video_size',
+          `${evenCaptureSize(target.bounds.width)}x${evenCaptureSize(target.bounds.height)}`
+        ]
+      : []
 
     return [
       '-hide_banner',
@@ -369,8 +423,9 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       frameRate,
       '-draw_mouse',
       '0',
+      ...boundsArgs,
       '-i',
-      inputName,
+      target.inputName,
       '-map',
       '0:v:0',
       '-an',
@@ -397,65 +452,172 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
 
   const stopNativeRecorder = async () => {
     clearNativeMissingSource()
-    const current = nativeRecorder
-    if (!current) return
+    const currentRecorders = nativeRecorders
+    nativeRecorders = []
+    if (currentRecorders.length === 0) return
 
-    nativeRecorder = undefined
-    current.stopping = true
-    if (current.process.exitCode !== null || current.process.killed) return
+    await Promise.all(currentRecorders.map(async (current) => {
+      current.stopping = true
+      if (current.process.exitCode !== null || current.process.killed) return
 
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        current.process.kill('SIGKILL')
-        resolve()
-      }, 1_500)
-      current.process.once('exit', () => {
-        clearTimeout(timer)
-        resolve()
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          current.process.kill('SIGKILL')
+          resolve()
+        }, 1_500)
+        current.process.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+        current.process.kill('SIGTERM')
       })
-      current.process.kill('SIGTERM')
-    })
+    }))
   }
 
   const scanNativeSegments = async () => {
-    const current = nativeRecorder
-    if (!current) return
+    const currentRecorders = nativeRecorders
+    if (currentRecorders.length === 0) return
 
-    const listText = await readFile(current.listPath, 'utf8').catch(() => '')
-    if (!listText.trim()) return
+    for (const current of currentRecorders) {
+      const listText = await readFile(current.listPath, 'utf8').catch(() => '')
+      if (!listText.trim()) continue
 
-    const knownIds = new Set(segments.map((segment) => segment.id))
-    const lines = listText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+      const knownIds = new Set(segments.map((segment) => segment.id))
+      const lines = listText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
 
-    for (const [index, line] of lines.entries()) {
-      const [rawPath, rawStart, rawEnd] = line.split(',')
-      if (!rawPath || !rawStart || !rawEnd) continue
+      for (const [index, line] of lines.entries()) {
+        const [rawPath, rawStart, rawEnd] = line.split(',')
+        if (!rawPath || !rawStart || !rawEnd) continue
 
-      const startSeconds = Number(rawStart)
-      const endSeconds = Number(rawEnd)
-      if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) continue
+        const startSeconds = Number(rawStart)
+        const endSeconds = Number(rawEnd)
+        if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) continue
 
-      const segmentPath = isAbsolute(rawPath) ? rawPath : join(segmentsDir, rawPath)
-      const fileStat = await stat(segmentPath).catch(() => undefined)
-      if (!fileStat?.isFile() || fileStat.size <= 0) continue
+        const segmentPath = isAbsolute(rawPath) ? rawPath : join(segmentsDir, rawPath)
+        const fileStat = await stat(segmentPath).catch(() => undefined)
+        if (!fileStat?.isFile() || fileStat.size <= 0) continue
 
-      const id = `${current.sessionId}-${index}`
-      if (knownIds.has(id)) continue
+        const id = `${current.sessionId}-${index}`
+        if (knownIds.has(id)) continue
 
-      segments.push({
-        id,
-        backend: 'ffmpeg',
-        sourceId: current.sourceId,
-        sourceName: current.sourceName,
-        sessionId: current.sessionId,
-        sequence: index,
-        startedAtMs: current.startedAtMs + Math.round(startSeconds * 1000),
-        endedAtMs: current.startedAtMs + Math.round(endSeconds * 1000),
-        path: segmentPath,
-        sizeBytes: fileStat.size
-      })
-      knownIds.add(id)
+        segments.push({
+          id,
+          backend: 'ffmpeg',
+          sourceId: current.sourceId,
+          sourceName: current.sourceName,
+          sessionId: current.sessionId,
+          sequence: index,
+          startedAtMs: current.startedAtMs + Math.round(startSeconds * 1000),
+          endedAtMs: current.startedAtMs + Math.round(endSeconds * 1000),
+          path: segmentPath,
+          sizeBytes: fileStat.size
+        })
+        knownIds.add(id)
+      }
     }
+  }
+
+  const startNativeRecorders = async (
+    settings: AppSettings,
+    targets: NativeRecorderTarget[],
+    startedMessage: string
+  ): Promise<WindowRecorderStatus> => {
+    const settingsKeys = targets.map((target) => nativeSettingsKey(settings, target))
+    const activeRecorders = nativeRecorders.filter((recorder) => recorder.process.exitCode === null)
+    if (
+      activeRecorders.length === targets.length &&
+      settingsKeys.every((key) => activeRecorders.some((recorder) => recorder.settingsKey === key))
+    ) {
+      await scanNativeSegments()
+      return buildStatus(settings, { backend: 'ffmpeg' })
+    }
+
+    await stopNativeRecorder()
+    await mkdir(segmentsDir, { recursive: true })
+    nativeLastError = ''
+    clearNativeMissingSource()
+
+    const startedRecorders = targets.map((target) => {
+      const sessionId = `ffmpeg-${Date.now()}-${randomUUID()}`
+      const listPath = join(segmentsDir, `${sessionId}.csv`)
+      const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
+      const processStartedAtMs = Date.now()
+      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target), {
+        stdio: ['ignore', 'ignore', 'pipe'],
+        windowsHide: true
+      })
+      const state: NativeRecorderState = {
+        process: child,
+        sessionId,
+        settingsKey: nativeSettingsKey(settings, target),
+        sourceId: target.sourceId,
+        sourceName: target.sourceName,
+        startedAtMs: processStartedAtMs,
+        listPath,
+        outputPattern,
+        stderr: '',
+        stopping: false
+      }
+
+      child.stderr.on('data', (chunk) => {
+        state.stderr = normalizeFfmpegLog(`${state.stderr}${String(chunk)}`)
+      })
+      child.on('error', (error) => {
+        nativeLastError = isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg').message : error.message
+        clearNativeMissingSource()
+        nativeRecorders = nativeRecorders.filter((recorder) => recorder !== state)
+      })
+      child.on('exit', (code, signal) => {
+        if (state.stopping) {
+          clearNativeMissingSource()
+        } else {
+          const stderr = normalizeFfmpegLog(state.stderr)
+          if (isMissingNativeWindowError(stderr) && state.sourceName) {
+            markNativeMissingSource({
+              settingsKey: state.settingsKey,
+              sourceName: state.sourceName
+            })
+          } else {
+            nativeLastError = stderr || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
+            clearNativeMissingSource()
+          }
+        }
+        nativeRecorders = nativeRecorders.filter((recorder) => recorder !== state)
+      })
+
+      return state
+    })
+
+    nativeRecorders = startedRecorders
+    await sleep(nativeRecorderStartupGraceMs)
+
+    const runningRecorders = nativeRecorders.filter((recorder) => recorder.process.exitCode === null)
+    if (runningRecorders.length !== targets.length) {
+      const missingMessage = settingsKeys.some((key) => nativeMissingSource?.settingsKey === key)
+        ? nativeMissingSource?.message
+        : undefined
+      await stopNativeRecorder()
+      if (missingMessage) {
+        return buildStatus(settings, {
+          backend: 'browser',
+          fallbackRequired: true,
+          message: missingMessage
+        })
+      }
+
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: nativeLastError
+          ? `ffmpeg-рекордер не запустился: ${nativeLastError}. Используем совместимый рекордер Chromium.`
+          : 'ffmpeg-рекордер не запустился. Используем совместимый рекордер Chromium.'
+      })
+    }
+
+    return buildStatus(settings, {
+      backend: 'ffmpeg',
+      message: startedMessage
+    })
   }
 
   const startNativeRecorder = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
@@ -485,12 +647,17 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }
 
     if (settings.recording.sourceType === 'screen') {
-      await stopNativeRecorder()
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: 'Запись экрана идёт через Chromium: так не мигает курсор Windows. Для максимального FPS выберите конкретное окно терминала.'
-      })
+      const targets = nativeScreenTargets(settings)
+      if (targets.length === 0) {
+        await stopNativeRecorder()
+        return buildStatus(settings, {
+          backend: 'browser',
+          fallbackRequired: true,
+          message: 'Не удалось определить координаты выбранных мониторов. Обновите список источников в настройках записи.'
+        })
+      }
+
+      return startNativeRecorders(settings, targets, `Оптимизированная запись экранов запущена: ${targets.map((target) => target.sourceName).join(', ')}`)
     }
 
     if (settings.recording.sourceType === 'window' && !settings.recording.windowSourceName) {
@@ -510,90 +677,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       })
     }
 
-    const settingsKey = nativeSettingsKey(settings)
-    if (nativeRecorder?.settingsKey === settingsKey && nativeRecorder.process.exitCode === null) {
-      await scanNativeSegments()
-      return buildStatus(settings, { backend: 'ffmpeg' })
-    }
-
-    await stopNativeRecorder()
-    await mkdir(segmentsDir, { recursive: true })
-
-    const sessionId = `ffmpeg-${Date.now()}-${randomUUID()}`
-    const listPath = join(segmentsDir, `${sessionId}.csv`)
-    const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
-    const sourceName = nativeSourceName(settings)
-    const processStartedAtMs = Date.now()
-    const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath), {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      windowsHide: true
-    })
-    const state: NativeRecorderState = {
-      process: child,
-      sessionId,
-      settingsKey,
-      sourceId: settings.recording.windowSourceId || settings.recording.sourceType,
-      sourceName,
-      startedAtMs: processStartedAtMs,
-      listPath,
-      outputPattern,
-      stderr: '',
-      stopping: false
-    }
-
-    nativeLastError = ''
-    clearNativeMissingSource()
-    nativeRecorder = state
-
-    child.stderr.on('data', (chunk) => {
-      state.stderr = normalizeFfmpegLog(`${state.stderr}${String(chunk)}`)
-    })
-    child.on('error', (error) => {
-      nativeLastError = isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg').message : error.message
-      clearNativeMissingSource()
-      if (nativeRecorder === state) nativeRecorder = undefined
-    })
-    child.on('exit', (code, signal) => {
-      if (state.stopping) {
-        clearNativeMissingSource()
-      } else {
-        const stderr = normalizeFfmpegLog(state.stderr)
-        if (isMissingNativeWindowError(stderr) && state.sourceName) {
-          markNativeMissingSource({
-            settingsKey: state.settingsKey,
-            sourceName: state.sourceName
-          })
-        } else {
-          nativeLastError = stderr || `ffmpeg остановился: ${code ?? signal ?? 'unknown'}`
-          clearNativeMissingSource()
-        }
-      }
-      if (nativeRecorder === state) nativeRecorder = undefined
-    })
-
-    await sleep(nativeRecorderStartupGraceMs)
-    if (nativeRecorder !== state || child.exitCode !== null) {
-      if (nativeMissingSource?.settingsKey === settingsKey) {
-        return buildStatus(settings, {
-          backend: 'browser',
-          fallbackRequired: true,
-          message: nativeMissingSource.message
-        })
-      }
-
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: nativeLastError
-          ? `ffmpeg-рекордер не запустился: ${nativeLastError}. Используем совместимый рекордер Chromium.`
-          : 'ffmpeg-рекордер не запустился. Используем совместимый рекордер Chromium.'
-      })
-    }
-
-    return buildStatus(settings, {
-      backend: 'ffmpeg',
-      message: 'Оптимизированная ffmpeg-запись запущена, ждём первые сегменты'
-    })
+    return startNativeRecorders(settings, [nativeWindowTarget(settings)], 'Оптимизированная ffmpeg-запись запущена, ждём первые сегменты')
   }
 
   const pruneDiskFiles = async (keepPaths: Set<string>) => {
@@ -604,9 +688,9 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       const extension = extname(entry.name).toLowerCase()
       if (!['.webm', '.mp4', '.csv'].includes(extension)) return
       if (keepPaths.has(filePath)) return
-      if (nativeRecorder?.listPath === filePath) return
+      if (nativeRecorders.some((recorder) => recorder.listPath === filePath)) return
 
-      if (nativeRecorder && entry.name.startsWith(`${nativeRecorder.sessionId}-`)) {
+      if (nativeRecorders.some((recorder) => entry.name.startsWith(`${recorder.sessionId}-`))) {
         const fileStat = await stat(filePath).catch(() => undefined)
         if (fileStat && Date.now() - fileStat.mtimeMs < segmentStaleAfterMs) return
       }
@@ -691,15 +775,16 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const last = sourceSegments.at(-1)
     const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
     const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
-    const active = Boolean(nativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
-    const backend = override.backend ?? (nativeRecorder ? 'ffmpeg' : 'browser')
+    const hasNativeRecorder = nativeRecorders.length > 0
+    const active = Boolean(hasNativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
+    const backend = override.backend ?? (hasNativeRecorder ? 'ffmpeg' : 'browser')
     const bufferTargetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
     const bufferMessage = `накоплено ${Math.round(bufferedSeconds)}с из ${bufferTargetSeconds}с`
     const defaultMessage = settings.recording.mode !== 'window'
       ? 'Встроенная запись окна выключена'
       : !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
         ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
-        : backend === 'ffmpeg' && nativeRecorder
+        : backend === 'ffmpeg' && hasNativeRecorder
           ? bufferedSeconds > 0
             ? `Оптимизированная ffmpeg-запись активна, ${bufferMessage}`
             : 'Оптимизированная ffmpeg-запись активна, ждём первые сегменты'
@@ -713,7 +798,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       enabled: settings.recording.mode === 'window',
       active,
       backend,
-      ...(override.fallbackRequired || (settings.recording.mode === 'window' && !nativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
+      ...(override.fallbackRequired || (settings.recording.mode === 'window' && !hasNativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
       mode: settings.recording.mode,
       sourceId: settings.recording.windowSourceId,
       sourceName: settings.recording.windowSourceName,

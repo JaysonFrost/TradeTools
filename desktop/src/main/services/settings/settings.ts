@@ -145,6 +145,9 @@ const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSet
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
 }
 const normalizeRecordingSaveTargetMode = (value: unknown): RecordingSaveTargetMode => value === 'selected' ? 'selected' : 'all'
+const isCaptureTargetIdCompatible = (id: string, type: RecordingSourceType): boolean => (
+  type === 'screen' ? id.startsWith('screen:') : !id.startsWith('screen:')
+)
 
 const normalizeCaptureTarget = (value: unknown, sourceType: RecordingSourceType): CaptureTargetRef | undefined => {
   if (typeof value !== 'object' || value === null) return undefined
@@ -153,7 +156,7 @@ const normalizeCaptureTarget = (value: unknown, sourceType: RecordingSourceType)
   const id = normalizeString(input.id)
   const name = normalizeString(input.name)
   const type = normalizeRecordingSourceType(input.type, id)
-  if (!id || type !== sourceType) return undefined
+  if (!id || type !== sourceType || !isCaptureTargetIdCompatible(id, type)) return undefined
 
   const displayId = normalizeString(input.displayId)
   return {
@@ -178,7 +181,7 @@ const normalizeCaptureTargets = (value: unknown, sourceType: RecordingSourceType
 
 const legacyCaptureTarget = (recording: Partial<AppSettings['recording']> | undefined, sourceType: RecordingSourceType): CaptureTargetRef | undefined => {
   const id = normalizeString(recording?.windowSourceId)
-  if (!id) return undefined
+  if (!id || !isCaptureTargetIdCompatible(id, sourceType)) return undefined
 
   const name = normalizeString(recording?.windowSourceName)
   return {
@@ -302,6 +305,10 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
   const captureTargets = configuredCaptureTargets.length > 0
     ? configuredCaptureTargets
     : fallbackCaptureTarget ? [fallbackCaptureTarget] : []
+  const requestedSaveTargetId = normalizeString(settings.recording?.saveTargetId ?? defaults.recording.saveTargetId)
+  const saveTargetId = captureTargets.some((target) => target.id === requestedSaveTargetId)
+    ? requestedSaveTargetId
+    : captureTargets[0]?.id ?? ''
   const paddingBeforeSeconds = clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, maxClipPaddingSeconds)
   const paddingAfterSeconds = clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, maxClipPaddingSeconds)
   const maxReplayBufferSeconds = recordingMode === 'window' ? maxWindowReplayBufferSeconds : maxObsReplayBufferSeconds
@@ -316,7 +323,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       windowSourceName,
       captureTargets,
       saveTargetMode: normalizeRecordingSaveTargetMode(settings.recording?.saveTargetMode ?? defaults.recording.saveTargetMode),
-      saveTargetId: normalizeString(settings.recording?.saveTargetId ?? defaults.recording.saveTargetId),
+      saveTargetId,
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
       systemAudioEnabled: settings.recording?.systemAudioEnabled === true,

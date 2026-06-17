@@ -458,7 +458,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         return
       }
 
-      if (settings.recording.sourceType === 'screen' && targets.length > 0 && settings.recording.captureTargets.length === 0) {
+      const screenTargetsNeedSync = settings.recording.sourceType === 'screen' && targets.length > 0 && (
+        settings.recording.captureTargets.length === 0 ||
+        settings.recording.captureTargets.some((target) => target.type === 'screen' && !target.displayId)
+      )
+      if (screenTargetsNeedSync) {
         const firstScreen = targets[0]
         onStatusChange(createLocalStatus(settings, `Автоматически выбрали экран: ${firstScreen.name}`))
         const updated = await api.settings.update({
@@ -515,13 +519,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         return
       }
 
-      if (targets.length > 1) {
-        onStatusChange(createLocalStatus(settings, `Запускаем запись ${targets.length} источников...`, true))
-        await Promise.all(targets.map((target) => startBrowserRecorder(api, sources, target)))
-        if (!disposed) onStatusChange(createLocalStatus(settings, `Встроенная запись активна: ${targets.map((target) => target.name).join(', ')}`, true))
-        return
-      }
-
       onStatusChange(createLocalStatus(settings, 'Запускаем оптимизированную ffmpeg-запись...'))
       const optimizedStatus = await api.recording.start()
       onStatusChange(optimizedStatus)
@@ -538,6 +535,13 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
             }
           }).catch(handleStartError)
         }, 2_000)
+        return
+      }
+
+      if (targets.length > 1) {
+        onStatusChange(createLocalStatus(settings, `Запускаем запись ${targets.length} источников...`, true))
+        await Promise.all(targets.map((target) => startBrowserRecorder(api, sources, target)))
+        if (!disposed) onStatusChange(createLocalStatus(settings, `Встроенная запись активна: ${targets.map((target) => target.name).join(', ')}`, true))
         return
       }
 

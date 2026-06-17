@@ -141,7 +141,7 @@ describe('settings', () => {
         type: 'screen'
       }],
       saveTargetMode: 'all',
-      saveTargetId: '',
+      saveTargetId: 'screen:1',
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,
@@ -174,6 +174,31 @@ describe('settings', () => {
     }])
     expect(settings.recording.saveTargetMode).toBe('selected')
     expect(settings.recording.saveTargetId).toBe('screen:1')
+  })
+
+  it('drops legacy window ids that were mislabeled as screen capture targets', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        windowSourceId: 'window:8849754:0',
+        windowSourceName: 'Vataga.terminal',
+        captureTargets: [
+          { id: 'window:8849754:0', name: 'Vataga.terminal', type: 'screen' },
+          { id: 'screen:1:0', name: 'Экран 1', type: 'screen', displayId: '1453013278' }
+        ],
+        saveTargetMode: 'all',
+        saveTargetId: 'window:8849754:0'
+      }
+    }, '/app-data')
+
+    expect(settings.recording.captureTargets).toEqual([{
+      id: 'screen:1:0',
+      name: 'Экран 1',
+      type: 'screen',
+      displayId: '1453013278'
+    }])
+    expect(settings.recording.saveTargetId).toBe('screen:1:0')
   })
 
   it('normalizes proxy records and system notification settings without raw proxy passwords', () => {

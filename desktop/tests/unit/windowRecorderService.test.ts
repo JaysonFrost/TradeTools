@@ -177,6 +177,23 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('targets.length > 1')
   })
 
+  it('uses native gdigrab bounds for screen capture targets instead of recording black Chromium screen streams', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(appSource).toContain('getDisplayBounds')
+    expect(serviceSource).toContain('ScreenCaptureBounds')
+    expect(serviceSource).toContain('nativeScreenTargets')
+    expect(serviceSource).toContain("'-offset_x'")
+    expect(serviceSource).toContain("'-offset_y'")
+    expect(serviceSource).toContain("'-video_size'")
+    expect(serviceSource).not.toContain('Запись экрана идёт через Chromium')
+    expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('if (targets.length > 1)'))
+    expect(controllerSource).toContain('screenTargetsNeedSync')
+    expect(controllerSource).toContain('!target.displayId')
+  })
+
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
@@ -199,12 +216,13 @@ describe('windowRecorderService', () => {
     expect(appSource).toContain("ipcMain.handle('recording:start'")
   })
 
-  it('avoids cursor capture in the Chromium fallback and avoids the gdigrab screen backend', async () => {
+  it('avoids cursor capture in both native screen recording and the Chromium fallback', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
-    expect(serviceSource).toContain('не мигает курсор Windows')
+    expect(serviceSource).toContain("'-draw_mouse'")
+    expect(serviceSource).toContain("'0'")
     expect(controllerSource).toContain("cursor: 'never'")
   })
 

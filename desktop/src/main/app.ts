@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
@@ -517,7 +517,14 @@ app.whenReady().then(() => {
   })
   const windowRecorderService = createWindowRecorderService({
     appDataDir: app.getPath('userData'),
-    isWindowSourceAvailable: isCurrentWindowSourceAvailable
+    isWindowSourceAvailable: isCurrentWindowSourceAvailable,
+    getDisplayBounds: () => electronScreen.getAllDisplays().map((display) => ({
+      displayId: String(display.id),
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height
+    }))
   })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
