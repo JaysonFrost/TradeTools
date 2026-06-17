@@ -434,6 +434,9 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       }
 
       await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
+      if (settings.recording.mode === 'obs' && resolve(replayPath) !== resolve(paths.videoPath)) {
+        await unlink(replayPath).catch(() => undefined)
+      }
       return item
     },
     deleteQueueFiles: () => clearQueue(true),

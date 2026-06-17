@@ -148,6 +148,47 @@ describe('tradeClipPipeline', () => {
     expect(runFfmpeg.mock.calls[0][0].at(-1)).toContain(`${clip.videoPath}.tmp-`)
   })
 
+  it('removes the consumed OBS replay after the final clip is written', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-remove-obs-replay-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-remove-obs-replay-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 08-30-00.mp4')
+    await writeFile(replayPath, 'fake video')
+    const saveTimeMs = Date.parse('2026-05-13T08:30:00.000Z')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'obs'
+        },
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 1800,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'trimmed video')
+      }),
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+    })
+
+    const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
+
+    await expect(access(clip.videoPath)).resolves.toBeUndefined()
+    await expect(access(replayPath)).rejects.toThrow()
+  })
+
   it('exposes local review queue actions without a direct external publishing action', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-local-metadata-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-local-replays-'))
