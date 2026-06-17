@@ -199,7 +199,7 @@ describe('terminalTradeRecorder', () => {
     }])
   })
 
-  it('clips a quick TigerTrade round trip while the base position stays open', async () => {
+  it('does not split partial TigerTrade size changes into extra clips', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')
     }))
@@ -238,7 +238,8 @@ describe('terminalTradeRecorder', () => {
       await appendFile(logPath, [
         '15.06.2026 10:00:00.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=BTCUSDT;Account=BINANCE FUTURES;Price=65000;Size=1;Comission=0;Executions=1',
         '15.06.2026 10:01:00.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=BTCUSDT;Account=BINANCE FUTURES;Price=65100;Size=2;Comission=0;Executions=2',
-        '15.06.2026 10:01:05.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=BTCUSDT;Account=BINANCE FUTURES;Price=65120;Size=1;Comission=0;Executions=3'
+        '15.06.2026 10:01:05.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=BTCUSDT;Account=BINANCE FUTURES;Price=65120;Size=1;Comission=0;Executions=3',
+        '15.06.2026 10:02:00.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=BTCUSDT;Account=BINANCE FUTURES;Price=65200;Size=0;Comission=0;Executions=4'
       ].join('\n') + '\n', 'utf8')
 
       await waitForAssertion(() => {
@@ -251,10 +252,10 @@ describe('terminalTradeRecorder', () => {
         symbol: 'BTCUSDT',
         side: 'LONG',
         status: 'closed',
-        entryTimeMs: new Date(2026, 5, 15, 10, 1, 0).getTime(),
-        exitTimeMs: new Date(2026, 5, 15, 10, 1, 5).getTime()
+        entryTimeMs: new Date(2026, 5, 15, 10, 0, 0).getTime(),
+        exitTimeMs: new Date(2026, 5, 15, 10, 2, 0).getTime()
       })
-      expect(watcher.getStatus().activeTradeCount).toBe(1)
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
     } finally {
       watcher.stop()
       vi.unstubAllGlobals()

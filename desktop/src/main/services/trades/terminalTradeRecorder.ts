@@ -112,14 +112,6 @@ const isPositionReversal = (previousSize: unknown, nextSize: unknown): boolean =
   return Math.sign(previousSize) !== Math.sign(nextSize)
 }
 
-const comparablePositionSizes = (previousSize: unknown, nextSize: unknown): [number, number] | undefined => {
-  if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return undefined
-  if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return undefined
-  if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return undefined
-  if (Math.sign(previousSize) !== Math.sign(nextSize)) return undefined
-  return [previousSize, nextSize]
-}
-
 const getField = (record: unknown, names: string[]): unknown => {
   if (!record || typeof record !== 'object') return undefined
   const entries = Object.entries(record as Record<string, unknown>)
@@ -562,7 +554,6 @@ export const createTerminalTradeWatcher = ({
   ]
 
   const activeTrades = new Map<string, OpenTerminalTrade>()
-  const layeredTrades = new Map<string, OpenTerminalTrade[]>()
   const renderedTradeIds = new Set<string>()
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
@@ -675,67 +666,12 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
-  const closePositionTrades = async (
-    positionKey: string,
+  const closePositionTrade = async (
     openTrade: OpenTerminalTrade,
     event: TerminalPositionEvent,
     sourceName: string
-  ): Promise<ClosedTrade[]> => {
-    const closedTrades: ClosedTrade[] = []
-    const stack = layeredTrades.get(positionKey) ?? []
-    while (stack.length > 0) {
-      const layeredTrade = stack.pop()
-      if (!layeredTrade) continue
-      const closedLayeredTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
-      if (closedLayeredTrade) closedTrades.push(closedLayeredTrade)
-    }
-    layeredTrades.delete(positionKey)
-
-    const closedTrade = await createClosedTradeClip(openTrade, event, sourceName)
-    if (closedTrade) closedTrades.push(closedTrade)
-    return closedTrades
-  }
-
-  const handleLayeredPositionUpdate = async (
-    positionKey: string,
-    openTrade: OpenTerminalTrade,
-    event: TerminalPositionEvent,
-    sourceName: string
-  ) => {
-    const sizes = comparablePositionSizes(openTrade.size, event.size)
-    if (!sizes) {
-      if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
-      return
-    }
-
-    const [previousSize, nextSize] = sizes
-    if (Math.abs(nextSize) > Math.abs(previousSize)) {
-      const stack = layeredTrades.get(positionKey) ?? []
-      stack.push({
-        ...createOpenTrade(event, positionKey, `-layer-${event.eventTimeMs}-${stack.length + 1}`),
-        size: nextSize - previousSize
-      })
-      layeredTrades.set(positionKey, stack)
-    } else if (Math.abs(nextSize) < Math.abs(previousSize)) {
-      const stack = layeredTrades.get(positionKey)
-      const layeredTrade = stack?.pop()
-      if (layeredTrade) {
-        if (stack?.length) {
-          layeredTrades.set(positionKey, stack)
-        } else {
-          layeredTrades.delete(positionKey)
-        }
-
-        try {
-          const closedTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
-          if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
-        } catch (error) {
-          emitClipError(event, sourceName, error)
-        }
-      }
-    }
-
-    openTrade.size = nextSize
+  ): Promise<ClosedTrade | undefined> => {
+    return createClosedTradeClip(openTrade, event, sourceName)
   }
 
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
@@ -748,18 +684,17 @@ export const createTerminalTradeWatcher = ({
       if (openTrade) {
         if (isPositionReversal(openTrade.size, event.size)) {
           try {
-            const closedTrades = await closePositionTrades(positionKey, openTrade, event, sourceName)
+            const closedTrade = await closePositionTrade(openTrade, event, sourceName)
             activeTrades.set(positionKey, createOpenTrade(event, positionKey))
-            for (const closedTrade of closedTrades) emitQueuedClip(event, sourceName, closedTrade)
+            if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
           } catch (error) {
             activeTrades.delete(positionKey)
-            layeredTrades.delete(positionKey)
             await protectActiveTrades()
             emitClipError(event, sourceName, error)
             return
           }
         } else {
-          await handleLayeredPositionUpdate(positionKey, openTrade, event, sourceName)
+          if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
         }
       } else {
         activeTrades.set(positionKey, createOpenTrade(event, positionKey))
@@ -780,13 +715,12 @@ export const createTerminalTradeWatcher = ({
     if (!openTrade) return
 
     try {
-      const closedTrades = await closePositionTrades(positionKey, openTrade, event, sourceName)
+      const closedTrade = await closePositionTrade(openTrade, event, sourceName)
       activeTrades.delete(positionKey)
       await protectActiveTrades()
-      for (const closedTrade of closedTrades) emitQueuedClip(event, sourceName, closedTrade)
+      if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
     } catch (error) {
       activeTrades.delete(positionKey)
-      layeredTrades.delete(positionKey)
       await protectActiveTrades()
       emitClipError(event, sourceName, error)
     }
@@ -940,7 +874,6 @@ export const createTerminalTradeWatcher = ({
       if (timer) clearInterval(timer)
       timer = undefined
       activeTrades.clear()
-      layeredTrades.clear()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       protectSince()

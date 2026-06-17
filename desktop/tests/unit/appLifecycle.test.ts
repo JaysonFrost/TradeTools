@@ -45,6 +45,13 @@ describe('main app lifecycle', () => {
     expect(packageJson).toContain('NSAudioCaptureUsageDescription')
   })
 
+  it('does not fall back to another terminal window when a saved capture window is missing', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)')
+    expect(source).toContain('hasSavedCaptureSource ? undefined : sources.find')
+  })
+
   it('keeps unnamed desktop capture windows selectable instead of dropping them', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
@@ -83,6 +90,16 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())")
     expect(watcherSource).toContain('поставлен в очередь')
     expect(watcherSource).not.toContain('клип ${closedTrade.symbol} сохранён')
+  })
+
+  it('records clip render failures and queue activity in the user diagnostics log', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('createAppLogService')
+    expect(source).toContain("appLog.info('clip-queue', 'Clip render queued'")
+    expect(source).toContain("appLog.error('clip-queue', 'Clip render failed'")
+    expect(source).toContain("ipcMain.handle('logs:get'")
+    expect(source).toContain("ipcMain.handle('logs:show-file'")
   })
 
   it('reports live clip processing progress instead of leaving the UI parked at 35 percent', async () => {

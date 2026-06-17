@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ListX, Pause, Play, Square, Trash2, Video } from 'lucide-react'
+import { Copy, FileText, ListX, Pause, Play, RefreshCw, Square, Trash2, Video } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
 import type { ClipProcessingStatus, ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
+import type { AppLogSnapshot } from '../../main/services/logging/appLogService'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
 import { SetupWizard } from '../components/setup/SetupWizard'
@@ -53,6 +54,10 @@ type VideoPageProps = {
   onFreeRecordingFinish: () => void
   onSettingsSaved: (settings: AppSettings) => void
   clipProcessing?: ClipProcessingStatus
+  logs: AppLogSnapshot
+  onRefreshLogs: () => void
+  onCopyLogs: () => void
+  onShowLogFile: () => void
 }
 
 type ProxyPageProps = {
@@ -253,7 +258,45 @@ const FreeRecordingControls = ({
   )
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing }: VideoPageProps) => {
+const DiagnosticsLogPanel = ({
+  logs,
+  onRefresh,
+  onCopy,
+  onShowFile
+}: {
+  logs: AppLogSnapshot
+  onRefresh: () => void
+  onCopy: () => void
+  onShowFile: () => void
+}) => (
+  <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <FileText size={16} className="text-violet-200" />
+          <h2 className="m-0 text-base font-semibold">Диагностика</h2>
+        </div>
+        <p className="mt-1 break-all text-xs text-zinc-500">{logs.path || 'Файл логов будет создан после первого события.'}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08]" onClick={onRefresh} type="button">
+          <RefreshCw size={14} className="mr-2" />Обновить
+        </button>
+        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-violet-400/30 bg-violet-500/15 px-3 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/25 disabled:cursor-not-allowed disabled:opacity-50" onClick={onCopy} disabled={!logs.text} type="button">
+          <Copy size={14} className="mr-2" />Скопировать текст
+        </button>
+        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08]" onClick={onShowFile} type="button">
+          <FileText size={14} className="mr-2" />Открыть файл
+        </button>
+      </div>
+    </div>
+    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/30 p-3 text-xs leading-5 text-zinc-300">
+      {logs.text || 'Лог пока пуст. Ошибки сохранения клипов появятся здесь.'}
+    </pre>
+  </section>
+)
+
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateTestClip, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => {
   return (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
       <RecordingStatusPanel
@@ -274,6 +317,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         onFinish={onFreeRecordingFinish}
         backgroundRecordingEnabled={backgroundRecordingEnabled}
       />
+      <DiagnosticsLogPanel logs={logs} onRefresh={onRefreshLogs} onCopy={onCopyLogs} onShowFile={onShowLogFile} />
       <section className="col-span-12">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -372,6 +416,10 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     source: 'multi-terminal',
     activeTradeCount: 0
   })
+  const [appLogs, setAppLogs] = useState<AppLogSnapshot>({
+    path: '',
+    text: ''
+  })
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
   const [proxyVaultRuntime, setProxyVaultRuntime] = useState<ProxyVaultRuntimeState>({
     chainCheckProgress: [],
@@ -392,13 +440,14 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade, nextLogs] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
         api.recording.getFreeStatus(),
-        api.terminalTrade.getStatus()
+        api.terminalTrade.getStatus(),
+        api.logs.get()
       ])
       const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
         ? createStoppedWindowRecorderStatus(nextSettings)
@@ -411,6 +460,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
+      setAppLogs(nextLogs)
       setObs((current) => {
         if (current.connected || current.status === 'Отключено') return current
 
@@ -463,11 +513,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
-      const [pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade] = await Promise.all([
+      const [pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade, nextLogs] = await Promise.all([
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
         api.recording.getFreeStatus(),
-        api.terminalTrade.getStatus()
+        api.terminalTrade.getStatus(),
+        api.logs.get()
       ])
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
@@ -478,6 +529,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
+      setAppLogs(nextLogs)
     } catch {
       // The initial load already surfaces Electron API errors; polling stays quiet.
     }
@@ -672,6 +724,34 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
 
   const testNotification = () => getTradeToolsApi().notifications.test()
 
+  const refreshLogs = async () => {
+    try {
+      const logs = await getTradeToolsApi().logs.get()
+      setAppLogs(logs)
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось прочитать лог')
+    }
+  }
+
+  const copyLogs = async () => {
+    try {
+      const logs = await getTradeToolsApi().logs.get()
+      setAppLogs(logs)
+      await getTradeToolsApi().clipboard.writeText(logs.text)
+      setClipMessage('Логи скопированы в буфер обмена')
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось скопировать лог')
+    }
+  }
+
+  const showLogFile = async () => {
+    try {
+      await getTradeToolsApi().logs.showFile()
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось открыть файл логов')
+    }
+  }
+
   useEffect(() => {
     void loadLocalState()
     let unsubscribeProxyCheck: (() => void) | undefined
@@ -748,6 +828,10 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           onFreeRecordingResume={() => void resumeFreeRecording()}
           onFreeRecordingFinish={() => void finishFreeRecording()}
           onSettingsSaved={onSettingsSaved}
+          logs={appLogs}
+          onRefreshLogs={() => void refreshLogs()}
+          onCopyLogs={() => void copyLogs()}
+          onShowLogFile={() => void showLogFile()}
         />
       ) : activePage === 'proxy' ? (
         <ProxyPage

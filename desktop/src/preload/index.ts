@@ -7,6 +7,7 @@ import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteC
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
+import type { AppLogSnapshot } from '../main/services/logging/appLogService'
 
 export type ProxySaveInput = {
   id?: string
@@ -90,6 +91,10 @@ const api = {
   },
   notifications: {
     test: (): Promise<SystemNotificationResult> => ipcRenderer.invoke('notifications:test')
+  },
+  logs: {
+    get: (): Promise<AppLogSnapshot> => ipcRenderer.invoke('logs:get'),
+    showFile: (): Promise<void> => ipcRenderer.invoke('logs:show-file')
   },
   updates: {
     getStatus: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:get-status'),
