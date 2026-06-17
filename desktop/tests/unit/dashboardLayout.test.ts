@@ -35,6 +35,15 @@ describe('Dashboard layout', () => {
     expect(clipCardSource).not.toContain('На проверке')
   })
 
+  it('uses the current TRC20 donation address for text, copy and QR code', async () => {
+    const supportSource = await readFile(resolve('src/renderer/components/support/SupportDeveloperPage.tsx'), 'utf8')
+
+    expect(supportSource).toContain("address: 'TCikP8GinVFDSkcjoPZeV76wcUkPvtdEgW'")
+    expect(supportSource).not.toContain('TGKPUrzVehY2J46RC4T5xEzxhYNbFYE3YV')
+    expect(supportSource).toContain('value={wallet.address}')
+    expect(supportSource).toContain('writeClipboard(wallet.address)')
+  })
+
   it('allows renaming queued clip video files', async () => {
     const clipCardSource = await readFile(resolve('src/renderer/components/trade/ClipCard.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

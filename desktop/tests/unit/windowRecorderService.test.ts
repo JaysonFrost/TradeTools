@@ -177,7 +177,7 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('targets.length > 1')
   })
 
-  it('uses native gdigrab bounds for screen capture targets instead of recording black Chromium screen streams', async () => {
+  it('uses native ddagrab for screen capture targets instead of black Chromium screen streams or flickery GDI capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
@@ -185,9 +185,10 @@ describe('windowRecorderService', () => {
     expect(appSource).toContain('getDisplayBounds')
     expect(serviceSource).toContain('ScreenCaptureBounds')
     expect(serviceSource).toContain('nativeScreenTargets')
-    expect(serviceSource).toContain("'-offset_x'")
-    expect(serviceSource).toContain("'-offset_y'")
-    expect(serviceSource).toContain("'-video_size'")
+    expect(serviceSource).toContain("inputBackend: 'ddagrab'")
+    expect(serviceSource).toContain('screenOutputIndex')
+    expect(serviceSource).toContain('ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0')
+    expect(serviceSource).toContain("'lavfi'")
     expect(serviceSource).not.toContain('Запись экрана идёт через Chromium')
     expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('if (targets.length > 1)'))
     expect(controllerSource).toContain('screenTargetsNeedSync')
@@ -221,8 +222,7 @@ describe('windowRecorderService', () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
-    expect(serviceSource).toContain("'-draw_mouse'")
-    expect(serviceSource).toContain("'0'")
+    expect(serviceSource).toContain('draw_mouse=0')
     expect(controllerSource).toContain("cursor: 'never'")
   })
 
@@ -263,5 +263,17 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain('writeReplayFromSegments')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-status'")
     expect(appSource).toContain("ipcMain.handle('recording:free-start'")
+  })
+
+  it('marks free recording stopped before waiting for export segments so Finish never looks like Pause', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const finishStart = serviceSource.indexOf('const finishFreeRecording = async')
+    const finishSource = serviceSource.slice(finishStart, serviceSource.indexOf('const getWindowRecorderStatus', finishStart))
+
+    expect(finishSource.indexOf('freeRecording = undefined')).toBeGreaterThan(-1)
+    expect(finishSource.indexOf('freeRecording = undefined')).toBeLessThan(finishSource.indexOf('waitForSegmentsUntil(settings, targetEndMs'))
+    expect(finishSource).toContain('freeRecordingExportProtectedSinceMs')
+    expect(dashboardSource).toContain("active: false, paused: false, message: 'Сохраняем свободную запись...'")
   })
 })

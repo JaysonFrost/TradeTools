@@ -1098,16 +1098,46 @@ app.whenReady().then(() => {
   const resolveTerminalRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
     const settings = await settingsStore.load()
     if (settings.recording.mode !== 'window') return undefined
-    if (settings.recording.sourceType === 'screen') return undefined
 
     const sources = (await listDesktopCaptureSources()).map(toWindowCaptureSource)
     const patterns = terminalWindowPatterns[event.source]
     const source = sources.find((candidate) => (
       candidate.type === 'window' && patterns.some((pattern) => pattern.test(candidate.name))
     ))
+    const targets = configuredCaptureTargets(settings)
+
+    if (settings.recording.sourceType === 'screen') {
+      if (!source) {
+        void appLog.warn('recording', 'Terminal capture window not found; saving configured screen targets', {
+          source: event.source,
+          symbol: event.symbol
+        })
+        return undefined
+      }
+
+      const matchingScreenTarget = targets.find((candidate) => (
+        candidate.type === 'screen' && Boolean(candidate.displayId) && candidate.displayId === source.displayId
+      ))
+      if (matchingScreenTarget) {
+        void appLog.info('recording', 'Terminal trade display matched screen capture target', {
+          source: event.source,
+          symbol: event.symbol,
+          displayId: source.displayId,
+          captureTarget: matchingScreenTarget
+        })
+        return matchingScreenTarget
+      }
+
+      void appLog.warn('recording', 'Terminal trade window found but display has no selected screen capture target', {
+        source: event.source,
+        symbol: event.symbol,
+        displayId: source.displayId
+      })
+      return undefined
+    }
+
     if (source) {
       const target = toCaptureTargetRef(source)
-      const targets = configuredCaptureTargets(settings)
       const nextCaptureTargets = [
         target,
         ...targets.filter((candidate) => candidate.type === 'window' && candidate.id !== target.id)

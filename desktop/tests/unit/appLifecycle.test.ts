@@ -101,7 +101,16 @@ describe('main app lifecycle', () => {
     expect(source).toContain('recordingTarget: target')
     expect(source).toContain('queueClipForClosedTrade')
     expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
-    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).not.toContain("if (settings.recording.sourceType === 'screen') return undefined")
+  })
+
+  it('routes screen-mode terminal trades to the selected monitor that owns the terminal window when Electron exposes display id', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const matchingScreenTarget = targets.find')
+    expect(source).toContain("candidate.type === 'screen' && Boolean(candidate.displayId) && candidate.displayId === source.displayId")
+    expect(source).toContain('Terminal trade display matched screen capture target')
+    expect(source).toContain('Terminal trade window found but display has no selected screen capture target')
   })
 
   it('updates built-in window recording targets when a terminal trade comes from another window', async () => {

@@ -729,6 +729,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const finishFreeRecording = async () => {
     try {
       setClipMessage('Сохраняем свободную запись...')
+      setFreeRecording((current) => current ? { ...current, active: false, paused: false, message: 'Сохраняем свободную запись...' } : current)
       const result = await getTradeToolsApi().recording.finishFree()
       setFreeRecording(await getTradeToolsApi().recording.getFreeStatus())
       setClipMessage(`Свободная запись добавлена в очередь: ${result.fileName}`)

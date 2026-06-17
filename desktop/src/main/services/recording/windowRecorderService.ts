@@ -167,7 +167,9 @@ type NativeRecorderState = {
 type NativeRecorderTarget = {
   sourceId: string
   sourceName: string
+  inputBackend: 'ddagrab' | 'gdigrab'
   inputName: string
+  outputIndex?: number
   bounds?: ScreenCaptureBounds
 }
 
@@ -304,6 +306,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   const segments: StoredSegment[] = []
   let protectedSinceMs = 0
   let freeRecording: FreeRecordingState | undefined
+  let freeRecordingExportProtectedSinceMs = 0
   let nativeRecorders: NativeRecorderState[] = []
   let nativeLastError = ''
   let nativeMissingSource: { settingsKey: string, message: string } | undefined
@@ -318,6 +321,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     String(settings.recording.microphoneEnabled),
     target?.sourceId ?? '',
     target?.sourceName ?? '',
+    target?.inputBackend ?? '',
+    String(target?.outputIndex ?? ''),
     target?.bounds ? `${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}` : ''
   ].join('|')
 
@@ -334,20 +339,31 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   const nativeWindowTarget = (settings: AppSettings): NativeRecorderTarget => ({
     sourceId: settings.recording.windowSourceId || 'window',
     sourceName: nativeSourceName(settings),
+    inputBackend: 'gdigrab',
     inputName: `title=${settings.recording.windowSourceName}`
   })
+
+  const screenOutputIndex = (sourceId: string): number | undefined => {
+    const match = /^screen:(\d+):/.exec(sourceId)
+    if (!match) return undefined
+
+    const index = Number(match[1])
+    return Number.isInteger(index) && index >= 0 && index < 64 ? index : undefined
+  }
 
   const nativeScreenTargets = (settings: AppSettings): NativeRecorderTarget[] => {
     const displays = new Map((getDisplayBounds?.() ?? []).map((display) => [display.displayId, display]))
     return settings.recording.captureTargets
       .filter((target) => target.type === 'screen' && target.id.startsWith('screen:') && target.displayId)
-      .flatMap((target) => {
+      .flatMap((target, index) => {
         const bounds = displays.get(target.displayId ?? '')
         return bounds
           ? [{
               sourceId: target.id,
               sourceName: target.name,
-              inputName: 'desktop',
+              inputBackend: 'ddagrab' as const,
+              inputName: 'ddagrab',
+              outputIndex: screenOutputIndex(target.id) ?? index,
               bounds
             }]
           : []
@@ -398,9 +414,16 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     })
   }
 
-  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget): string[] => {
-    const frameRate = formatFrameRate(settings.recording.frameRate)
-    const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
+  const buildNativeRecorderInputArgs = (frameRate: string, target: NativeRecorderTarget): string[] => {
+    if (target.inputBackend === 'ddagrab') {
+      return [
+        '-f',
+        'lavfi',
+        '-i',
+        `ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0,hwdownload,format=bgra`
+      ]
+    }
+
     const boundsArgs = target.bounds
       ? [
           '-offset_x',
@@ -413,10 +436,6 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       : []
 
     return [
-      '-hide_banner',
-      '-loglevel',
-      'warning',
-      '-nostdin',
       '-f',
       'gdigrab',
       '-framerate',
@@ -425,7 +444,20 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '0',
       ...boundsArgs,
       '-i',
-      target.inputName,
+      target.inputName
+    ]
+  }
+
+  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget): string[] => {
+    const frameRate = formatFrameRate(settings.recording.frameRate)
+    const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
+
+    return [
+      '-hide_banner',
+      '-loglevel',
+      'warning',
+      '-nostdin',
+      ...buildNativeRecorderInputArgs(frameRate, target),
       '-map',
       '0:v:0',
       '-an',
@@ -703,7 +735,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
-    const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0].filter((value) => value > 0)
+    const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0, freeRecordingExportProtectedSinceMs].filter((value) => value > 0)
     const protectedCutoffMs = protectedCutoffs.length > 0 ? Math.min(...protectedCutoffs) : 0
     const cutoffMs = protectedCutoffMs > 0 ? Math.min(replayCutoffMs, protectedCutoffMs) : replayCutoffMs
     const sessionLastEndedAt = new Map<string, number>()
@@ -1113,47 +1145,54 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     if (!recording) throw new Error('Свободная запись не запущена')
 
     const endedAtMs = Date.now()
-    const lastInterval = recording.intervals.at(-1)
-    if (lastInterval && lastInterval.endMs === undefined) lastInterval.endMs = endedAtMs
-
-    const intervals = recording.intervals.filter((interval) => (interval.endMs ?? endedAtMs) - interval.startMs > 250)
-    const durationSeconds = Math.round(getFreeRecordingRecordedMs({ ...recording, intervals }, endedAtMs) / 1000)
+    const endedIntervals = recording.intervals.map((interval, index) => (
+      index === recording.intervals.length - 1 && interval.endMs === undefined
+        ? { ...interval, endMs: endedAtMs }
+        : { ...interval }
+    ))
+    const intervals = endedIntervals.filter((interval) => (interval.endMs ?? endedAtMs) - interval.startMs > 250)
+    const finishedRecording = { startedAtMs: recording.startedAtMs, intervals }
+    const durationSeconds = Math.round(getFreeRecordingRecordedMs(finishedRecording, endedAtMs) / 1000)
     if (intervals.length === 0 || durationSeconds <= 0) throw new Error('Свободная запись слишком короткая: нет сохранённых сегментов')
 
     const targetEndMs = Math.max(...intervals.map((interval) => interval.endMs ?? endedAtMs))
     const timeoutMs = Math.max(5_000, settings.recording.segmentSeconds * 2_000 + 2_000)
-    const sourceSegments = await waitForSegmentsUntil(settings, targetEndMs, timeoutMs)
-    const neededSegments = sourceSegments.filter((segment) => intervals.some((interval) => (
-      segment.endedAtMs >= interval.startMs - exportToleranceMs &&
-      segment.startedAtMs <= (interval.endMs ?? endedAtMs) + exportToleranceMs
-    )))
-
-    if (neededSegments.length === 0) throw new Error('Свободная запись ещё не накопила видео. Подождите пару секунд и попробуйте закончить снова.')
-
-    await mkdir(replaysDir, { recursive: true })
-    const replayId = randomUUID()
-    const listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
-    const replayPath = await buildFreeRecordingPath(settings, recording.startedAtMs, endedAtMs)
+    let listPath = ''
     let sessionFiles: ReplaySessionFile[] = []
 
+    freeRecording = undefined
+    freeRecordingExportProtectedSinceMs = finishedRecording.startedAtMs
+
     try {
+      const sourceSegments = await waitForSegmentsUntil(settings, targetEndMs, timeoutMs)
+      const neededSegments = sourceSegments.filter((segment) => intervals.some((interval) => (
+        segment.endedAtMs >= interval.startMs - exportToleranceMs &&
+        segment.startedAtMs <= (interval.endMs ?? endedAtMs) + exportToleranceMs
+      )))
+
+      if (neededSegments.length === 0) throw new Error('Свободная запись ещё не накопила видео. Подождите пару секунд и попробуйте закончить снова.')
+
+      await mkdir(replaysDir, { recursive: true })
+      const replayId = randomUUID()
+      listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
+      const replayPath = await buildFreeRecordingPath(settings, finishedRecording.startedAtMs, endedAtMs)
       await rm(replayPath, { force: true }).catch(() => undefined)
-      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, recording.startedAtMs, endedAtMs)
+      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, finishedRecording.startedAtMs, endedAtMs)
       sessionFiles = writeResult.sessionFiles
       const savedAt = new Date(endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
-      freeRecording = undefined
 
       return {
         ok: true,
         videoPath: replayPath,
         fileName: basename(replayPath),
-        startedAtMs: recording.startedAtMs,
+        startedAtMs: finishedRecording.startedAtMs,
         endedAtMs,
         durationSeconds
       }
     } finally {
-      await rm(listPath, { force: true }).catch(() => undefined)
+      freeRecordingExportProtectedSinceMs = 0
+      if (listPath) await rm(listPath, { force: true }).catch(() => undefined)
       await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
     }
   }
