@@ -105,6 +105,13 @@ const parseNumericValue = (value: unknown): number => {
 }
 
 const isNearlyZero = (value: number): boolean => Number.isFinite(value) && Math.abs(value) <= zeroTolerance
+const isPositionReversal = (previousSize: unknown, nextSize: unknown): boolean => {
+  if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return false
+  if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return false
+  if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return false
+  return Math.sign(previousSize) !== Math.sign(nextSize)
+}
+
 const comparablePositionSizes = (previousSize: unknown, nextSize: unknown): [number, number] | undefined => {
   if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return undefined
   if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return undefined
@@ -668,6 +675,27 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
+  const closePositionTrades = async (
+    positionKey: string,
+    openTrade: OpenTerminalTrade,
+    event: TerminalPositionEvent,
+    sourceName: string
+  ): Promise<ClosedTrade[]> => {
+    const closedTrades: ClosedTrade[] = []
+    const stack = layeredTrades.get(positionKey) ?? []
+    while (stack.length > 0) {
+      const layeredTrade = stack.pop()
+      if (!layeredTrade) continue
+      const closedLayeredTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
+      if (closedLayeredTrade) closedTrades.push(closedLayeredTrade)
+    }
+    layeredTrades.delete(positionKey)
+
+    const closedTrade = await createClosedTradeClip(openTrade, event, sourceName)
+    if (closedTrade) closedTrades.push(closedTrade)
+    return closedTrades
+  }
+
   const handleLayeredPositionUpdate = async (
     positionKey: string,
     openTrade: OpenTerminalTrade,
@@ -713,11 +741,26 @@ export const createTerminalTradeWatcher = ({
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
+    const eventClosesPosition = event.isClosed || (typeof event.size === 'number' && isNearlyZero(event.size))
 
-    if (!event.isClosed) {
+    if (!eventClosesPosition) {
       const openTrade = activeTrades.get(positionKey)
       if (openTrade) {
-        await handleLayeredPositionUpdate(positionKey, openTrade, event, sourceName)
+        if (isPositionReversal(openTrade.size, event.size)) {
+          try {
+            const closedTrades = await closePositionTrades(positionKey, openTrade, event, sourceName)
+            activeTrades.set(positionKey, createOpenTrade(event, positionKey))
+            for (const closedTrade of closedTrades) emitQueuedClip(event, sourceName, closedTrade)
+          } catch (error) {
+            activeTrades.delete(positionKey)
+            layeredTrades.delete(positionKey)
+            await protectActiveTrades()
+            emitClipError(event, sourceName, error)
+            return
+          }
+        } else {
+          await handleLayeredPositionUpdate(positionKey, openTrade, event, sourceName)
+        }
       } else {
         activeTrades.set(positionKey, createOpenTrade(event, positionKey))
       }
@@ -737,19 +780,10 @@ export const createTerminalTradeWatcher = ({
     if (!openTrade) return
 
     try {
-      const stack = layeredTrades.get(positionKey) ?? []
-      while (stack.length > 0) {
-        const layeredTrade = stack.pop()
-        if (!layeredTrade) continue
-        const closedLayeredTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
-        if (closedLayeredTrade) emitQueuedClip(event, sourceName, closedLayeredTrade)
-      }
-      layeredTrades.delete(positionKey)
-
-      const closedTrade = await createClosedTradeClip(openTrade, event, sourceName)
+      const closedTrades = await closePositionTrades(positionKey, openTrade, event, sourceName)
       activeTrades.delete(positionKey)
       await protectActiveTrades()
-      if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
+      for (const closedTrade of closedTrades) emitQueuedClip(event, sourceName, closedTrade)
     } catch (error) {
       activeTrades.delete(positionKey)
       layeredTrades.delete(positionKey)
