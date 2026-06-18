@@ -24,6 +24,12 @@ describe('settings', () => {
       sourceType: 'window',
       windowSourceId: '',
       windowSourceName: '',
+      captureTargets: [],
+      saveTargetMode: 'all',
+      saveTargetId: '',
+      saveTradeDisplayOnly: false,
+      videoEncoder: 'gpu',
+      resolutionPreset: '1440p',
       frameRate: 30,
       segmentSeconds: 2,
       systemAudioEnabled: false,
@@ -32,6 +38,8 @@ describe('settings', () => {
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
       launchAtLogin: false,
+      alwaysOnTop: false,
+      keepProxyRunningAfterClose: false,
       proxyPaymentNotificationsEnabled: true,
       clipSuccessNotificationsEnabled: true,
       paymentReminderDaysBefore: 5
@@ -122,6 +130,8 @@ describe('settings', () => {
         windowSourceName: ' Terminal ',
         frameRate: 999,
         segmentSeconds: 0,
+        videoEncoder: 'cpu',
+        resolutionPreset: 'native',
         systemAudioEnabled: true,
         microphoneEnabled: false
       }
@@ -132,6 +142,16 @@ describe('settings', () => {
       sourceType: 'screen',
       windowSourceId: 'screen:1',
       windowSourceName: 'Terminal',
+      captureTargets: [{
+        id: 'screen:1',
+        name: 'Terminal',
+        type: 'screen'
+      }],
+      saveTargetMode: 'all',
+      saveTargetId: 'screen:1',
+      saveTradeDisplayOnly: false,
+      videoEncoder: 'cpu',
+      resolutionPreset: 'native',
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,
@@ -139,10 +159,81 @@ describe('settings', () => {
     })
   })
 
+  it('normalizes selected multi-monitor capture targets', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        windowSourceId: 'screen:1',
+        windowSourceName: 'Screen 1',
+        captureTargets: [
+          { id: ' screen:1 ', name: ' Экран 1 ', type: 'screen', displayId: ' 1001 ' },
+          { id: 'window:vataga', name: 'Vataga', type: 'window' },
+          { id: '', name: 'Broken', type: 'screen' }
+        ],
+        saveTargetMode: 'selected',
+        saveTargetId: ' screen:1 '
+      }
+    }, '/app-data')
+
+    expect(settings.recording.captureTargets).toEqual([{
+      id: 'screen:1',
+      name: 'Экран 1',
+      type: 'screen',
+      displayId: '1001'
+    }])
+    expect(settings.recording.saveTargetMode).toBe('selected')
+    expect(settings.recording.saveTargetId).toBe('screen:1')
+  })
+
+  it('ignores the legacy trade-display-only screen saving flag', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        captureTargets: [
+          { id: 'screen:1:0', name: 'Экран 1', type: 'screen', displayId: '1453013278' },
+          { id: 'screen:2:0', name: 'Экран 2', type: 'screen', displayId: '2725992212' }
+        ],
+        saveTargetMode: 'all',
+        saveTradeDisplayOnly: true
+      }
+    }, '/app-data')
+
+    expect(settings.recording.saveTradeDisplayOnly).toBe(false)
+  })
+
+  it('drops legacy window ids that were mislabeled as screen capture targets', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        windowSourceId: 'window:8849754:0',
+        windowSourceName: 'Vataga.terminal',
+        captureTargets: [
+          { id: 'window:8849754:0', name: 'Vataga.terminal', type: 'screen' },
+          { id: 'screen:1:0', name: 'Экран 1', type: 'screen', displayId: '1453013278' }
+        ],
+        saveTargetMode: 'all',
+        saveTargetId: 'window:8849754:0'
+      }
+    }, '/app-data')
+
+    expect(settings.recording.captureTargets).toEqual([{
+      id: 'screen:1:0',
+      name: 'Экран 1',
+      type: 'screen',
+      displayId: '1453013278'
+    }])
+    expect(settings.recording.saveTargetId).toBe('screen:1:0')
+  })
+
   it('normalizes proxy records and system notification settings without raw proxy passwords', () => {
     const settings = normalizeSettings({
       system: {
         launchAtLogin: true,
+        alwaysOnTop: true,
+        keepProxyRunningAfterClose: true,
         proxyPaymentNotificationsEnabled: false,
         clipSuccessNotificationsEnabled: false,
         paymentReminderDaysBefore: 99
@@ -163,6 +254,8 @@ describe('settings', () => {
 
     expect(settings.system).toEqual({
       launchAtLogin: true,
+      alwaysOnTop: true,
+      keepProxyRunningAfterClose: true,
       proxyPaymentNotificationsEnabled: false,
       clipSuccessNotificationsEnabled: false,
       paymentReminderDaysBefore: 30

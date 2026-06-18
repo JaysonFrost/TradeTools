@@ -1,6 +1,7 @@
 import { buildClipOutputPaths } from '../video/clipPaths'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
 import { planReplayTrim } from '../video/trimPlanner'
+import type { CaptureTargetRef } from '../settings/settings'
 
 export type ClosedTrade = {
   id: string
@@ -11,6 +12,8 @@ export type ClosedTrade = {
   status: 'closed'
   entryTimeMs: number
   exitTimeMs: number
+  recordingTarget?: CaptureTargetRef
+  manualTitle?: string
 }
 
 export type SimulatedClipInput = {

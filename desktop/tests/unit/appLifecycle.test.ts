@@ -35,6 +35,14 @@ describe('main app lifecycle', () => {
     expect(source).toContain('started.fallbackRequired')
   })
 
+  it('restarts built-in recording when the recorder status asks for recovery', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('if (!status.active || status.fallbackRequired)')
+    expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('await windowRecorderService.start(settings)')
+  })
+
   it('routes macOS system audio through display media loopback into the selected capture source', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const packageJson = await readFile(resolve('package.json'), 'utf8')
@@ -43,6 +51,13 @@ describe('main app lifecycle', () => {
     expect(source).toContain("audio: settings.recording.systemAudioEnabled ? 'loopback' : undefined")
     expect(source).toContain('source.id === settings.recording.windowSourceId')
     expect(packageJson).toContain('NSAudioCaptureUsageDescription')
+  })
+
+  it('does not fall back to another terminal window when a saved capture window is missing', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)')
+    expect(source).toContain('hasSavedCaptureSource ? undefined : sources.find')
   })
 
   it('keeps unnamed desktop capture windows selectable instead of dropping them', async () => {
@@ -79,10 +94,73 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain('activeClipRenderJob')
     expect(appSource).toContain('applyWindowRecorderProtection')
     expect(appSource).toContain('watcherProtectedSinceMs')
-    expect(appSource).toContain("createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false })")
+    expect(appSource).toContain('createClipForClosedTrade: queueClipForClosedTrade')
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())")
     expect(watcherSource).toContain('поставлен в очередь')
     expect(watcherSource).not.toContain('клип ${closedTrade.symbol} сохранён')
+  })
+
+  it('expands built-in multi-monitor trades into target-specific render jobs', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('selectClipRenderTargets')
+    expect(source).toContain("settings.recording.saveTargetMode === 'all'")
+    expect(source).toContain('captureTarget: target')
+    expect(source).toContain('recordingTarget: target')
+    expect(source).toContain('queueClipForClosedTrade')
+    expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
+    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+  })
+
+  it('does not try to guess the trade monitor in screen recording mode', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).not.toContain('resolveVatagaLayoutMatch')
+    expect(source).not.toContain('saveTradeDisplayOnly')
+    expect(source).not.toContain('unavailable-screen:')
+    expect(source).not.toContain('Terminal trade display matched screen capture target')
+  })
+
+  it('updates built-in window recording targets when a terminal trade comes from another window', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('resolveTerminalRecordingTarget')
+    expect(source).toContain('nextCaptureTargets')
+    expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('captureTargets: nextCaptureTargets')
+  })
+
+  it('can cancel queued and active clip render jobs', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(source).toContain('abortController: AbortController')
+    expect(source).toContain('activeJobId')
+    expect(source).toContain('queuedJobs')
+    expect(source).toContain('abortController.abort()')
+    expect(source).toContain("ipcMain.handle('clips:cancel-render'")
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:cancel-render'")
+  })
+
+  it('creates manual buffer clips without routing through the fake BTC test trade', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(source).toContain("ipcMain.handle('clips:create-buffer'")
+    expect(source).toContain('createManualBufferClip')
+    expect(source).not.toContain('createSimulatedClosedTrade(Date.now()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:create-buffer'")
+  })
+
+  it('records clip render failures and queue activity in the user diagnostics log', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('createAppLogService')
+    expect(source).toContain("appLog.info('clip-queue', 'Clip render queued'")
+    expect(source).toContain("appLog.error('clip-queue', 'Clip render failed'")
+    expect(source).toContain("ipcMain.handle('logs:get'")
+    expect(source).toContain("ipcMain.handle('logs:show-file'")
   })
 
   it('reports live clip processing progress instead of leaving the UI parked at 35 percent', async () => {
@@ -135,5 +213,27 @@ describe('main app lifecycle', () => {
     expect(source).toContain('path: process.execPath')
     expect(source).toContain('args: getWindowsLaunchArgs()')
     expect(source).toContain("name: 'TradeTools'")
+  })
+
+  it('applies the always-on-top system preference to app windows', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('applyAlwaysOnTop')
+    expect(source).toContain('window.setAlwaysOnTop(settings.system.alwaysOnTop)')
+    expect(source).toContain('for (const window of BrowserWindow.getAllWindows())')
+    expect(source).toContain('applyAlwaysOnTop(updatedSettings)')
+    expect(source).toContain('applyAlwaysOnTop(settings)')
+  })
+
+  it('can leave the local proxy running after app close without spawning duplicates next launch', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const xraySource = await readFile(resolve('src/main/services/proxies/xrayLocalRuntime.ts'), 'utf8')
+
+    expect(appSource).toContain('keepProxyRunningAfterClose')
+    expect(appSource).toContain('applyProxyQuitPreference')
+    expect(appSource).toContain('if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()')
+    expect(xraySource).toContain('isReusableLocalXrayOwner')
+    expect(xraySource).toContain('storedLocalXrayConfigMatches')
+    expect(xraySource).toContain('Локальный proxy уже запущен')
   })
 })

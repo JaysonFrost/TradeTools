@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, session, shell, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
@@ -13,13 +13,14 @@ import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } f
 import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
-import { type AppSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
+import { type AppSettings, type CaptureTargetRef, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
-import { createSimulatedClosedTrade, type ClosedTrade } from './services/trades/simulatedTradePipeline'
-import { createTerminalTradeWatcher } from './services/trades/terminalTradeRecorder'
+import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
+import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
+import { createAppLogService } from './services/logging/appLogService'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -236,6 +237,7 @@ const assertHttpUrl = (url: string): string => {
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
 
 type DesktopCaptureSource = Awaited<ReturnType<typeof desktopCapturer.getSources>>[number]
+type WindowBounds = { x: number, y: number, width: number, height: number }
 
 const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
   types: ['window', 'screen'],
@@ -243,22 +245,257 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
   fetchWindowIcons: false
 })
 
-const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => {
+const desktopSourceWindowId = (sourceId: string): string => /^window:(\d+):/.exec(sourceId)?.[1] ?? ''
+
+const listWindowBounds = (windowIds: string[]): Map<string, WindowBounds> => {
+  if (process.platform !== 'win32') return new Map()
+
+  const handles = [...new Set(windowIds
+    .map((windowId) => Number(windowId))
+    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
+  )]
+  if (handles.length === 0) return new Map()
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsWindowBounds {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  public static string Bounds(long handle) {
+    RECT rect;
+    if (!GetWindowRect(new IntPtr(handle), out rect)) return "";
+    int width = rect.Right - rect.Left;
+    int height = rect.Bottom - rect.Top;
+    if (width <= 0 || height <= 0) return "";
+    return String.Format("{0},{1},{2},{3}", rect.Left, rect.Top, width, height);
+  }
+}
+"@
+Add-Type $source
+foreach ($handle in @(${handles.join(',')})) {
+  $bounds = [TradeToolsWindowBounds]::Bounds([Int64]$handle)
+  if ($bounds) { "{0}:{1}" -f $handle, $bounds }
+}
+`
+
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return new Map()
+
+    return new Map(String(result.stdout)
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const separatorIndex = line.indexOf(':')
+        if (separatorIndex <= 0) return []
+        const windowId = line.slice(0, separatorIndex).trim()
+        const [x, y, width, height] = line.slice(separatorIndex + 1).split(',').map(Number)
+        return windowId && [x, y, width, height].every((value) => Number.isFinite(value))
+          ? [[windowId, { x, y, width, height }] as const]
+          : []
+      }))
+  } catch {
+    return new Map()
+  }
+}
+
+const listWindowProcessIds = (windowIds: string[]): Map<string, number> => {
+  if (process.platform !== 'win32') return new Map()
+
+  const handles = [...new Set(windowIds
+    .map((windowId) => Number(windowId))
+    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
+  )]
+  if (handles.length === 0) return new Map()
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsWindowProcess {
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  public static string ProcessId(long handle) {
+    uint processId;
+    GetWindowThreadProcessId(new IntPtr(handle), out processId);
+    return processId > 0 ? processId.ToString() : "";
+  }
+}
+"@
+Add-Type $source
+foreach ($handle in @(${handles.join(',')})) {
+  $processId = [TradeToolsWindowProcess]::ProcessId([Int64]$handle)
+  if ($processId) { "{0}:{1}" -f $handle, $processId }
+}
+`
+
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return new Map()
+
+    return new Map(String(result.stdout)
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const [windowId, processIdText] = line.trim().split(':')
+        const processId = Number(processIdText)
+        return windowId && Number.isInteger(processId) && processId > 0 ? [[windowId, processId] as const] : []
+      }))
+  } catch {
+    return new Map()
+  }
+}
+
+const getForegroundWindowId = (): string => {
+  if (process.platform !== 'win32') return ''
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsForegroundWindow {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  public static long Handle() { return GetForegroundWindow().ToInt64(); }
+}
+"@
+Add-Type $source
+[TradeToolsForegroundWindow]::Handle()
+`
+
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return ''
+
+    const windowId = String(result.stdout).trim()
+    return /^\d+$/.test(windowId) && windowId !== '0' ? windowId : ''
+  } catch {
+    return ''
+  }
+}
+
+const resolveWindowDisplayId = (source: DesktopCaptureSource, windowBounds: Map<string, WindowBounds>): string => {
+  const bounds = windowBounds.get(desktopSourceWindowId(source.id))
+  if (!bounds) return ''
+
+  try {
+    return String(electronScreen.getDisplayMatching(bounds).id)
+  } catch {
+    return ''
+  }
+}
+
+const toWindowCaptureSource = (
+  source: DesktopCaptureSource,
+  windowProcessIds = new Map<string, number>(),
+  windowBounds = new Map<string, WindowBounds>()
+): WindowCaptureSource => {
   const type = source.id.startsWith('screen:') ? 'screen' : 'window'
   const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
+  const windowId = desktopSourceWindowId(source.id)
+  const bounds = windowBounds.get(windowId)
+  const processId = type === 'window' ? windowProcessIds.get(windowId) : undefined
+  const displayId = source.display_id || (type === 'window' ? resolveWindowDisplayId(source, windowBounds) : '')
 
   return {
     id: source.id,
     name: source.name.trim() || fallbackName,
-    displayId: source.display_id,
-    type
+    displayId,
+    type,
+    ...(processId ? { processId } : {}),
+    ...(bounds ? { bounds } : {})
   }
 }
 
-const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
+const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
   const sources = await listDesktopCaptureSources()
+  const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
+  const windowProcessIds = listWindowProcessIds(windowIds)
+  const windowBounds = listWindowBounds(windowIds)
+  return sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
+}
+
+const toCaptureTargetRef = (source: WindowCaptureSource): CaptureTargetRef => ({
+  id: source.id,
+  name: source.name,
+  type: source.type,
+  ...(source.displayId ? { displayId: source.displayId } : {})
+})
+
+const legacyCaptureTargetFromSettings = (settings: AppSettings): CaptureTargetRef | undefined => (
+  settings.recording.windowSourceId
+    ? {
+        id: settings.recording.windowSourceId,
+        name: settings.recording.windowSourceName || (settings.recording.sourceType === 'screen' ? 'Экран' : 'Окно'),
+        type: settings.recording.sourceType
+      }
+    : undefined
+)
+
+const configuredCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => (
+  settings.recording.captureTargets.length > 0
+    ? settings.recording.captureTargets
+    : legacyCaptureTargetFromSettings(settings) ? [legacyCaptureTargetFromSettings(settings)!] : []
+)
+
+const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
+  vataga: [/vataga/i, /ватага/i],
+  tigertrade: [/tiger/i, /тигр/i],
+  metascalp: [/metascalp/i, /metatrader/i, /mt4/i, /mt5/i]
+}
+
+const windowContainsPoint = (source: WindowCaptureSource, point: { x: number, y: number }): boolean => {
+  const bounds = source.bounds
+  return Boolean(bounds) &&
+    point.x >= bounds!.x &&
+    point.x < bounds!.x + bounds!.width &&
+    point.y >= bounds!.y &&
+    point.y < bounds!.y + bounds!.height
+}
+
+const terminalSourceLog = (source: WindowCaptureSource) => ({
+  id: source.id,
+  name: source.name,
+  processId: source.processId,
+  displayId: source.displayId,
+  bounds: source.bounds
+})
+
+const selectTerminalSource = (
+  event: TerminalPositionEvent,
+  terminalSources: WindowCaptureSource[]
+): { source?: WindowCaptureSource, candidates: WindowCaptureSource[], reason: 'process' | 'foreground' | 'cursor' | 'first' | 'ambiguous' | 'none' } => {
+  const processCandidates = event.processId
+    ? terminalSources.filter((candidate) => candidate.processId === event.processId)
+    : []
+  const candidates = processCandidates.length > 0 ? processCandidates : terminalSources
+  if (candidates.length === 0) return { candidates, reason: 'none' }
+  if (candidates.length === 1) return { source: candidates[0], candidates, reason: processCandidates.length > 0 ? 'process' : 'first' }
+
+  const foregroundWindowId = getForegroundWindowId()
+  const foregroundSource = foregroundWindowId
+    ? candidates.find((candidate) => desktopSourceWindowId(candidate.id) === foregroundWindowId)
+    : undefined
+  if (foregroundSource) return { source: foregroundSource, candidates, reason: 'foreground' }
+
+  const cursorPoint = electronScreen.getCursorScreenPoint()
+  const cursorSource = candidates.find((candidate) => windowContainsPoint(candidate, cursorPoint))
+  if (cursorSource) return { source: cursorSource, candidates, reason: 'cursor' }
+
+  return { candidates, reason: 'ambiguous' }
+}
+
+const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
+  const sources = await listWindowCaptureSources()
   return sources.some((source) => (
-    !source.id.startsWith('screen:') &&
+    source.type === 'window' &&
     ((input.sourceId && source.id === input.sourceId) || (input.sourceName && source.name === input.sourceName))
   ))
 }
@@ -446,6 +683,18 @@ const applyLaunchAtLogin = (settings: AppSettings): void => {
   })
 }
 
+const applyAlwaysOnTop = (settings: AppSettings): void => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.setAlwaysOnTop(settings.system.alwaysOnTop)
+  }
+}
+
+let keepProxyRunningAfterClose = false
+
+const applyProxyQuitPreference = (settings: AppSettings): void => {
+  keepProxyRunningAfterClose = settings.system.keepProxyRunningAfterClose
+}
+
 const createMainWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
     width: 1440,
@@ -478,6 +727,7 @@ const createMainWindow = (): BrowserWindow => {
 
 app.whenReady().then(() => {
   ensureWindowsNotificationShortcut()
+  const appLog = createAppLogService({ appDataDir: app.getPath('userData') })
   const settingsStore = createSettingsStore(app.getPath('userData'))
   const secretStore = createSecretStore()
   const obsService = createObsService({
@@ -486,7 +736,14 @@ app.whenReady().then(() => {
   })
   const windowRecorderService = createWindowRecorderService({
     appDataDir: app.getPath('userData'),
-    isWindowSourceAvailable: isCurrentWindowSourceAvailable
+    isWindowSourceAvailable: isCurrentWindowSourceAvailable,
+    getDisplayBounds: () => electronScreen.getAllDisplays().map((display) => ({
+      displayId: String(display.id),
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height
+    }))
   })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
@@ -667,10 +924,15 @@ app.whenReady().then(() => {
 
   type ClipRenderJob = {
     id: string
-    trade: ClosedTrade
+    trade?: ClosedTrade
+    manualBuffer?: boolean
+    requestedAtMs?: number
+    captureTarget?: CaptureTargetRef
     title: string
     queuedAtMs: number
     protectedSinceMs: number
+    abortController: AbortController
+    cancelled: boolean
     resolve?: (clip: ClipQueueItem) => void
     reject?: (error: unknown) => void
   }
@@ -731,6 +993,7 @@ app.whenReady().then(() => {
 
   const currentClipProcessingStatus = (): ClipProcessingStatus => {
     const queuedCount = clipRenderQueue.length
+    const queuedJobs = clipRenderQueue.map((job) => ({ id: job.id, title: job.title }))
     if (!clipProcessingStatus.active) {
       return queuedCount > 0
         ? {
@@ -738,7 +1001,8 @@ app.whenReady().then(() => {
             title: 'Очередь клипов',
             message: `Ждём обработки: ${queuedCount}`,
             progressPercent: 10,
-            queuedCount
+            queuedCount,
+            queuedJobs
           }
         : clipProcessingStatus
     }
@@ -756,9 +1020,23 @@ app.whenReady().then(() => {
       ...clipProcessingStatus,
       message: `${clipProcessingStatus.message}${queueSuffix}${elapsedSuffix}`,
       progressPercent: dynamicProgress,
-      queuedCount
+      queuedCount,
+      activeJobId: activeClipRenderJob?.id,
+      queuedJobs
     }
   }
+
+  const clipJobLogContext = (job: ClipRenderJob) => ({
+    jobId: job.id,
+    tradeId: job.trade?.id,
+    symbol: job.trade?.symbol,
+    side: job.trade?.side,
+    entryTimeMs: job.trade?.entryTimeMs,
+    exitTimeMs: job.trade?.exitTimeMs,
+    manualBuffer: job.manualBuffer === true,
+    captureTarget: job.captureTarget,
+    queuedCount: clipRenderQueue.length
+  })
 
   const runClipRenderQueue = () => {
     if (clipRenderWorkerRunning) return
@@ -769,41 +1047,65 @@ app.whenReady().then(() => {
         while (clipRenderQueue.length > 0) {
           const job = clipRenderQueue.shift()
           if (!job) continue
+          if (job.cancelled) continue
 
           activeClipRenderJob = job
           applyWindowRecorderProtection()
           const startedAtMs = Date.now()
+          void appLog.info('clip-queue', 'Clip render started', clipJobLogContext(job))
           setClipProcessingStatus({
             active: true,
             title: job.title,
-            message: 'Сохраняем replay и собираем клип сделки',
+            message: job.manualBuffer ? 'Сохраняем последний буфер' : 'Сохраняем replay и собираем клип сделки',
             progressPercent: 35,
             startedAtMs,
-            queuedCount: clipRenderQueue.length
+            queuedCount: clipRenderQueue.length,
+            activeJobId: job.id,
+            queuedJobs: clipRenderQueue.map((queuedJob) => ({ id: queuedJob.id, title: queuedJob.title }))
           })
 
           try {
-            const clip = await clipPipeline.createClipForClosedTrade(job.trade)
+            const clip = job.manualBuffer
+              ? await clipPipeline.createManualBufferClip({
+                  requestedAtMs: job.requestedAtMs,
+                  captureTarget: job.captureTarget,
+                  signal: job.abortController.signal
+                })
+              : await clipPipeline.createClipForClosedTrade(job.trade!, {
+                  captureTarget: job.captureTarget,
+                  signal: job.abortController.signal
+                })
             setClipProcessingStatus({
               active: true,
               title: clip.title,
               message: 'Клип сохранён, обновляем очередь',
               progressPercent: 95,
               startedAtMs,
-              queuedCount: clipRenderQueue.length
+              queuedCount: clipRenderQueue.length,
+              activeJobId: job.id
+            })
+            void appLog.info('clip-queue', 'Clip render finished', {
+              ...clipJobLogContext(job),
+              videoPath: clip.videoPath,
+              metadataPath: clip.metadataPath
             })
             await notifyClipCreated(clip)
             job.resolve?.(clip)
           } catch (error) {
+            if (job.cancelled || job.abortController.signal.aborted) {
+              void appLog.info('clip-queue', 'Clip render cancelled', clipJobLogContext(job))
+            } else {
+              void appLog.error('clip-queue', 'Clip render failed', error, clipJobLogContext(job))
+            }
             setClipProcessingStatus({
               active: false,
               title: job.title,
-              message: getErrorMessage(error),
+              message: job.cancelled || job.abortController.signal.aborted ? 'Сохранение отменено' : getErrorMessage(error),
               progressPercent: 0,
               queuedCount: clipRenderQueue.length
             })
             job.reject?.(error)
-            if (!job.reject) console.warn(`Clip render failed: ${getErrorMessage(error)}`)
+            if (!job.reject && !job.cancelled) console.warn(`Clip render failed: ${getErrorMessage(error)}`)
           } finally {
             activeClipRenderJob = undefined
             applyWindowRecorderProtection()
@@ -820,11 +1122,13 @@ app.whenReady().then(() => {
     })()
   }
 
+  const targetSuffix = (captureTarget?: CaptureTargetRef): string => captureTarget ? ` - ${captureTarget.name}` : ''
+
   const enqueueClipRender = async (
     trade: ClosedTrade,
-    options: { waitForCompletion: boolean }
+    options: { waitForCompletion: boolean, captureTarget?: CaptureTargetRef }
   ): Promise<ClipQueueItem | void> => {
-    const title = `${trade.symbol} ${trade.side}`
+    const title = `${trade.symbol} ${trade.side}${targetSuffix(options.captureTarget)}`
     const settings = await settingsStore.load()
     const protectedSinceMs = settings.recording.mode === 'window'
       ? Math.max(1, trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
@@ -839,36 +1143,144 @@ app.whenReady().then(() => {
         })
       : undefined
 
-    clipRenderQueue.push({
+    const job: ClipRenderJob = {
       id: `${trade.id}-${queuedAtMs}`,
       trade,
       title,
       queuedAtMs,
       protectedSinceMs,
+      captureTarget: options.captureTarget,
+      abortController: new AbortController(),
+      cancelled: false,
       resolve: resolveCompletion,
       reject: rejectCompletion
-    })
-    applyWindowRecorderProtection()
-    if (activeClipRenderJob) {
-      setClipProcessingStatus({
-        ...clipProcessingStatus,
-        queuedCount: clipRenderQueue.length
-      })
-    } else {
-      setClipProcessingStatus({
-        active: true,
-        title,
-        message: clipRenderWorkerRunning
-          ? `Клип поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
-          : 'Клип поставлен в очередь обработки',
-        progressPercent: 10,
-        startedAtMs: queuedAtMs,
-        queuedCount: clipRenderQueue.length
-      })
     }
+    clipRenderQueue.push(job)
+    void appLog.info('clip-queue', 'Clip render queued', clipJobLogContext(job))
+    applyWindowRecorderProtection()
+    setClipProcessingStatus({
+      active: true,
+      title,
+      message: activeClipRenderJob || clipRenderWorkerRunning
+        ? `Клип поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
+        : 'Клип поставлен в очередь обработки',
+      progressPercent: 10,
+      startedAtMs: queuedAtMs,
+      queuedCount: clipRenderQueue.length,
+      queuedJobs: clipRenderQueue.map((queuedJob) => ({ id: queuedJob.id, title: queuedJob.title }))
+    })
     runClipRenderQueue()
 
     return completion
+  }
+
+  const enqueueManualBufferRender = async (
+    options: { waitForCompletion: boolean, requestedAtMs: number, captureTarget?: CaptureTargetRef }
+  ): Promise<ClipQueueItem | void> => {
+    const settings = await settingsStore.load()
+    const title = `Буфер TradeTools${targetSuffix(options.captureTarget)}`
+    const protectedSinceMs = settings.recording.mode === 'window'
+      ? Math.max(1, options.requestedAtMs - settings.clip.replayBufferSeconds * 1000 - 5_000)
+      : 0
+    const queuedAtMs = Date.now()
+    let resolveCompletion: ((clip: ClipQueueItem) => void) | undefined
+    let rejectCompletion: ((error: unknown) => void) | undefined
+    const completion = options.waitForCompletion
+      ? new Promise<ClipQueueItem>((resolve, reject) => {
+          resolveCompletion = resolve
+          rejectCompletion = reject
+        })
+      : undefined
+    const job: ClipRenderJob = {
+      id: `manual-buffer-${options.requestedAtMs}-${options.captureTarget?.id ?? 'default'}-${queuedAtMs}`,
+      manualBuffer: true,
+      requestedAtMs: options.requestedAtMs,
+      captureTarget: options.captureTarget,
+      title,
+      queuedAtMs,
+      protectedSinceMs,
+      abortController: new AbortController(),
+      cancelled: false,
+      resolve: resolveCompletion,
+      reject: rejectCompletion
+    }
+
+    clipRenderQueue.push(job)
+    void appLog.info('clip-queue', 'Clip render queued', clipJobLogContext(job))
+    applyWindowRecorderProtection()
+    setClipProcessingStatus({
+      active: true,
+      title,
+      message: activeClipRenderJob || clipRenderWorkerRunning
+        ? `Буфер поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
+        : 'Буфер поставлен в очередь обработки',
+      progressPercent: 10,
+      startedAtMs: queuedAtMs,
+      queuedCount: clipRenderQueue.length,
+      queuedJobs: clipRenderQueue.map((queuedJob) => ({ id: queuedJob.id, title: queuedJob.title }))
+    })
+    runClipRenderQueue()
+
+    return completion
+  }
+
+  const cancelClipRender = (jobId?: string): { ok: true, cancelledCount: number } => {
+    let cancelledCount = 0
+    if ((!jobId || activeClipRenderJob?.id === jobId) && activeClipRenderJob) {
+      activeClipRenderJob.cancelled = true
+      activeClipRenderJob.abortController.abort()
+      cancelledCount += 1
+    }
+
+    for (let index = clipRenderQueue.length - 1; index >= 0; index -= 1) {
+      const job = clipRenderQueue[index]
+      if (!job || (jobId && job.id !== jobId)) continue
+
+      clipRenderQueue.splice(index, 1)
+      job.cancelled = true
+      job.abortController.abort()
+      job.reject?.(new Error('Сохранение клипа отменено'))
+      cancelledCount += 1
+    }
+
+    if (cancelledCount > 0) {
+      setClipProcessingStatus({
+        active: Boolean(activeClipRenderJob && !activeClipRenderJob.cancelled),
+        title: activeClipRenderJob?.title ?? '',
+        message: 'Сохранение отменено',
+        progressPercent: 0,
+        activeJobId: activeClipRenderJob?.id,
+        queuedCount: clipRenderQueue.length,
+        queuedJobs: clipRenderQueue.map((job) => ({ id: job.id, title: job.title }))
+      })
+      applyWindowRecorderProtection()
+      void appLog.info('clip-queue', 'Clip render cancel requested', { jobId, cancelledCount })
+    }
+
+    return { ok: true, cancelledCount }
+  }
+
+  const selectClipRenderTargets = (settings: AppSettings, preferredTarget?: CaptureTargetRef): Array<CaptureTargetRef | undefined> => {
+    if (settings.recording.mode !== 'window') return [undefined]
+    if (preferredTarget) return [preferredTarget]
+
+    const targets = configuredCaptureTargets(settings)
+    if (settings.recording.sourceType === 'screen' && settings.recording.saveTargetMode === 'all') {
+      const screenTargets = targets.filter((target) => target.type === 'screen')
+      return screenTargets.length > 0 ? screenTargets : [undefined]
+    }
+
+    if (settings.recording.saveTargetMode === 'selected' && settings.recording.saveTargetId) {
+      return [targets.find((target) => target.id === settings.recording.saveTargetId) ?? targets[0]]
+    }
+
+    return [targets[0]]
+  }
+
+  const selectManualBufferTargets = (settings: AppSettings, captureTargetId?: string): Array<CaptureTargetRef | undefined> => {
+    const targets = selectClipRenderTargets(settings)
+    if (!captureTargetId) return targets
+    return [configuredCaptureTargets(settings).find((target) => target.id === captureTargetId) ?? targets[0]]
   }
 
   let lastObsReplayEnsureAtMs = 0
@@ -893,7 +1305,7 @@ app.whenReady().then(() => {
     if (!backgroundWindowRecordingEnabled) return false
 
     const status = await windowRecorderService.getStatus(settings)
-    if (!status.active) {
+    if (!status.active || status.fallbackRequired) {
       notifyWindowRecordingNeeded()
       const started = await windowRecorderService.start(settings)
       return started.active || started.fallbackRequired === true
@@ -902,13 +1314,98 @@ app.whenReady().then(() => {
     return true
   }
 
+  const resolveTerminalRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
+    const settings = await settingsStore.load()
+    if (settings.recording.mode !== 'window') return undefined
+    if (settings.recording.sourceType === 'screen') return undefined
+
+    const sources = await listWindowCaptureSources()
+    const patterns = terminalWindowPatterns[event.source]
+    const terminalSources = sources.filter((candidate) => (
+      candidate.type === 'window' && patterns.some((pattern) => pattern.test(candidate.name))
+    ))
+    const selection = selectTerminalSource(event, terminalSources)
+    const source = selection.source
+    const targets = configuredCaptureTargets(settings)
+
+    if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
+      void appLog.warn('recording', 'Terminal process id did not match any captured window; using first matching terminal window', {
+        source: event.source,
+        symbol: event.symbol,
+        processId: event.processId,
+        candidates: terminalSources.map(terminalSourceLog)
+      })
+    } else if (event.processId && selection.candidates.length > 1) {
+      void appLog.info('recording', 'Terminal process has multiple matching windows; using focused or cursor window', {
+        source: event.source,
+        symbol: event.symbol,
+        processId: event.processId,
+        selectionReason: selection.reason,
+        selected: source ? terminalSourceLog(source) : undefined,
+        candidates: selection.candidates.map(terminalSourceLog)
+      })
+    }
+
+    if (source) {
+      const target = toCaptureTargetRef(source)
+      const nextCaptureTargets = [
+        target,
+        ...targets.filter((candidate) => candidate.type === 'window' && candidate.id !== target.id)
+      ]
+
+      if (settings.recording.windowSourceId !== target.id || !targets.some((candidate) => candidate.id === target.id)) {
+        await settingsStore.update({
+          recording: {
+            ...settings.recording,
+            sourceType: 'window',
+            windowSourceId: target.id,
+            windowSourceName: target.name,
+            captureTargets: nextCaptureTargets,
+            saveTargetMode: 'selected',
+            saveTargetId: target.id
+          }
+        })
+        notifyWindowRecordingNeeded()
+      }
+
+      return target
+    }
+
+    const fallback = configuredCaptureTargets(settings).find((target) => target.type === 'window') ?? configuredCaptureTargets(settings)[0]
+    if (fallback) {
+      void appLog.warn('recording', 'Terminal capture window not found; using configured capture target', {
+        source: event.source,
+        symbol: event.symbol,
+        captureTarget: fallback
+      })
+    }
+    return fallback
+  }
+
+  const queueClipForClosedTrade = async (trade: ClosedTrade): Promise<void> => {
+    const settings = await settingsStore.load()
+    const targets = selectClipRenderTargets(settings, trade.recordingTarget)
+    await Promise.all(targets.map((target) => enqueueClipRender(
+      target ? { ...trade, recordingTarget: target } : trade,
+      { waitForCompletion: false, captureTarget: target }
+    )))
+  }
+
   const terminalTradeWatcher = createTerminalTradeWatcher({
     getSettings: () => settingsStore.load(),
     ensureVideoRecordingReady,
     protectSince: setWatcherProtectedSince,
-    createClipForClosedTrade: (trade) => enqueueClipRender(trade, { waitForCompletion: false }),
+    createClipForClosedTrade: queueClipForClosedTrade,
+    resolveRecordingTarget: resolveTerminalRecordingTarget,
     onStatusChange: (status) => {
-      if (status.lastError) console.warn(`Terminal trade watcher: ${status.lastError}`)
+      if (status.lastError) {
+        console.warn(`Terminal trade watcher: ${status.lastError}`)
+        void appLog.warn('terminal-trade', status.lastError, {
+          source: status.source,
+          activeTradeCount: status.activeTradeCount,
+          lastEventAtMs: status.lastEventAtMs
+        })
+      }
     }
   })
 
@@ -925,13 +1422,21 @@ app.whenReady().then(() => {
 
       const settings = await settingsStore.load()
       const sources = await listDesktopCaptureSources()
+      const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)
       const source = sources.find((source) => source.id === settings.recording.windowSourceId) ??
         sources.find((source) => source.name === settings.recording.windowSourceName) ??
-        sources.find((source) => settings.recording.sourceType === 'screen'
+        (hasSavedCaptureSource ? undefined : sources.find((source) => settings.recording.sourceType === 'screen'
           ? source.id.startsWith('screen:')
-          : !source.id.startsWith('screen:'))
+          : !source.id.startsWith('screen:')))
 
       if (!source) {
+        if (hasSavedCaptureSource) {
+          void appLog.warn('recording', 'Saved capture source is missing; not falling back to another window', {
+            sourceType: settings.recording.sourceType,
+            sourceId: settings.recording.windowSourceId,
+            sourceName: settings.recording.windowSourceName
+          })
+        }
         callback({})
         return
       }
@@ -946,6 +1451,11 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('logs:get', () => appLog.getSnapshot())
+  ipcMain.handle('logs:show-file', async () => {
+    await appLog.info('diagnostics', 'Log file requested')
+    shell.showItemInFolder(appLog.getPath())
+  })
   ipcMain.handle('updates:get-status', () => appUpdateService.getStatus())
   ipcMain.handle('updates:check', () => appUpdateService.checkForUpdates())
   ipcMain.handle('updates:download', () => appUpdateService.downloadUpdate())
@@ -980,6 +1490,8 @@ app.whenReady().then(() => {
     let updatedSettings = await settingsStore.update(patch)
     if (patch.proxies) updatedSettings = await clearProxyRuntimeConfig()
     applyLaunchAtLogin(updatedSettings)
+    applyAlwaysOnTop(updatedSettings)
+    applyProxyQuitPreference(updatedSettings)
 
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
     return updatedSettings
@@ -987,10 +1499,7 @@ app.whenReady().then(() => {
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   ipcMain.handle('recording:list-window-sources', async () => {
-    const sources = await listDesktopCaptureSources()
-
-    return sources
-      .map(toWindowCaptureSource)
+    return listWindowCaptureSources()
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
@@ -1251,14 +1760,36 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())
+  ipcMain.handle('clips:create-buffer', async (_event, input?: { captureTargetId?: string }) => {
+    const settings = await settingsStore.load()
+    const requestedAtMs = Date.now()
+    const targets = selectManualBufferTargets(settings, asString(input?.captureTargetId))
+    const clips = await Promise.all(targets.map((target) => enqueueManualBufferRender({
+      waitForCompletion: true,
+      requestedAtMs,
+      captureTarget: target
+    })))
+    return clips.filter((clip): clip is ClipQueueItem => clip !== undefined)
+  })
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
-    const clip = await enqueueClipRender(createSimulatedClosedTrade(Date.now(), settings.recording.mode === 'window' ? 5_000 : undefined), { waitForCompletion: true })
-    if (!clip) throw new Error('Тестовый клип не был обработан')
+    const [clip] = await Promise.all(selectManualBufferTargets(settings).map((target) => enqueueManualBufferRender({
+      waitForCompletion: true,
+      requestedAtMs: Date.now(),
+      captureTarget: target
+    })))
+    if (!clip) throw new Error('Буфер не был обработан')
     return clip
   })
+  ipcMain.handle('clips:cancel-render', (_event, jobId?: string) => cancelClipRender(asString(jobId)))
   ipcMain.handle('clips:clear-queue', () => clipPipeline.clearQueue())
   ipcMain.handle('clips:delete-queue-files', () => clipPipeline.deleteQueueFiles())
+  ipcMain.handle('clips:open-output-folder', async () => {
+    const settings = await settingsStore.load()
+    mkdirSync(settings.clip.outputDir, { recursive: true })
+    const openError = await shell.openPath(settings.clip.outputDir)
+    if (openError) throw new Error(`Не удалось открыть папку с видео: ${openError}`)
+  })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {
@@ -1288,6 +1819,8 @@ app.whenReady().then(() => {
 
   void settingsStore.load().then((settings) => {
     applyLaunchAtLogin(settings)
+    applyAlwaysOnTop(settings)
+    applyProxyQuitPreference(settings)
     void startStoredProxyRuntime(settings).catch((error) => {
       const message = error instanceof Error ? error.message : 'неизвестная ошибка'
       console.error('Proxy runtime autostart failed:', error)
@@ -1301,7 +1834,10 @@ app.whenReady().then(() => {
   setInterval(() => void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error)), proxyPaymentReminderIntervalMs)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow()
+      void settingsStore.load().then(applyAlwaysOnTop)
+    }
   })
 })
 
@@ -1310,5 +1846,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  void stopLocalXrayRuntime()
+  if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()
 })

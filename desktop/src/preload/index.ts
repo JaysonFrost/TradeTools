@@ -7,6 +7,7 @@ import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteC
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
+import type { AppLogSnapshot } from '../main/services/logging/appLogService'
 
 export type ProxySaveInput = {
   id?: string
@@ -91,6 +92,10 @@ const api = {
   notifications: {
     test: (): Promise<SystemNotificationResult> => ipcRenderer.invoke('notifications:test')
   },
+  logs: {
+    get: (): Promise<AppLogSnapshot> => ipcRenderer.invoke('logs:get'),
+    showFile: (): Promise<void> => ipcRenderer.invoke('logs:show-file')
+  },
   updates: {
     getStatus: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:get-status'),
     check: (): Promise<AppUpdateStatus> => ipcRenderer.invoke('updates:check'),
@@ -149,13 +154,16 @@ const api = {
     listPending: (): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:list-pending'),
     getProcessingStatus: (): Promise<ClipProcessingStatus> => ipcRenderer.invoke('clips:get-processing-status'),
     createTest: (): Promise<ClipQueueItem> => ipcRenderer.invoke('clips:create-test'),
+    createBuffer: (input?: { captureTargetId?: string }): Promise<ClipQueueItem[]> => ipcRenderer.invoke('clips:create-buffer', input),
+    cancelRender: (jobId?: string): Promise<{ ok: true, cancelledCount: number }> => ipcRenderer.invoke('clips:cancel-render', jobId),
     clearQueue: (): Promise<ClearClipQueueResult> => ipcRenderer.invoke('clips:clear-queue'),
     deleteQueueFiles: (): Promise<ClearClipQueueResult> => ipcRenderer.invoke('clips:delete-queue-files'),
     renameFile: (input: { metadataPath: string, fileName: string }): Promise<RenameClipFileResult> => ipcRenderer.invoke('clips:rename-file', input),
     deleteFromQueue: (metadataPath: string): Promise<DeleteClipFromQueueResult> => ipcRenderer.invoke('clips:delete-from-queue', metadataPath),
     deleteFile: (metadataPath: string): Promise<DeleteClipFileResult> => ipcRenderer.invoke('clips:delete-file', metadataPath),
     openPreview: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:open-preview', videoPath),
-    showInFolder: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:show-in-folder', videoPath)
+    showInFolder: (videoPath: string): Promise<void> => ipcRenderer.invoke('clips:show-in-folder', videoPath),
+    openOutputFolder: (): Promise<void> => ipcRenderer.invoke('clips:open-output-folder')
   }
 }
 

@@ -33,8 +33,9 @@ describe('settingsStore', () => {
       recording: {
         mode: 'window',
         sourceType: 'screen',
-        windowSourceId: 'terminal-source',
+        windowSourceId: 'screen:1',
         windowSourceName: 'Trading terminal',
+        resolutionPreset: '1080p',
         frameRate: 24,
         segmentSeconds: 3,
         systemAudioEnabled: true,
@@ -47,8 +48,18 @@ describe('settingsStore', () => {
     expect(settings.recording).toEqual({
       mode: 'window',
       sourceType: 'screen',
-      windowSourceId: 'terminal-source',
+      windowSourceId: 'screen:1',
       windowSourceName: 'Trading terminal',
+      captureTargets: [{
+        id: 'screen:1',
+        name: 'Trading terminal',
+        type: 'screen'
+      }],
+      saveTargetMode: 'all',
+      saveTargetId: 'screen:1',
+      saveTradeDisplayOnly: false,
+      videoEncoder: 'gpu',
+      resolutionPreset: '1080p',
       frameRate: 24,
       segmentSeconds: 3,
       systemAudioEnabled: true,

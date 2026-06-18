@@ -79,13 +79,23 @@ describe('buildFfmpegTrimArgs', () => {
       '-pix_fmt',
       'nv12'
     ])
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording' })).toEqual([
+      '-c:v',
+      'h264_mf',
+      '-hw_encoding',
+      '1',
+      '-b:v',
+      '5M',
+      '-pix_fmt',
+      'nv12'
+    ])
     expect(buildH264VideoArgs({ platform: 'darwin', purpose: 'recording' })).toEqual([
       '-c:v',
       'h264_videotoolbox',
       '-realtime',
       '1',
       '-b:v',
-      '8M',
+      '5M',
       '-pix_fmt',
       'yuv420p'
     ])
@@ -96,6 +106,21 @@ describe('buildFfmpegTrimArgs', () => {
       'veryfast',
       '-crf',
       '18',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+  })
+
+  it('can force CPU H.264 encoding even on platforms with hardware encoders', () => {
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording', encoder: 'cpu' })).toEqual([
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-tune',
+      'zerolatency',
+      '-crf',
+      '24',
       '-pix_fmt',
       'yuv420p'
     ])

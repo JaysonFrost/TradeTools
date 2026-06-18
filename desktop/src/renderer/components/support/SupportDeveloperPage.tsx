@@ -22,7 +22,7 @@ const donationWallets: DonationWallet[] = [
     id: 'usdt-trc20',
     asset: 'USDT',
     network: 'TRC20',
-    address: 'TGKPUrzVehY2J46RC4T5xEzxhYNbFYE3YV',
+    address: 'TCikP8GinVFDSkcjoPZeV76wcUkPvtdEgW',
     hint: 'USDT в сети Tron',
     accent: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
   },

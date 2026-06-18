@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { open, readdir, stat } from 'node:fs/promises'
 import { join, posix } from 'node:path'
-import type { AppSettings } from '../settings/settings'
+import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
 
@@ -21,6 +21,7 @@ export type OpenTerminalTrade = Omit<ClosedTrade, 'status' | 'exitTimeMs'> & {
   status: 'open'
   positionId: string
   size?: number
+  recordingTarget?: CaptureTargetRef
 }
 
 export type TerminalPositionEvent = {
@@ -32,6 +33,7 @@ export type TerminalPositionEvent = {
   isClosed: boolean
   eventTimeMs: number
   size?: number
+  processId?: number
 }
 
 export type VatagaPositionEvent = TerminalPositionEvent & {
@@ -49,6 +51,7 @@ export type TerminalTradeWatcherInput = {
   ensureVideoRecordingReady: () => Promise<boolean>
   protectSince: (timeMs?: number) => void
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
+  resolveRecordingTarget?: (event: TerminalPositionEvent) => Promise<CaptureTargetRef | undefined>
   onStatusChange?: (status: TerminalTradeRecordingStatus) => void
   env?: NodeJS.ProcessEnv
   pollIntervalMs?: number
@@ -105,12 +108,11 @@ const parseNumericValue = (value: unknown): number => {
 }
 
 const isNearlyZero = (value: number): boolean => Number.isFinite(value) && Math.abs(value) <= zeroTolerance
-const comparablePositionSizes = (previousSize: unknown, nextSize: unknown): [number, number] | undefined => {
-  if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return undefined
-  if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return undefined
-  if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return undefined
-  if (Math.sign(previousSize) !== Math.sign(nextSize)) return undefined
-  return [previousSize, nextSize]
+const isPositionReversal = (previousSize: unknown, nextSize: unknown): boolean => {
+  if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return false
+  if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return false
+  if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return false
+  return Math.sign(previousSize) !== Math.sign(nextSize)
 }
 
 const getField = (record: unknown, names: string[]): unknown => {
@@ -221,6 +223,11 @@ const normalizeVatagaSide = (quantity: unknown, tradeSide: unknown): string => {
   return 'TRADE'
 }
 
+const normalizeProcessId = (value: unknown): number | undefined => {
+  const processId = Number(value)
+  return Number.isInteger(processId) && processId > 0 ? processId : undefined
+}
+
 export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | undefined => {
   let payload: Record<string, unknown>
   try {
@@ -238,6 +245,7 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
   const eventTimeMs = parseVatagaTime(payload.TradeTime) || parseVatagaTime(payload['@t'])
   if (!eventTimeMs) return undefined
   const size = parseNumericValue(payload.PositionQuantity)
+  const processId = normalizeProcessId(payload.ProcessId)
 
   return {
     source: 'vataga',
@@ -247,7 +255,8 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
     side: normalizeVatagaSide(size, payload.TradeSide),
     isClosed: payload.IsClosed === true,
     eventTimeMs,
-    size: Number.isFinite(size) ? size : undefined
+    size: Number.isFinite(size) ? size : undefined,
+    ...(processId ? { processId } : {})
   }
 }
 
@@ -527,6 +536,7 @@ export const createTerminalTradeWatcher = ({
   ensureVideoRecordingReady,
   protectSince,
   createClipForClosedTrade,
+  resolveRecordingTarget,
   onStatusChange,
   env = process.env,
   pollIntervalMs = defaultPollIntervalMs
@@ -555,7 +565,6 @@ export const createTerminalTradeWatcher = ({
   ]
 
   const activeTrades = new Map<string, OpenTerminalTrade>()
-  const layeredTrades = new Map<string, OpenTerminalTrade[]>()
   const renderedTradeIds = new Set<string>()
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
@@ -609,7 +618,15 @@ export const createTerminalTradeWatcher = ({
 
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
-  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = ''): OpenTerminalTrade => ({
+  const resolveTradeRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
+    try {
+      return await resolveRecordingTarget?.(event)
+    } catch {
+      return undefined
+    }
+  }
+
+  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = '', recordingTarget?: CaptureTargetRef): OpenTerminalTrade => ({
     id: `${event.source}-${event.positionId}${idSuffix}`,
     positionId: positionKey,
     exchange: event.exchange,
@@ -618,7 +635,8 @@ export const createTerminalTradeWatcher = ({
     side: event.side,
     status: 'open',
     entryTimeMs: event.eventTimeMs,
-    size: event.size
+    size: event.size,
+    ...(recordingTarget ? { recordingTarget } : {})
   })
 
   const createClosedTradeClip = async (
@@ -634,7 +652,8 @@ export const createTerminalTradeWatcher = ({
       side: openTrade.side,
       status: 'closed',
       entryTimeMs: openTrade.entryTimeMs,
-      exitTimeMs: event.eventTimeMs
+      exitTimeMs: event.eventTimeMs,
+      ...(openTrade.recordingTarget ? { recordingTarget: openTrade.recordingTarget } : {})
     }
 
     if (renderedTradeIds.has(closedTrade.id)) return undefined
@@ -668,58 +687,38 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
-  const handleLayeredPositionUpdate = async (
-    positionKey: string,
+  const closePositionTrade = async (
     openTrade: OpenTerminalTrade,
     event: TerminalPositionEvent,
     sourceName: string
-  ) => {
-    const sizes = comparablePositionSizes(openTrade.size, event.size)
-    if (!sizes) {
-      if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
-      return
-    }
-
-    const [previousSize, nextSize] = sizes
-    if (Math.abs(nextSize) > Math.abs(previousSize)) {
-      const stack = layeredTrades.get(positionKey) ?? []
-      stack.push({
-        ...createOpenTrade(event, positionKey, `-layer-${event.eventTimeMs}-${stack.length + 1}`),
-        size: nextSize - previousSize
-      })
-      layeredTrades.set(positionKey, stack)
-    } else if (Math.abs(nextSize) < Math.abs(previousSize)) {
-      const stack = layeredTrades.get(positionKey)
-      const layeredTrade = stack?.pop()
-      if (layeredTrade) {
-        if (stack?.length) {
-          layeredTrades.set(positionKey, stack)
-        } else {
-          layeredTrades.delete(positionKey)
-        }
-
-        try {
-          const closedTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
-          if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
-        } catch (error) {
-          emitClipError(event, sourceName, error)
-        }
-      }
-    }
-
-    openTrade.size = nextSize
+  ): Promise<ClosedTrade | undefined> => {
+    return createClosedTradeClip(openTrade, event, sourceName)
   }
 
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
+    const eventClosesPosition = event.isClosed || (typeof event.size === 'number' && isNearlyZero(event.size))
 
-    if (!event.isClosed) {
+    if (!eventClosesPosition) {
       const openTrade = activeTrades.get(positionKey)
       if (openTrade) {
-        await handleLayeredPositionUpdate(positionKey, openTrade, event, sourceName)
+        if (isPositionReversal(openTrade.size, event.size)) {
+          try {
+            const closedTrade = await closePositionTrade(openTrade, event, sourceName)
+            activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
+            if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
+          } catch (error) {
+            activeTrades.delete(positionKey)
+            await protectActiveTrades()
+            emitClipError(event, sourceName, error)
+            return
+          }
+        } else {
+          if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
+        }
       } else {
-        activeTrades.set(positionKey, createOpenTrade(event, positionKey))
+        activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
       }
 
       await ensureVideoRecordingReady().catch(() => false)
@@ -737,22 +736,12 @@ export const createTerminalTradeWatcher = ({
     if (!openTrade) return
 
     try {
-      const stack = layeredTrades.get(positionKey) ?? []
-      while (stack.length > 0) {
-        const layeredTrade = stack.pop()
-        if (!layeredTrade) continue
-        const closedLayeredTrade = await createClosedTradeClip(layeredTrade, event, sourceName)
-        if (closedLayeredTrade) emitQueuedClip(event, sourceName, closedLayeredTrade)
-      }
-      layeredTrades.delete(positionKey)
-
-      const closedTrade = await createClosedTradeClip(openTrade, event, sourceName)
+      const closedTrade = await closePositionTrade(openTrade, event, sourceName)
       activeTrades.delete(positionKey)
       await protectActiveTrades()
       if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
     } catch (error) {
       activeTrades.delete(positionKey)
-      layeredTrades.delete(positionKey)
       await protectActiveTrades()
       emitClipError(event, sourceName, error)
     }
@@ -906,7 +895,6 @@ export const createTerminalTradeWatcher = ({
       if (timer) clearInterval(timer)
       timer = undefined
       activeTrades.clear()
-      layeredTrades.clear()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       protectSince()

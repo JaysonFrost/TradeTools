@@ -148,6 +148,47 @@ describe('tradeClipPipeline', () => {
     expect(runFfmpeg.mock.calls[0][0].at(-1)).toContain(`${clip.videoPath}.tmp-`)
   })
 
+  it('removes the consumed OBS replay after the final clip is written', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-remove-obs-replay-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-remove-obs-replay-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 08-30-00.mp4')
+    await writeFile(replayPath, 'fake video')
+    const saveTimeMs = Date.parse('2026-05-13T08:30:00.000Z')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'obs'
+        },
+        clip: {
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          replayBufferSeconds: 1800,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'trimmed video')
+      }),
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+    })
+
+    const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
+
+    await expect(access(clip.videoPath)).resolves.toBeUndefined()
+    await expect(access(replayPath)).rejects.toThrow()
+  })
+
   it('exposes local review queue actions without a direct external publishing action', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-local-metadata-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-local-replays-'))
@@ -561,6 +602,49 @@ describe('tradeClipPipeline', () => {
     await expect(pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))).rejects.toThrow('ffmpeg создал слишком короткий клип')
   })
 
+  it('accepts very short rendered clips when ffmpeg output closely matches the requested trim', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-tiny-output-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-tiny-output-replays-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 12-10-00.mp4')
+    await writeFile(replayPath, 'tiny video')
+    const saveTimeMs = Date.parse('2026-05-13T12:10:00.000Z')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          paddingBeforeSeconds: 0,
+          paddingAfterSeconds: 0,
+          replayBufferSeconds: 60,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'tiny')
+      }),
+      getVideoDetails: vi.fn(async (path: string) => path === replayPath
+        ? { durationSeconds: 10, averageFrameRate: 60 }
+        : { durationSeconds: 0.93, averageFrameRate: 60 })
+    })
+    const tinyTrade = {
+      ...createSimulatedClosedTrade(saveTimeMs, 934),
+      exitTimeMs: saveTimeMs
+    }
+
+    await expect(pipeline.createClipForClosedTrade(tinyTrade)).resolves.toMatchObject({
+      symbol: tinyTrade.symbol,
+      durationSeconds: 1
+    })
+  })
+
   it('rejects low-FPS OBS replays before rendering a broken clip', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-replays-'))
@@ -655,6 +739,110 @@ describe('tradeClipPipeline', () => {
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
     expect(metadata.replayPath).toBe(clip.videoPath)
     expect(metadata.trim).toEqual({ startSeconds: 0, endSeconds: 131, durationSeconds: 131 })
+  })
+
+  it('passes the selected capture target to built-in replay export and records it in metadata', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-targeted-clip-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-targeted-replays-'))
+    const replayPath = join(replayDir, 'screen-ready.mp4')
+    const saveTimeMs = Date.parse('2026-06-17T18:00:10.000Z')
+    const captureTarget = { id: 'screen:1', name: 'Экран 1', type: 'screen' as const, displayId: '1' }
+    await writeFile(replayPath, 'ready built-in clip')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const saveReplayBuffer = vi.fn(async () => ({
+      ok: true,
+      message: 'Встроенный replay сохранён',
+      requestedAtMs: saveTimeMs,
+      replayPath,
+      readyClip: true
+    }))
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window',
+          sourceType: 'screen',
+          captureTargets: [captureTarget],
+          saveTargetMode: 'selected',
+          saveTargetId: captureTarget.id
+        },
+        clip: {
+          ...defaultSettings.clip,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer,
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 10,
+        averageFrameRate: 30
+      }))
+    })
+
+    const clip = await (pipeline.createClipForClosedTrade as any)(createSimulatedClosedTrade(saveTimeMs, 3_000), { captureTarget })
+
+    expect(saveReplayBuffer).toHaveBeenCalledWith(expect.objectContaining({ captureTarget }))
+    expect(clip.fileName).toContain('Экран 1')
+    const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.captureTarget).toEqual(captureTarget)
+    expect(metadata.trade.recordingTarget).toEqual(captureTarget)
+  })
+
+  it('creates a manual buffer clip without a fake BTC trade', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-manual-buffer-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-manual-buffer-replays-'))
+    const replayPath = join(replayDir, 'manual-buffer.mp4')
+    const requestedAtMs = Date.parse('2026-06-17T18:10:00.000Z')
+    const captureTarget = { id: 'screen:2', name: 'Экран 2', type: 'screen' as const, displayId: '2' }
+    await writeFile(replayPath, 'manual buffer clip')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(requestedAtMs), new Date(requestedAtMs)))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window',
+          sourceType: 'screen',
+          captureTargets: [captureTarget],
+          saveTargetMode: 'selected',
+          saveTargetId: captureTarget.id
+        },
+        clip: {
+          ...defaultSettings.clip,
+          replayBufferSeconds: 60,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs,
+        replayPath,
+        readyClip: true
+      })),
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 60,
+        averageFrameRate: 30
+      })),
+      now: () => requestedAtMs
+    })
+
+    const clip = await (pipeline as any).createManualBufferClip({ requestedAtMs, captureTarget })
+
+    expect(clip.title).toContain('Буфер')
+    expect(clip.title).toContain('Экран 2')
+    expect(clip.title).not.toContain('BTC')
+    expect(clip.symbol).toBe('BUFFER')
+    const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.trade).toMatchObject({
+      exchange: 'TradeTools',
+      marketType: 'Manual buffer',
+      symbol: 'BUFFER',
+      side: 'BUFFER'
+    })
+    expect(metadata.captureTarget).toEqual(captureTarget)
   })
 
   it('keeps an existing valid clip when a duplicate render produces an invalid mp4', async () => {

@@ -75,6 +75,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
+  const [resolutionPreset, setResolutionPreset] = useState<AppSettings['recording']['resolutionPreset']>('1440p')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
@@ -147,6 +148,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
+    setResolutionPreset(settings.recording.resolutionPreset)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
     setHost(settings.obs.host)
@@ -276,6 +278,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
           sourceType: selectedSource?.type ?? sourceType,
           windowSourceId: selectedSource?.id ?? windowSourceId,
           windowSourceName: selectedSource?.name ?? windowSourceName,
+          resolutionPreset,
           frameRate: Number(frameRate),
           segmentSeconds: Number(segmentSeconds)
         },
@@ -705,7 +708,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                       </button>
                     </div>
                     {recordingMode === 'window' ? (
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_120px_120px]">
+                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px_120px_120px]">
                         <label className="text-xs font-medium text-zinc-500">
                           Источник записи
                           <div className="mt-1 flex flex-col gap-2 sm:flex-row">
@@ -749,6 +752,21 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                               <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
                             </Button>
                           </div>
+                        </label>
+                        <label className="text-xs font-medium text-zinc-500">
+                          Разрешение
+                          <select
+                            className={`${inputClass} appearance-none`}
+                            value={resolutionPreset}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              setResolutionPreset(value === 'native' || value === '1080p' ? value : '1440p')
+                            }}
+                          >
+                            <option value="1440p">Оптимально 1440p</option>
+                            <option value="native">Нативное</option>
+                            <option value="1080p">Лёгкое 1080p</option>
+                          </select>
                         </label>
                         <label className="text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
                         <label className="text-xs font-medium text-zinc-500">

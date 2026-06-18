@@ -1,4 +1,4 @@
-import { Bell, Clapperboard, Power, RefreshCw, Save } from 'lucide-react'
+import { Bell, Network, Pin, Power, RefreshCw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -7,7 +7,7 @@ import { Card } from '../ui/Card'
 
 export type SystemSettingsPanelProps = {
   settings?: AppSettings
-  mode: 'video' | 'proxy'
+  mode: 'proxy'
   onSaved: (settings: AppSettings) => void
 }
 
@@ -15,10 +15,11 @@ const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 p
 
 type SystemSettingsDraft = AppSettings['system']
 
-export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsPanelProps) => {
+export const SystemSettingsPanel = ({ settings, onSaved }: SystemSettingsPanelProps) => {
   const [launchAtLogin, setLaunchAtLogin] = useState(false)
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false)
+  const [keepProxyRunningAfterClose, setKeepProxyRunningAfterClose] = useState(false)
   const [proxyPaymentNotificationsEnabled, setProxyPaymentNotificationsEnabled] = useState(true)
-  const [clipSuccessNotificationsEnabled, setClipSuccessNotificationsEnabled] = useState(true)
   const [paymentReminderDaysBefore, setPaymentReminderDaysBefore] = useState('5')
   const [saving, setSaving] = useState(false)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
@@ -28,15 +29,18 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
   useEffect(() => {
     if (!settings) return
     setLaunchAtLogin(settings.system.launchAtLogin)
+    setAlwaysOnTop(settings.system.alwaysOnTop)
+    setKeepProxyRunningAfterClose(settings.system.keepProxyRunningAfterClose)
     setProxyPaymentNotificationsEnabled(settings.system.proxyPaymentNotificationsEnabled)
-    setClipSuccessNotificationsEnabled(settings.system.clipSuccessNotificationsEnabled)
     setPaymentReminderDaysBefore(String(settings.system.paymentReminderDaysBefore))
   }, [settings])
 
   const buildDraft = (patch: Partial<SystemSettingsDraft> = {}): SystemSettingsDraft => ({
     launchAtLogin,
+    alwaysOnTop,
+    keepProxyRunningAfterClose,
     proxyPaymentNotificationsEnabled,
-    clipSuccessNotificationsEnabled,
+    clipSuccessNotificationsEnabled: settings?.system.clipSuccessNotificationsEnabled ?? true,
     paymentReminderDaysBefore: Number.isFinite(Number(paymentReminderDaysBefore))
       ? Number(paymentReminderDaysBefore)
       : settings?.system.paymentReminderDaysBefore ?? 5,
@@ -74,18 +78,25 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
     if (!ok) setLaunchAtLogin(previous)
   }
 
+  const toggleAlwaysOnTop = async (checked: boolean) => {
+    const previous = alwaysOnTop
+    setAlwaysOnTop(checked)
+    const ok = await saveDraft(buildDraft({ alwaysOnTop: checked }), checked ? 'Окно закреплено поверх остальных' : 'Окно больше не закреплено')
+    if (!ok) setAlwaysOnTop(previous)
+  }
+
+  const toggleKeepProxyRunningAfterClose = async (checked: boolean) => {
+    const previous = keepProxyRunningAfterClose
+    setKeepProxyRunningAfterClose(checked)
+    const ok = await saveDraft(buildDraft({ keepProxyRunningAfterClose: checked }), checked ? 'Proxy останется включённым после закрытия' : 'Proxy будет выключаться при закрытии')
+    if (!ok) setKeepProxyRunningAfterClose(previous)
+  }
+
   const toggleProxyPaymentNotifications = async (checked: boolean) => {
     const previous = proxyPaymentNotificationsEnabled
     setProxyPaymentNotificationsEnabled(checked)
     const ok = await saveDraft(buildDraft({ proxyPaymentNotificationsEnabled: checked }), checked ? 'Напоминания об оплате включены' : 'Напоминания об оплате выключены')
     if (!ok) setProxyPaymentNotificationsEnabled(previous)
-  }
-
-  const toggleClipSuccessNotifications = async (checked: boolean) => {
-    const previous = clipSuccessNotificationsEnabled
-    setClipSuccessNotificationsEnabled(checked)
-    const ok = await saveDraft(buildDraft({ clipSuccessNotificationsEnabled: checked }), checked ? 'Уведомления о клипах включены' : 'Уведомления о клипах выключены')
-    if (!ok) setClipSuccessNotificationsEnabled(previous)
   }
 
   const checkUpdates = async () => {
@@ -108,12 +119,8 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">{mode === 'video' ? 'Видео-уведомления' : 'Прокси-уведомления'}</h2>
-          <p className="mt-1 text-sm text-zinc-500">
-            {mode === 'video'
-              ? 'Автозапуск TradeTools и системное уведомление, когда запись сделки готова.'
-              : 'Автозапуск TradeTools и системные напоминания о сроках оплаты серверов.'}
-          </p>
+          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Прокси-уведомления</h2>
+          <p className="mt-1 text-sm text-zinc-500">Автозапуск TradeTools, закрепление окна и системные напоминания о сроках оплаты серверов.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="ghost" onClick={() => void checkUpdates()} disabled={checkingUpdates}>
@@ -131,29 +138,31 @@ export const SystemSettingsPanel = ({ settings, mode, onSaved }: SystemSettingsP
             <span className="mt-1 block text-xs leading-5 text-zinc-500">TradeTools будет стартовать при входе в систему.</span>
           </span>
         </label>
-        {mode === 'video' ? (
-          <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300 lg:col-span-2">
-            <input className="mt-1 h-4 w-4 accent-violet-500" checked={clipSuccessNotificationsEnabled} disabled={saving} onChange={(event) => void toggleClipSuccessNotifications(event.target.checked)} type="checkbox" />
-            <span>
-              <span className="flex items-center gap-2 font-semibold text-zinc-100"><Clapperboard size={16} />Готовая запись сделки</span>
-              <span className="mt-1 block text-xs leading-5 text-zinc-500">После сохранения replay и ffmpeg-нарезки появится системное уведомление с переходом в папку файла.</span>
-            </span>
-          </label>
-        ) : (
-          <>
-            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-              <input className="mt-1 h-4 w-4 accent-violet-500" checked={proxyPaymentNotificationsEnabled} disabled={saving} onChange={(event) => void toggleProxyPaymentNotifications(event.target.checked)} type="checkbox" />
-              <span>
-                <span className="flex items-center gap-2 font-semibold text-zinc-100"><Bell size={16} />Оплата серверов</span>
-                <span className="mt-1 block text-xs leading-5 text-zinc-500">Напоминания по датам оплаты из хранилища прокси.</span>
-              </span>
-            </label>
-            <label className="text-xs font-medium text-zinc-500">
-              Напоминать за дней
-              <input className={inputClass} value={paymentReminderDaysBefore} onChange={(event) => setPaymentReminderDaysBefore(event.target.value)} inputMode="numeric" />
-            </label>
-          </>
-        )}
+        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
+          <input className="mt-1 h-4 w-4 accent-violet-500" checked={alwaysOnTop} disabled={saving} onChange={(event) => void toggleAlwaysOnTop(event.target.checked)} type="checkbox" />
+          <span>
+            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Pin size={16} />Поверх окон</span>
+            <span className="mt-1 block text-xs leading-5 text-zinc-500">Окно TradeTools будет оставаться выше других приложений.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
+          <input className="mt-1 h-4 w-4 accent-violet-500" checked={proxyPaymentNotificationsEnabled} disabled={saving} onChange={(event) => void toggleProxyPaymentNotifications(event.target.checked)} type="checkbox" />
+          <span>
+            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Bell size={16} />Оплата серверов</span>
+            <span className="mt-1 block text-xs leading-5 text-zinc-500">Напоминания по датам оплаты из хранилища прокси.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
+          <input className="mt-1 h-4 w-4 accent-violet-500" checked={keepProxyRunningAfterClose} disabled={saving} onChange={(event) => void toggleKeepProxyRunningAfterClose(event.target.checked)} type="checkbox" />
+          <span>
+            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Network size={16} />Оставлять proxy после закрытия</span>
+            <span className="mt-1 block text-xs leading-5 text-zinc-500">Следующий запуск переиспользует текущий локальный Xray вместо нового процесса.</span>
+          </span>
+        </label>
+        <label className="text-xs font-medium text-zinc-500">
+          Напоминать за дней
+          <input className={inputClass} value={paymentReminderDaysBefore} onChange={(event) => setPaymentReminderDaysBefore(event.target.value)} inputMode="numeric" />
+        </label>
       </div>
 
       {message && <p className={`mt-4 text-sm ${messageTone === 'warning' ? 'text-amber-300' : 'text-emerald-300'}`}>{message}</p>}

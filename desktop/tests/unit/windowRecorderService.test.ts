@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createWindowRecorderService } from '../../src/main/services/recording/windowRecorderService'
+import { createWindowRecorderService, selectAvailableReplayWindow } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 describe('windowRecorderService', () => {
@@ -90,8 +90,25 @@ describe('windowRecorderService', () => {
     expect(source).toContain('const bufferedSeconds')
     expect(source).toContain('const requiredSeconds')
     expect(source).toContain('Накоплено ${formatRoundedSeconds(bufferedSeconds)}')
-    expect(source).toContain('нужно примерно ${formatRoundedSeconds(requiredSeconds)}')
-    expect(source).toContain('Осталось примерно ${formatRoundedSeconds(remainingSeconds)}')
+    expect(source).toContain('selectAvailableReplayWindow')
+  })
+
+  it('falls back to the nearest built-in segment when the requested trade window is not buffered', () => {
+    const requestedStartMs = Date.parse('2026-06-17T17:47:04.000Z')
+    const requestedEndMs = Date.parse('2026-06-17T17:47:10.000Z')
+    const nearestSegment = {
+      id: 'after-trade',
+      startedAtMs: Date.parse('2026-06-17T17:47:20.000Z'),
+      endedAtMs: Date.parse('2026-06-17T17:47:22.000Z')
+    }
+
+    const selection = selectAvailableReplayWindow([nearestSegment], requestedStartMs, requestedEndMs)
+
+    expect(selection).toEqual({
+      segments: [nearestSegment],
+      replayStartMs: nearestSegment.startedAtMs,
+      replayEndMs: nearestSegment.endedAtMs
+    })
   })
 
   it('keeps active trade segments and exports the full trade range instead of capping to the idle buffer', async () => {
@@ -140,6 +157,63 @@ describe('windowRecorderService', () => {
     expect(serviceSource).not.toContain('appendFile(sessionPath')
   })
 
+  it('keeps the Chromium fallback lightweight by recording the desktop stream directly', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('createBrowserVideoStream')
+    expect(controllerSource).toContain('sampleFrameTimer')
+    expect(controllerSource).toContain('browserCaptureMaxFrameRate')
+    expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
+    expect(controllerSource).not.toContain('canvas.captureStream')
+    expect(controllerSource).not.toContain('window.setInterval(drawFrame')
+  })
+
+  it('filters built-in replay segments by the requested capture target', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('captureTarget?: CaptureTargetRef')
+    expect(serviceSource).toContain('targetMatchesSegment')
+    expect(serviceSource).toContain('relevantSegments(settings, captureTarget')
+    expect(serviceSource).toContain('waitForSegmentsUntil(settings, replayEndMs, timeoutMs, captureTarget)')
+    expect(serviceSource).toContain('exportReplay(settings, trade, captureTarget')
+  })
+
+  it('lets the renderer run one Chromium recorder per selected capture target', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('resolveRecordingTargets')
+    expect(controllerSource).toContain('settings.recording.captureTargets')
+    expect(controllerSource).toContain('startBrowserRecorder')
+    expect(controllerSource).toContain('browserRecorders')
+    expect(controllerSource).toContain('targets.length > 1')
+  })
+
+  it('uses native ddagrab for screen capture targets instead of black Chromium screen streams or flickery GDI capture', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(appSource).toContain('getDisplayBounds')
+    expect(serviceSource).toContain('ScreenCaptureBounds')
+    expect(serviceSource).toContain('nativeScreenTargets')
+    expect(serviceSource).toContain("inputBackend: 'ddagrab'")
+    expect(serviceSource).toContain('screenOutputIndex')
+    expect(serviceSource).toContain('ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0')
+    expect(serviceSource).toContain("'lavfi'")
+    expect(serviceSource).not.toContain('Запись экрана идёт через Chromium')
+    expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('if (targets.length > 1)'))
+    expect(controllerSource).toContain('screenTargetsNeedSync')
+    expect(controllerSource).toContain('!target.displayId')
+  })
+
+  it('caps native multi-screen background recording FPS to keep GPU recording usable', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('nativeScreenFrameRateCap')
+    expect(serviceSource).toContain('nativeRecordingFrameRate(settings, targets)')
+    expect(serviceSource).toContain('Math.min(settings.recording.frameRate, nativeScreenFrameRateCap)')
+  })
+
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
@@ -151,7 +225,7 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
-    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording' })")
+    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder })")
     expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
     expect(serviceSource).toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')
@@ -162,13 +236,23 @@ describe('windowRecorderService', () => {
     expect(appSource).toContain("ipcMain.handle('recording:start'")
   })
 
-  it('avoids cursor capture in the Chromium fallback and avoids the gdigrab screen backend', async () => {
+  it('avoids cursor capture in both native screen recording and the Chromium fallback', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
-    expect(serviceSource).toContain('не мигает курсор Windows')
+    expect(serviceSource).toContain('draw_mouse=0')
     expect(controllerSource).toContain("cursor: 'never'")
+  })
+
+  it('marks a partial native multi-screen recorder set for restart instead of reporting it as healthy', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('expectedNativeRecorderSettingsKeys')
+    expect(serviceSource).toContain('activeNativeRecorderSettingsKeys')
+    expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
+    expect(serviceSource).toContain('Часть ffmpeg-рекордеров экранов остановилась')
+    expect(serviceSource).toContain('fallbackRequired: true')
   })
 
   it('auto-selects the first screen when screen capture has no saved source', async () => {
@@ -208,5 +292,17 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain('writeReplayFromSegments')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-status'")
     expect(appSource).toContain("ipcMain.handle('recording:free-start'")
+  })
+
+  it('marks free recording stopped before waiting for export segments so Finish never looks like Pause', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const finishStart = serviceSource.indexOf('const finishFreeRecording = async')
+    const finishSource = serviceSource.slice(finishStart, serviceSource.indexOf('const getWindowRecorderStatus', finishStart))
+
+    expect(finishSource.indexOf('freeRecording = undefined')).toBeGreaterThan(-1)
+    expect(finishSource.indexOf('freeRecording = undefined')).toBeLessThan(finishSource.indexOf('waitForSegmentsUntil(settings, targetEndMs'))
+    expect(finishSource).toContain('freeRecordingExportProtectedSinceMs')
+    expect(dashboardSource).toContain("active: false, paused: false, message: 'Сохраняем свободную запись...'")
   })
 })
