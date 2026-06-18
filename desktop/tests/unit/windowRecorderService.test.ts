@@ -226,6 +226,16 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain("cursor: 'never'")
   })
 
+  it('marks a partial native multi-screen recorder set for restart instead of reporting it as healthy', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('expectedNativeRecorderSettingsKeys')
+    expect(serviceSource).toContain('activeNativeRecorderSettingsKeys')
+    expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
+    expect(serviceSource).toContain('Часть ffmpeg-рекордеров экранов остановилась')
+    expect(serviceSource).toContain('fallbackRequired: true')
+  })
+
   it('auto-selects the first screen when screen capture has no saved source', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 

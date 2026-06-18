@@ -371,6 +371,26 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       })
   }
 
+  const expectedNativeRecorderSettingsKeys = (settings: AppSettings): string[] => (
+    settings.recording.mode === 'window' && settings.recording.sourceType === 'screen'
+      ? nativeScreenTargets(settings).map((target) => nativeSettingsKey(settings, target))
+      : []
+  )
+
+  const activeNativeRecorderSettingsKeys = (): Set<string> => new Set(
+    nativeRecorders
+      .filter((recorder) => recorder.process.exitCode === null)
+      .map((recorder) => recorder.settingsKey)
+  )
+
+  const hasPartialNativeScreenRecorderSet = (settings: AppSettings): boolean => {
+    const expectedKeys = expectedNativeRecorderSettingsKeys(settings)
+    if (expectedKeys.length <= 1 || nativeRecorders.length === 0) return false
+
+    const activeKeys = activeNativeRecorderSettingsKeys()
+    return expectedKeys.some((key) => !activeKeys.has(key))
+  }
+
   const clearNativeMissingSource = () => {
     nativeMissingSource = undefined
   }
@@ -1199,6 +1219,14 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   }
 
   const getWindowRecorderStatus = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
+    if (hasPartialNativeScreenRecorderSet(settings)) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Часть ffmpeg-рекордеров экранов остановилась. Перезапускаем фоновую запись.'
+      })
+    }
+
     if (settings.recording.mode === 'window' && nativeMissingSource?.settingsKey === nativeSettingsKey(settings)) {
       return buildStatus(settings, {
         backend: 'browser',

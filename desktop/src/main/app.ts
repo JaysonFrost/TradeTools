@@ -1204,7 +1204,7 @@ app.whenReady().then(() => {
     if (!backgroundWindowRecordingEnabled) return false
 
     const status = await windowRecorderService.getStatus(settings)
-    if (!status.active) {
+    if (!status.active || status.fallbackRequired) {
       notifyWindowRecordingNeeded()
       const started = await windowRecorderService.start(settings)
       return started.active || started.fallbackRequired === true

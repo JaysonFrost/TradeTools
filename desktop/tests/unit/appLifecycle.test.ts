@@ -35,6 +35,14 @@ describe('main app lifecycle', () => {
     expect(source).toContain('started.fallbackRequired')
   })
 
+  it('restarts built-in recording when the recorder status asks for recovery', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('if (!status.active || status.fallbackRequired)')
+    expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('await windowRecorderService.start(settings)')
+  })
+
   it('routes macOS system audio through display media loopback into the selected capture source', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const packageJson = await readFile(resolve('package.json'), 'utf8')
