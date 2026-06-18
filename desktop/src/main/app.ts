@@ -787,6 +787,7 @@ app.whenReady().then(() => {
       entryHost: runtime.entryHost,
       entryPort: runtime.entryPort,
       entryUuid: uuid,
+      keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
       onProgress: (progress) => console.log(`[proxy-autostart] ${progress.status} ${progress.step}: ${progress.message}`)
     })
   }
@@ -1739,6 +1740,7 @@ app.whenReady().then(() => {
     return setupProxyChainOnServers({
       chain,
       appDataDir: app.getPath('userData'),
+      keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
       getSshPassword: (proxyId) => secretStore.getProxyPassword(proxyId),
       onRuntimeConfigured: saveProxyRuntimeConfig,
       onProgress: (progress) => {

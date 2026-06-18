@@ -46,6 +46,7 @@ export type ProxyChainSetupInput = {
   chain: ProxyRecord[]
   getSshPassword: (proxyId: string) => Promise<string | undefined>
   appDataDir: string
+  keepRunningAfterClose?: boolean
   onRuntimeConfigured?: (config: ProxyChainRuntimeConfig) => Promise<void> | void
   onProgress?: (progress: ProxyChainSetupProgress) => void
 }
@@ -338,6 +339,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
       entryHost: firstNode.host,
       entryPort: firstNode.listenPort,
       entryUuid: firstNode.uuid,
+      keepRunningAfterClose: input.keepRunningAfterClose,
       onProgress: (localProgress) => progress(localProgress)
     })
   } catch (error) {

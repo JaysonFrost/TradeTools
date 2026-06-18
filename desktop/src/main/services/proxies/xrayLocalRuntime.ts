@@ -4,7 +4,7 @@ import { get as httpsGet } from 'node:https'
 import { arch, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, connect as netConnect } from 'node:net'
 
 type RuntimeProgress = {
@@ -31,6 +31,7 @@ export type LocalXrayRuntimeInput = {
   entryHost: string
   entryPort: number
   entryUuid: string
+  keepRunningAfterClose?: boolean
   onProgress?: (progress: RuntimeProgress) => void
 }
 
@@ -44,7 +45,7 @@ export type LocalXrayRuntimeResult = {
   diagnostics: LocalProxyDiagnostic[]
 }
 
-let localXrayProcess: ChildProcessWithoutNullStreams | undefined
+let localXrayProcess: ChildProcess | undefined
 
 const userAgent = 'TradeTools/0.1 Xray bootstrap'
 const xrayExecutableName = process.platform === 'win32' ? 'xray.exe' : 'xray'
@@ -508,6 +509,7 @@ const finishLocalXrayRuntime = async (
 
 export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promise<LocalXrayRuntimeResult> => {
   const progress = input.onProgress ?? (() => undefined)
+  const keepRunningAfterClose = input.keepRunningAfterClose === true
   const binaryPath = await ensureXrayCore(input.appDataDir, progress)
   const configDir = join(input.appDataDir, 'xray-runtime')
   const configPath = join(configDir, 'trade-chain.json')
@@ -538,16 +540,17 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
 
   progress({ step: 'local-xray', status: 'running', message: `Запускаем локальный HTTP proxy 127.0.0.1:${input.localPort}` })
   const child = spawn(binaryPath, ['run', '-config', configPath], {
+    detached: keepRunningAfterClose,
     windowsHide: true,
-    stdio: 'pipe'
+    stdio: keepRunningAfterClose ? 'ignore' : 'pipe'
   })
   let processLogs = ''
   let exited = false
 
-  child.stdout.on('data', (chunk: Buffer) => {
+  child.stdout?.on('data', (chunk: Buffer) => {
     processLogs = `${processLogs}${chunk.toString('utf8')}`.slice(-4_000)
   })
-  child.stderr.on('data', (chunk: Buffer) => {
+  child.stderr?.on('data', (chunk: Buffer) => {
     processLogs = `${processLogs}${chunk.toString('utf8')}`.slice(-4_000)
   })
   child.on('close', (code) => {
@@ -560,6 +563,7 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
     processLogs = `${processLogs}\n${error.message}`.slice(-4_000)
   })
   localXrayProcess = child
+  if (keepRunningAfterClose) child.unref()
 
   await waitForTcpPort(input.localPort, 8_000, () => exited ? processLogs.trim() || 'Локальный Xray завершился' : undefined)
   return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy готов: 127.0.0.1:${input.localPort}`)

@@ -29,6 +29,12 @@ select option {
   color: #f7f8f8;
 }
 
+.app-scroll {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
 .glass-panel {
   background: var(--panel);
   border: 1px solid var(--border);

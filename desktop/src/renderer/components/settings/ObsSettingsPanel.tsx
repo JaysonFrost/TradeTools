@@ -17,7 +17,7 @@ const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 p
 const sectionClass = 'min-w-0 border-t border-white/10 pt-4 first:border-t-0 first:pt-0'
 const sectionTitleClass = 'text-sm font-semibold text-zinc-100'
 const sectionHintClass = 'mt-1 text-xs leading-5 text-zinc-500'
-const checkCardClass = 'flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-zinc-300'
+const checkCardClass = 'flex min-w-0 items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-5 text-zinc-300'
 const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа. Это должно быть не меньше поля «Секунд до входа».'
 
@@ -252,10 +252,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         system: {
           launchAtLogin,
           alwaysOnTop,
-          keepProxyRunningAfterClose: settings?.system.keepProxyRunningAfterClose ?? false,
-          proxyPaymentNotificationsEnabled: settings?.system.proxyPaymentNotificationsEnabled ?? true,
-          clipSuccessNotificationsEnabled,
-          paymentReminderDaysBefore: settings?.system.paymentReminderDaysBefore ?? 5
+          clipSuccessNotificationsEnabled
         }
       })
       onSaved(updated)
@@ -498,7 +495,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Параметры видео</div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-4">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
             <label className="text-xs font-medium text-zinc-500">
               Кодирование
               <select
@@ -568,24 +565,24 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Поведение приложения</div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 accent-violet-500" checked={launchAtLogin} onChange={(event) => setLaunchAtLogin(event.target.checked)} type="checkbox" />
-              <span>
+              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={launchAtLogin} onChange={(event) => setLaunchAtLogin(event.target.checked)} type="checkbox" />
+              <span className="min-w-0">
                 <span className="flex items-center gap-2 font-semibold text-zinc-100"><Power size={16} />Автозапуск</span>
                 <span className="mt-1 block text-xs text-zinc-500">Стартовать вместе с Windows.</span>
               </span>
             </label>
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 accent-violet-500" checked={alwaysOnTop} onChange={(event) => setAlwaysOnTop(event.target.checked)} type="checkbox" />
-              <span>
+              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={alwaysOnTop} onChange={(event) => setAlwaysOnTop(event.target.checked)} type="checkbox" />
+              <span className="min-w-0">
                 <span className="flex items-center gap-2 font-semibold text-zinc-100"><Pin size={16} />Поверх окон</span>
                 <span className="mt-1 block text-xs text-zinc-500">Держать TradeTools выше других окон.</span>
               </span>
             </label>
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 accent-violet-500" checked={clipSuccessNotificationsEnabled} onChange={(event) => setClipSuccessNotificationsEnabled(event.target.checked)} type="checkbox" />
-              <span>
+              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={clipSuccessNotificationsEnabled} onChange={(event) => setClipSuccessNotificationsEnabled(event.target.checked)} type="checkbox" />
+              <span className="min-w-0">
                 <span className="flex items-center gap-2 font-semibold text-zinc-100"><Clapperboard size={16} />Готовая запись сделки</span>
                 <span className="mt-1 block text-xs text-zinc-500">Показывать системное уведомление после сохранения клипа.</span>
               </span>

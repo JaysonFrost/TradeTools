@@ -446,6 +446,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     path: '',
     text: ''
   })
+  const lastLogsRefreshAtRef = useRef(0)
   const [setupWizardMode, setSetupWizardMode] = useState<SetupWizardMode>()
   const [proxyVaultRuntime, setProxyVaultRuntime] = useState<ProxyVaultRuntimeState>({
     chainCheckProgress: [],
@@ -487,6 +488,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
       setAppLogs(nextLogs)
+      lastLogsRefreshAtRef.current = Date.now()
       setObs((current) => {
         if (current.connected || current.status === 'Отключено') return current
 
@@ -539,12 +541,14 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const refreshPendingClips = async () => {
     try {
       const api = getTradeToolsApi()
+      const now = Date.now()
+      const shouldRefreshLogs = now - lastLogsRefreshAtRef.current > 5_000
       const [pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade, nextLogs] = await Promise.all([
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus(),
-        api.logs.get()
+        shouldRefreshLogs ? api.logs.get() : Promise.resolve(undefined)
       ])
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
@@ -555,7 +559,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setWindowRecorder(nextWindowRecorder)
       setFreeRecording(nextFreeRecording)
       setTerminalTrade(nextTerminalTrade)
-      setAppLogs(nextLogs)
+      if (nextLogs) {
+        lastLogsRefreshAtRef.current = now
+        setAppLogs((current) => (
+          current.path === nextLogs.path && current.text === nextLogs.text ? current : nextLogs
+        ))
+      }
     } catch {
       // The initial load already surfaces Electron API errors; polling stays quiet.
     }
@@ -777,6 +786,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     try {
       const logs = await getTradeToolsApi().logs.get()
       setAppLogs(logs)
+      lastLogsRefreshAtRef.current = Date.now()
     } catch (error) {
       setClipMessage(error instanceof Error ? error.message : 'Не удалось прочитать лог')
     }
@@ -786,6 +796,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     try {
       const logs = await getTradeToolsApi().logs.get()
       setAppLogs(logs)
+      lastLogsRefreshAtRef.current = Date.now()
       await getTradeToolsApi().clipboard.writeText(logs.text)
       setClipMessage('Логи скопированы в буфер обмена')
     } catch (error) {
@@ -816,7 +827,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     } catch {
       // loadLocalState already surfaces Electron API errors.
     }
-    const interval = window.setInterval(() => void refreshPendingClips(), 1_000)
+    const interval = window.setInterval(() => void refreshPendingClips(), 2_000)
     return () => {
       window.clearInterval(interval)
       unsubscribeProxyCheck?.()

@@ -51,7 +51,7 @@ export const AppShell = () => {
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35 }}
-          className="min-h-0 flex-1 overflow-auto pr-1 lg:pr-2"
+          className="app-scroll min-h-0 flex-1 overflow-auto pr-1 lg:pr-2"
         >
           <Dashboard activePage={activePage} />
         </motion.div>
