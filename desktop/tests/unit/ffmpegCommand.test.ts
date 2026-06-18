@@ -79,13 +79,23 @@ describe('buildFfmpegTrimArgs', () => {
       '-pix_fmt',
       'nv12'
     ])
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording' })).toEqual([
+      '-c:v',
+      'h264_mf',
+      '-hw_encoding',
+      '1',
+      '-b:v',
+      '5M',
+      '-pix_fmt',
+      'nv12'
+    ])
     expect(buildH264VideoArgs({ platform: 'darwin', purpose: 'recording' })).toEqual([
       '-c:v',
       'h264_videotoolbox',
       '-realtime',
       '1',
       '-b:v',
-      '8M',
+      '5M',
       '-pix_fmt',
       'yuv420p'
     ])

@@ -31,7 +31,7 @@ const buildCpuH264VideoArgs = (purpose: H264VideoPurpose): string[] => [
 ]
 
 export const buildH264VideoArgs = ({ platform = process.platform, purpose, encoder = 'gpu' }: H264VideoArgsInput): string[] => {
-  const bitrate = purpose === 'recording' ? '8M' : '10M'
+  const bitrate = purpose === 'recording' ? '5M' : '10M'
 
   if (encoder === 'cpu') return buildCpuH264VideoArgs(purpose)
 

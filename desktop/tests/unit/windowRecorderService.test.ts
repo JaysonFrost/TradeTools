@@ -157,6 +157,18 @@ describe('windowRecorderService', () => {
     expect(serviceSource).not.toContain('appendFile(sessionPath')
   })
 
+  it('keeps the Chromium fallback lightweight by recording the desktop stream directly', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('createBrowserVideoStream')
+    expect(controllerSource).toContain('sampleFrameTimer')
+    expect(controllerSource).toContain('browserCaptureMaxFrameRate')
+    expect(controllerSource).toContain('browserCaptureMaxWidth')
+    expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
+    expect(controllerSource).not.toContain('canvas.captureStream')
+    expect(controllerSource).not.toContain('window.setInterval(drawFrame')
+  })
+
   it('filters built-in replay segments by the requested capture target', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
@@ -193,6 +205,14 @@ describe('windowRecorderService', () => {
     expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('if (targets.length > 1)'))
     expect(controllerSource).toContain('screenTargetsNeedSync')
     expect(controllerSource).toContain('!target.displayId')
+  })
+
+  it('caps native multi-screen background recording FPS to keep GPU recording usable', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('nativeScreenFrameRateCap')
+    expect(serviceSource).toContain('nativeRecordingFrameRate(settings, targets)')
+    expect(serviceSource).toContain('Math.min(settings.recording.frameRate, nativeScreenFrameRateCap)')
   })
 
   it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {

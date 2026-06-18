@@ -21,6 +21,18 @@ const checkCardClass = 'flex items-start gap-3 rounded-2xl border border-white/1
 const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа. Это должно быть не меньше поля «Секунд до входа».'
 
+const isDraftInput = (element: EventTarget | null): element is HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement => (
+  element instanceof HTMLInputElement || element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement
+)
+
+const numberOrUndefined = (value: string): number | undefined => {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+
+  const numericValue = Number(trimmed)
+  return Number.isFinite(numericValue) ? numericValue : undefined
+}
+
 const FieldHint = ({ text }: { text: string }) => (
   <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
     <CircleHelp size={13} />
@@ -60,6 +72,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [obsPassword, setObsPassword] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [editingDraft, setEditingDraft] = useState(false)
   const hydratedSettingsRef = useRef(false)
   const lastSavedSnapshotRef = useRef('')
 
@@ -113,6 +126,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   useEffect(() => {
     if (!settings) return
+    if (editingDraft && hydratedSettingsRef.current) return
+
     setRecordingMode(settings.recording.mode)
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
@@ -136,7 +151,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setObsPassword('')
     lastSavedSnapshotRef.current = buildSettingsSnapshotFromSettings(settings)
     hydratedSettingsRef.current = true
-  }, [settings])
+  }, [settings, editingDraft])
 
   const refreshWindowSources = async (options: { announce?: boolean } = {}) => {
     const announce = options.announce !== false
@@ -213,18 +228,18 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId,
           videoEncoder,
-          frameRate: Number(frameRate),
-          segmentSeconds: Number(segmentSeconds),
+          frameRate: numberOrUndefined(frameRate),
+          segmentSeconds: numberOrUndefined(segmentSeconds),
           systemAudioEnabled,
           microphoneEnabled
         },
         obs: {
           host,
-          port: Number(port)
+          port: numberOrUndefined(port)
         },
         clip: {
-          paddingBeforeSeconds: Number(paddingBefore),
-          paddingAfterSeconds: Number(paddingAfter),
+          paddingBeforeSeconds: numberOrUndefined(paddingBefore),
+          paddingAfterSeconds: numberOrUndefined(paddingAfter),
           replayBufferSeconds: replayBufferSecondsValue,
           replaySourceDir,
           outputDir
@@ -313,7 +328,17 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   }
 
   return (
-    <Card>
+    <Card
+      onFocusCapture={(event) => {
+        if (isDraftInput(event.target)) setEditingDraft(true)
+      }}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget
+        if (isDraftInput(nextTarget) && event.currentTarget.contains(nextTarget)) return
+        setEditingDraft(false)
+        void saveCurrentSettings()
+      }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Настройки записи</h2>

@@ -12,7 +12,7 @@ export type WindowRecorderControllerProps = {
   onSettingsChange?: (settings: AppSettings) => void
 }
 
-type FixedFrameRateStream = {
+type BrowserVideoStream = {
   stream: MediaStream
   stop: () => void
 }
@@ -28,9 +28,15 @@ type BrowserRecorderSession = {
   stream?: MediaStream
   systemAudioStream?: MediaStream
   microphoneStream?: MediaStream
-  fixedFrameRateStream?: FixedFrameRateStream
+  browserVideoStream?: BrowserVideoStream
   recordingStream?: RecordingStream
 }
+
+const browserCaptureMaxFrameRate = 24
+const browserCaptureMaxWidth = 2560
+const browserCaptureMaxHeight = 1440
+const browserVideoBitrate = 2_500_000
+const browserAudioBitrate = 128_000
 
 const chooseMimeType = (hasAudio: boolean): string => {
   const candidates = hasAudio
@@ -76,20 +82,25 @@ const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCapture
   !source
 )
 
-const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => ({
-  audio: false,
-  video: {
-    mandatory: {
-      chromeMediaSource: 'desktop',
-      chromeMediaSourceId: sourceId,
-      minFrameRate: frameRate,
-      maxFrameRate: frameRate,
-      maxWidth: 3840,
-      maxHeight: 2160
-    },
-    cursor: 'never'
-  } as unknown as MediaTrackConstraints
-})
+const browserCaptureFrameRate = (frameRate: number): number => Math.max(10, Math.min(browserCaptureMaxFrameRate, Math.trunc(frameRate)))
+
+const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => {
+  const captureFrameRate = browserCaptureFrameRate(frameRate)
+  return {
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource: 'desktop',
+        chromeMediaSourceId: sourceId,
+        minFrameRate: captureFrameRate,
+        maxFrameRate: captureFrameRate,
+        maxWidth: browserCaptureMaxWidth,
+        maxHeight: browserCaptureMaxHeight
+      },
+      cursor: 'never'
+    } as unknown as MediaTrackConstraints
+  }
+}
 
 const captureSystemAudioStream = async (): Promise<MediaStream> => {
   const systemStream = await navigator.mediaDevices.getDisplayMedia({
@@ -176,8 +187,6 @@ const createLocalStatus = (settings: AppSettings, message: string, active = fals
   message
 })
 
-const clampFrameRate = (frameRate: number): number => Math.max(10, Math.min(60, Math.trunc(frameRate)))
-
 const waitForVideoMetadata = async (video: HTMLVideoElement): Promise<void> => {
   if (video.readyState >= HTMLMediaElement.HAVE_METADATA && video.videoWidth > 0 && video.videoHeight > 0) return
 
@@ -193,16 +202,19 @@ const waitForVideoMetadata = async (video: HTMLVideoElement): Promise<void> => {
   })
 }
 
-const createFixedFrameRateStream = async (
+const createBrowserVideoStream = async (
   sourceStream: MediaStream,
-  frameRate: number,
   onLikelyBlackFrame?: () => void
-): Promise<FixedFrameRateStream> => {
+): Promise<BrowserVideoStream> => {
   const [track] = sourceStream.getVideoTracks()
   if (!track) throw new Error('Источник записи не вернул видеодорожку')
+  if (!onLikelyBlackFrame) {
+    return {
+      stream: sourceStream,
+      stop: () => undefined
+    }
+  }
 
-  const trackSettings = track.getSettings()
-  const targetFrameRate = clampFrameRate(frameRate)
   const video = document.createElement('video')
   video.muted = true
   video.playsInline = true
@@ -210,31 +222,17 @@ const createFixedFrameRateStream = async (
   await video.play()
   await waitForVideoMetadata(video)
 
-  const width = Math.max(1, Math.trunc(video.videoWidth || trackSettings.width || 1920))
-  const height = Math.max(1, Math.trunc(video.videoHeight || trackSettings.height || 1080))
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-
-  const context = canvas.getContext('2d', { alpha: false })
-  if (!context) throw new Error('Не удалось подготовить canvas для записи')
-
   const sampleCanvas = document.createElement('canvas')
   sampleCanvas.width = 32
   sampleCanvas.height = 18
   const sampleContext = sampleCanvas.getContext('2d', { alpha: false, willReadFrequently: true })
-  let lastSampleAtMs = 0
   let blackFrameStreak = 0
   let blackFrameReported = false
 
   const inspectFrame = () => {
-    if (!sampleContext || blackFrameReported || !onLikelyBlackFrame) return
+    if (!sampleContext || blackFrameReported || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
 
-    const nowMs = Date.now()
-    if (nowMs - lastSampleAtMs < 1_000) return
-    lastSampleAtMs = nowMs
-
-    sampleContext.drawImage(canvas, 0, 0, sampleCanvas.width, sampleCanvas.height)
+    sampleContext.drawImage(video, 0, 0, sampleCanvas.width, sampleCanvas.height)
     const pixels = sampleContext.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data
     let visiblePixels = 0
     for (let index = 0; index < pixels.length; index += 4) {
@@ -248,21 +246,13 @@ const createFixedFrameRateStream = async (
     }
   }
 
-  const drawFrame = () => {
-    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
-    context.drawImage(video, 0, 0, width, height)
-    inspectFrame()
-  }
-  drawFrame()
-
-  const timer = window.setInterval(drawFrame, Math.max(16, Math.round(1000 / targetFrameRate)))
-  const stream = canvas.captureStream(targetFrameRate)
+  inspectFrame()
+  const sampleFrameTimer = window.setInterval(inspectFrame, 1_000)
 
   return {
-    stream,
+    stream: sourceStream,
     stop: () => {
-      window.clearInterval(timer)
-      stream.getTracks().forEach((canvasTrack) => canvasTrack.stop())
+      window.clearInterval(sampleFrameTimer)
       video.pause()
       video.srcObject = null
     }
@@ -281,7 +271,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     const stopBrowserRecorder = (session: BrowserRecorderSession) => {
       if (session.sessionTimer !== undefined) window.clearTimeout(session.sessionTimer)
       if (session.recorder?.state === 'recording') session.recorder.stop()
-      session.fixedFrameRateStream?.stop()
+      session.browserVideoStream?.stop()
       session.recordingStream?.stop()
       session.stream?.getTracks().forEach((track) => track.stop())
       session.systemAudioStream?.getTracks().forEach((track) => track.stop())
@@ -347,7 +337,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
 
       try {
-        session.fixedFrameRateStream = await createFixedFrameRateStream(mediaStream, settings.recording.frameRate, source.type === 'window'
+        session.browserVideoStream = await createBrowserVideoStream(mediaStream, source.type === 'window'
           ? () => {
               const screenSource = sources.find((candidate) => candidate.type === 'screen')
               if (!screenSource || disposed) return
@@ -379,24 +369,24 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         stopBrowserRecorder(session)
         throw error
       }
-      if (disposed || !session.fixedFrameRateStream) {
+      if (disposed || !session.browserVideoStream) {
         stopBrowserRecorder(session)
         return
       }
 
-      session.recordingStream = createRecordingStream(session.fixedFrameRateStream.stream, [session.systemAudioStream, session.microphoneStream])
+      session.recordingStream = createRecordingStream(session.browserVideoStream.stream, [session.systemAudioStream, session.microphoneStream])
       const mimeType = chooseMimeType(hasAudioTracks(session.recordingStream.stream))
       const chunkDurationMs = Math.max(1, settings.recording.segmentSeconds) * 1000
 
       const startRecordingSession = () => {
-        if (disposed || !session.fixedFrameRateStream || !session.recordingStream) return
+        if (disposed || !session.browserVideoStream || !session.recordingStream) return
 
         const sessionId = `${source.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
         const chunkStartedAtMs = Date.now()
         const recorder = new MediaRecorder(session.recordingStream.stream, {
           ...(mimeType ? { mimeType } : {}),
-          videoBitsPerSecond: 6_000_000,
-          audioBitsPerSecond: 192_000
+          videoBitsPerSecond: browserVideoBitrate,
+          audioBitsPerSecond: browserAudioBitrate
         })
         session.recorder = recorder
         recorder.ondataavailable = (event) => {

@@ -119,8 +119,8 @@ describe('Dashboard layout', () => {
     expect(controllerSource).toContain('navigator.mediaDevices.getDisplayMedia')
     expect(controllerSource).toContain("navigator.mediaDevices.getUserMedia({ audio: true, video: false })")
     expect(controllerSource).toContain('new MediaStream')
-    expect(controllerSource).toContain('createFixedFrameRateStream')
-    expect(controllerSource).toContain('canvas.captureStream')
+    expect(controllerSource).toContain('createBrowserVideoStream')
+    expect(controllerSource).not.toContain('canvas.captureStream')
     expect(controllerSource).toContain('recording.appendSegment')
     expect(dashboardSource).toContain('<WindowRecorderController')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources'")
@@ -180,6 +180,15 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Настройки применены')
     expect(settingsPanelSource).not.toContain('Нажмите «Сохранить»')
     expect(settingsPanelSource).not.toContain("{saving ? 'Сохраняем...' : 'Сохранить'}")
+  })
+
+  it('does not overwrite a focused recording settings input while auto-save normalizes values', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+
+    expect(settingsPanelSource).toContain('editingDraft')
+    expect(settingsPanelSource).toContain('onFocusCapture')
+    expect(settingsPanelSource).toContain('onBlurCapture')
+    expect(settingsPanelSource).toContain('if (editingDraft && hydratedSettingsRef.current) return')
   })
 
   it('shows one recording status panel with background recording controls', async () => {

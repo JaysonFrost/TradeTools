@@ -194,6 +194,7 @@ const pollIntervalMs = 250
 const exportToleranceMs = 1_500
 const segmentStaleAfterMs = 8_000
 const nativeRecorderStartupGraceMs = 900
+const nativeScreenFrameRateCap = 30
 
 const sleep = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
@@ -217,6 +218,11 @@ const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GD
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const isMissingNativeWindowError = (value: string): boolean => /Can't find window|Error opening input file title=/i.test(value)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
+const nativeRecordingFrameRate = (settings: AppSettings, targets: NativeRecorderTarget[]): string => (
+  formatFrameRate(settings.recording.sourceType === 'screen' && targets.length > 0
+    ? Math.min(settings.recording.frameRate, nativeScreenFrameRateCap)
+    : settings.recording.frameRate)
+)
 const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
 const getErrorCode = (error: unknown): string => (
   typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
@@ -475,8 +481,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     ]
   }
 
-  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget): string[] => {
-    const frameRate = formatFrameRate(settings.recording.frameRate)
+  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget, targets: NativeRecorderTarget[]): string[] => {
+    const frameRate = nativeRecordingFrameRate(settings, targets)
     const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
 
     return [
@@ -601,7 +607,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       const listPath = join(segmentsDir, `${sessionId}.csv`)
       const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
       const processStartedAtMs = Date.now()
-      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target), {
+      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target, targets), {
         stdio: ['ignore', 'ignore', 'pipe'],
         windowsHide: true
       })
