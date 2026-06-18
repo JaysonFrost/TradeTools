@@ -17,6 +17,7 @@ import { type AppSettings, type CaptureTargetRef, type ProxyRecord, type Setting
 import { createSettingsStore } from './services/settings/settingsStore'
 import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
+import { resolveVatagaLayoutMatch } from './services/trades/vatagaLayoutResolver'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { defaultLocalProxyPort } from '../shared/defaults'
@@ -450,6 +451,18 @@ const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
   tigertrade: [/tiger/i, /тигр/i],
   metascalp: [/metascalp/i, /metatrader/i, /mt4/i, /mt5/i]
 }
+const unavailableScreenTargetIdPrefix = 'unavailable-screen:'
+
+const unavailableScreenTarget = (displayId: string): CaptureTargetRef => ({
+  id: `${unavailableScreenTargetIdPrefix}${displayId || 'unknown'}`,
+  name: 'Монитор сделки не записывается',
+  type: 'screen',
+  ...(displayId ? { displayId } : {})
+})
+
+const isUnavailableScreenTarget = (target?: CaptureTargetRef): boolean => (
+  Boolean(target?.id.startsWith(unavailableScreenTargetIdPrefix))
+)
 
 const windowContainsPoint = (source: WindowCaptureSource, point: { x: number, y: number }): boolean => {
   const bounds = source.bounds
@@ -467,6 +480,14 @@ const terminalSourceLog = (source: WindowCaptureSource) => ({
   displayId: source.displayId,
   bounds: source.bounds
 })
+
+const displayIdForBounds = (bounds: WindowBounds): string => {
+  try {
+    return String(electronScreen.getDisplayMatching(bounds).id)
+  } catch {
+    return ''
+  }
+}
 
 const selectTerminalSource = (
   event: TerminalPositionEvent,
@@ -1262,6 +1283,7 @@ app.whenReady().then(() => {
 
   const selectClipRenderTargets = (settings: AppSettings, preferredTarget?: CaptureTargetRef): Array<CaptureTargetRef | undefined> => {
     if (settings.recording.mode !== 'window') return [undefined]
+    if (isUnavailableScreenTarget(preferredTarget)) return []
     if (preferredTarget) return [preferredTarget]
 
     const targets = configuredCaptureTargets(settings)
@@ -1346,6 +1368,36 @@ app.whenReady().then(() => {
     }
 
     if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly) {
+      const vatagaLayoutMatch = event.source === 'vataga' ? resolveVatagaLayoutMatch(event.symbol) : undefined
+      if (vatagaLayoutMatch) {
+        const displayId = displayIdForBounds(vatagaLayoutMatch.bounds)
+        const layoutScreenTarget = targets.find((candidate) => (
+          candidate.type === 'screen' && Boolean(candidate.displayId) && candidate.displayId === displayId
+        ))
+
+        if (layoutScreenTarget) {
+          void appLog.info('recording', 'Vataga layout matched trade symbol to screen capture target', {
+            source: event.source,
+            symbol: event.symbol,
+            workspaceId: vatagaLayoutMatch.workspaceId,
+            tabTitle: vatagaLayoutMatch.tabTitle,
+            displayId,
+            captureTarget: layoutScreenTarget
+          })
+          return layoutScreenTarget
+        }
+
+        void appLog.warn('recording', 'Vataga layout matched trade symbol but display has no selected screen capture target', {
+          source: event.source,
+          symbol: event.symbol,
+          workspaceId: vatagaLayoutMatch.workspaceId,
+          tabTitle: vatagaLayoutMatch.tabTitle,
+          displayId,
+          captureTargets: targets
+        })
+        return unavailableScreenTarget(displayId)
+      }
+
       if (selection.candidates.length > 1) {
         void appLog.warn('recording', 'Terminal trade display monitor is ambiguous; saving selected screen targets', {
           source: event.source,
@@ -1433,6 +1485,18 @@ app.whenReady().then(() => {
   const queueClipForClosedTrade = async (trade: ClosedTrade): Promise<void> => {
     const settings = await settingsStore.load()
     const targets = selectClipRenderTargets(settings, trade.recordingTarget)
+    if (targets.length === 0 && isUnavailableScreenTarget(trade.recordingTarget)) {
+      const message = 'Монитор сделки найден в Vataga, но этот экран не выбран для записи. Выберите этот монитор в настройках записи или отключите режим только монитора сделки.'
+      void appLog.warn('clip-queue', 'Clip render skipped because resolved trade monitor is not recorded', {
+        tradeId: trade.id,
+        symbol: trade.symbol,
+        side: trade.side,
+        entryTimeMs: trade.entryTimeMs,
+        exitTimeMs: trade.exitTimeMs,
+        recordingTarget: trade.recordingTarget
+      })
+      throw new Error(message)
+    }
     await Promise.all(targets.map((target) => enqueueClipRender(
       target ? { ...trade, recordingTarget: target } : trade,
       { waitForCompletion: false, captureTarget: target }

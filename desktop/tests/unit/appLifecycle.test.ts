@@ -137,6 +137,29 @@ describe('main app lifecycle', () => {
     expect(source).toContain('Terminal trade display monitor is ambiguous; saving selected screen targets')
   })
 
+  it('uses the Vataga layout database before falling back on duplicate terminal windows', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const resolverSource = await readFile(resolve('src/main/services/trades/vatagaLayoutResolver.ts'), 'utf8')
+
+    expect(appSource).toContain('resolveVatagaLayoutMatch')
+    expect(appSource).toContain('Vataga layout matched trade symbol to screen capture target')
+    expect(resolverSource).toContain('e_sqlite3.dll')
+    expect(resolverSource).toContain('DllImport("e_sqlite3"')
+    expect(resolverSource).toContain('layout.db')
+    expect(resolverSource).toContain('Dockings')
+    expect(resolverSource).toContain('Tabs')
+    expect(resolverSource).toContain('Workspaces')
+  })
+
+  it('does not render extra selected screens when Vataga resolves an unrecorded monitor', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('unavailable-screen:')
+    expect(source).toContain('isUnavailableScreenTarget')
+    expect(source).toContain('Clip render skipped because resolved trade monitor is not recorded')
+    expect(source).toContain('throw new Error(message)')
+  })
+
   it('uses selected screen targets instead of skipping when trade display matching is unavailable', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const branch = source.slice(

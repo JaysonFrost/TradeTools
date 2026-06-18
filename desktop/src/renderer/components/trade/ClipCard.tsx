@@ -27,7 +27,6 @@ export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
   const [previewMessage, setPreviewMessage] = useState('')
   const [deleteMessage, setDeleteMessage] = useState('')
   const [manualMessage, setManualMessage] = useState('')
-  const sourceName = clip.captureTarget?.name
 
   useEffect(() => {
     setFileNameInput(clip.fileName)
@@ -136,11 +135,6 @@ export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="m-0 truncate text-base font-semibold">{clip.title}</h3>
-            {sourceName && (
-              <span className="max-w-40 shrink-0 truncate rounded-full border border-violet-400/30 bg-violet-500/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100" title={`Источник: ${sourceName}`}>
-                Источник: {sourceName}
-              </span>
-            )}
           </div>
           <p className="mono mt-2 truncate text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath}</p>
           <div className="mt-3">
