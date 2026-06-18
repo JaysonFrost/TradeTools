@@ -334,7 +334,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       captureTargets,
       saveTargetMode: normalizeRecordingSaveTargetMode(settings.recording?.saveTargetMode ?? defaults.recording.saveTargetMode),
       saveTargetId,
-      saveTradeDisplayOnly: settings.recording?.saveTradeDisplayOnly === true,
+      saveTradeDisplayOnly: false,
       videoEncoder: normalizeRecordingVideoEncoder(settings.recording?.videoEncoder ?? defaults.recording.videoEncoder),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),

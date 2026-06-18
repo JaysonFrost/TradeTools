@@ -371,7 +371,6 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         </div>
       </section>
       <section className="col-span-12 space-y-4">
-        <SystemSettingsPanel mode="video" settings={settings} onSaved={onSettingsSaved} />
         <ObsSettingsPanel settings={settings} onSaved={onSettingsSaved} />
       </section>
     </div>

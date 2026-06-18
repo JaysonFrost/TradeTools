@@ -112,66 +112,14 @@ describe('main app lifecycle', () => {
     expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
   })
 
-  it('routes screen-mode terminal trades to the selected monitor that owns the terminal window when Electron exposes display id', async () => {
+  it('does not try to guess the trade monitor in screen recording mode', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain("settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly")
-    expect(source).toContain('listWindowBounds')
-    expect(source).toContain('electronScreen.getDisplayMatching(bounds).id')
-    expect(source).toContain('listWindowProcessIds')
-    expect(source).toContain('event.processId')
-    expect(source).toContain('candidate.processId === event.processId')
-    expect(source).toContain('const matchingScreenTarget = targets.find')
-    expect(source).toContain("candidate.type === 'screen' && Boolean(candidate.displayId) && candidate.displayId === source.displayId")
-    expect(source).toContain('Terminal trade display matched screen capture target')
-    expect(source).toContain('Terminal trade window found but display has no selected screen capture target')
-  })
-
-  it('falls back to selected screen targets when multiple terminal windows share one process', async () => {
-    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
-
-    expect(source).toContain('GetWindowThreadProcessId')
-    expect(source).toContain('listWindowProcessIds(windowIds)')
-    expect(source).toContain('selectTerminalSource')
-    expect(source).toContain('selection.candidates.length > 1')
-    expect(source).toContain('Terminal trade display monitor is ambiguous; saving selected screen targets')
-  })
-
-  it('uses the Vataga layout database before falling back on duplicate terminal windows', async () => {
-    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
-    const resolverSource = await readFile(resolve('src/main/services/trades/vatagaLayoutResolver.ts'), 'utf8')
-
-    expect(appSource).toContain('resolveVatagaLayoutMatch')
-    expect(appSource).toContain('Vataga layout matched trade symbol to screen capture target')
-    expect(resolverSource).toContain('e_sqlite3.dll')
-    expect(resolverSource).toContain('DllImport("e_sqlite3"')
-    expect(resolverSource).toContain('layout.db')
-    expect(resolverSource).toContain('Dockings')
-    expect(resolverSource).toContain('Tabs')
-    expect(resolverSource).toContain('Workspaces')
-  })
-
-  it('does not render extra selected screens when Vataga resolves an unrecorded monitor', async () => {
-    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
-
-    expect(source).toContain('unavailable-screen:')
-    expect(source).toContain('isUnavailableScreenTarget')
-    expect(source).toContain('Clip render skipped because resolved trade monitor is not recorded')
-    expect(source).toContain('throw new Error(message)')
-  })
-
-  it('uses selected screen targets instead of skipping when trade display matching is unavailable', async () => {
-    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
-    const branch = source.slice(
-      source.indexOf("if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly)"),
-      source.indexOf("if (settings.recording.sourceType === 'screen') return undefined")
-    )
-
-    expect(branch).toContain('return undefined')
-    expect(branch).not.toContain('return screenFallbackTarget')
-    expect(source).not.toContain('tradeDisplayOnlyWithoutResolvedTarget')
-    expect(source).not.toContain('Clip render skipped because trade monitor was not resolved')
-    expect(source).not.toContain('saving selected screen target instead of all screens')
+    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).not.toContain('resolveVatagaLayoutMatch')
+    expect(source).not.toContain('saveTradeDisplayOnly')
+    expect(source).not.toContain('unavailable-screen:')
+    expect(source).not.toContain('Terminal trade display matched screen capture target')
   })
 
   it('updates built-in window recording targets when a terminal trade comes from another window', async () => {

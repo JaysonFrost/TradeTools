@@ -24,7 +24,8 @@ describe('Dashboard layout', () => {
     expect(source).not.toContain('Клипы остаются локально')
     expect(source).not.toContain('Пока нет локальных клипов')
     expect(source).not.toContain('BinanceFuturesSettingsPanel')
-    expect(source).toContain('mode="video"')
+    expect(source).toContain('<ObsSettingsPanel')
+    expect(source).not.toContain('<SystemSettingsPanel mode="video"')
     expect(source).not.toContain('ActiveTradeCard')
     expect(source).not.toContain('Пайплайн клипа')
   })
@@ -132,15 +133,42 @@ describe('Dashboard layout', () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('captureTargets')
-    expect(settingsPanelSource).toContain('saveTargetMode')
-    expect(settingsPanelSource).toContain('saveTargetId')
-    expect(settingsPanelSource).toContain('saveTradeDisplayOnly')
-    expect(settingsPanelSource).toContain('Только монитор сделки')
-    expect(settingsPanelSource).toContain('Все мониторы')
-    expect(settingsPanelSource).toContain('Выбранный монитор')
+    expect(settingsPanelSource).toContain("saveTargetMode: sourceType === 'screen' ? 'all' : 'selected'")
+    expect(settingsPanelSource).not.toContain('saveTradeDisplayOnly')
+    expect(settingsPanelSource).not.toContain('Только монитор сделки')
+    expect(settingsPanelSource).not.toContain('Все мониторы')
+    expect(settingsPanelSource).not.toContain('Выбранный монитор')
     expect(settingsPanelSource).toContain('Мониторы для записи')
+    expect(settingsPanelSource).toContain('Каждый выбранный монитор сохранится отдельным видео')
     expect(controllerSource).toContain('resolveRecordingTargets')
     expect(controllerSource).toContain('settings.recording.captureTargets')
+  })
+
+  it('renames video recording settings to recording settings', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+
+    expect(settingsPanelSource).toContain('Настройки записи')
+    expect(settingsPanelSource).not.toContain('Запись видео')
+  })
+
+  it('groups recording settings by source, presets, video, audio, folders and app behavior', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+
+    expect(settingsPanelSource).toContain('Источник записи')
+    expect(settingsPanelSource).toContain('Пресеты и длительность')
+    expect(settingsPanelSource).not.toContain('Пресеты клипа')
+    expect(settingsPanelSource).not.toContain('Длительность клипа')
+    expect(settingsPanelSource).toContain('Параметры видео')
+    expect(settingsPanelSource).toContain('Звук записи')
+    expect(settingsPanelSource).toContain('Папки и OBS')
+    expect(settingsPanelSource).toContain('Поведение приложения')
+    expect(settingsPanelSource).toContain('Готовая запись сделки')
+    expect(settingsPanelSource).toContain('clipSuccessNotificationsEnabled')
+    expect(settingsPanelSource).toContain('launchAtLogin')
+    expect(settingsPanelSource).toContain('alwaysOnTop')
+    expect(settingsPanelSource).not.toContain('Видео-уведомления')
+    expect(dashboardSource).not.toContain('<SystemSettingsPanel mode="video"')
   })
 
   it('auto-saves video settings and refreshes window sources every minute', async () => {
@@ -489,6 +517,7 @@ describe('Dashboard layout', () => {
 
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
+    const recordingSettingsSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
 
     expect(source).toContain('toggleLaunchAtLogin')
     expect(source).toContain('toggleAlwaysOnTop')
@@ -499,8 +528,10 @@ describe('Dashboard layout', () => {
     expect(source).toContain('void toggleLaunchAtLogin(event.target.checked)')
     expect(source).toContain('void toggleAlwaysOnTop(event.target.checked)')
     expect(source).toContain('void toggleKeepProxyRunningAfterClose(event.target.checked)')
-    expect(source).toContain('void toggleClipSuccessNotifications(event.target.checked)')
     expect(source).toContain('void toggleProxyPaymentNotifications(event.target.checked)')
+    expect(source).not.toContain('void toggleClipSuccessNotifications(event.target.checked)')
+    expect(recordingSettingsSource).toContain('clipSuccessNotificationsEnabled')
+    expect(recordingSettingsSource).toContain('Готовая запись сделки')
   })
 
   it('wires in-app updates through Electron and release metadata', async () => {

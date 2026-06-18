@@ -183,7 +183,7 @@ describe('settings', () => {
     expect(settings.recording.saveTargetId).toBe('screen:1')
   })
 
-  it('keeps the optional trade-display-only screen saving flag', () => {
+  it('ignores the legacy trade-display-only screen saving flag', () => {
     const settings = normalizeSettings({
       recording: {
         mode: 'window',
@@ -197,7 +197,7 @@ describe('settings', () => {
       }
     }, '/app-data')
 
-    expect(settings.recording.saveTradeDisplayOnly).toBe(true)
+    expect(settings.recording.saveTradeDisplayOnly).toBe(false)
   })
 
   it('drops legacy window ids that were mislabeled as screen capture targets', () => {
