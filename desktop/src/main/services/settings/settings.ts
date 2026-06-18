@@ -5,6 +5,7 @@ import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaul
 export type RecordingSourceType = 'window' | 'screen'
 export type RecordingSaveTargetMode = 'all' | 'selected'
 export type RecordingVideoEncoder = 'gpu' | 'cpu'
+export type RecordingResolutionPreset = 'native' | '1440p' | '1080p'
 
 export type CaptureTargetRef = {
   id: string
@@ -40,6 +41,7 @@ export type AppSettings = {
     saveTargetId: string
     saveTradeDisplayOnly: boolean
     videoEncoder: RecordingVideoEncoder
+    resolutionPreset: RecordingResolutionPreset
     frameRate: number
     segmentSeconds: number
     systemAudioEnabled: boolean
@@ -151,6 +153,9 @@ const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSet
 }
 const normalizeRecordingSaveTargetMode = (value: unknown): RecordingSaveTargetMode => value === 'selected' ? 'selected' : 'all'
 const normalizeRecordingVideoEncoder = (value: unknown): RecordingVideoEncoder => value === 'cpu' ? 'cpu' : 'gpu'
+const normalizeRecordingResolutionPreset = (value: unknown): RecordingResolutionPreset => (
+  value === 'native' || value === '1080p' ? value : '1440p'
+)
 const isCaptureTargetIdCompatible = (id: string, type: RecordingSourceType): boolean => (
   type === 'screen' ? id.startsWith('screen:') : !id.startsWith('screen:')
 )
@@ -264,6 +269,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     saveTargetId: '',
     saveTradeDisplayOnly: false,
     videoEncoder: 'gpu',
+    resolutionPreset: '1440p',
     frameRate: 30,
     segmentSeconds: 2,
     systemAudioEnabled: false,
@@ -336,6 +342,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       saveTargetId,
       saveTradeDisplayOnly: false,
       videoEncoder: normalizeRecordingVideoEncoder(settings.recording?.videoEncoder ?? defaults.recording.videoEncoder),
+      resolutionPreset: normalizeRecordingResolutionPreset(settings.recording?.resolutionPreset ?? defaults.recording.resolutionPreset),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
       systemAudioEnabled: settings.recording?.systemAudioEnabled === true,

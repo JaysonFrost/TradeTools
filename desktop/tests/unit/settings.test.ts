@@ -29,6 +29,7 @@ describe('settings', () => {
       saveTargetId: '',
       saveTradeDisplayOnly: false,
       videoEncoder: 'gpu',
+      resolutionPreset: '1440p',
       frameRate: 30,
       segmentSeconds: 2,
       systemAudioEnabled: false,
@@ -130,6 +131,7 @@ describe('settings', () => {
         frameRate: 999,
         segmentSeconds: 0,
         videoEncoder: 'cpu',
+        resolutionPreset: 'native',
         systemAudioEnabled: true,
         microphoneEnabled: false
       }
@@ -149,6 +151,7 @@ describe('settings', () => {
       saveTargetId: 'screen:1',
       saveTradeDisplayOnly: false,
       videoEncoder: 'cpu',
+      resolutionPreset: 'native',
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,

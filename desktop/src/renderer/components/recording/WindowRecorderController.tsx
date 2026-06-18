@@ -33,8 +33,6 @@ type BrowserRecorderSession = {
 }
 
 const browserCaptureMaxFrameRate = 24
-const browserCaptureMaxWidth = 2560
-const browserCaptureMaxHeight = 1440
 const browserVideoBitrate = 2_500_000
 const browserAudioBitrate = 128_000
 
@@ -83,9 +81,19 @@ const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCapture
 )
 
 const browserCaptureFrameRate = (frameRate: number): number => Math.max(10, Math.min(browserCaptureMaxFrameRate, Math.trunc(frameRate)))
+const browserCaptureResolution = (preset: AppSettings['recording']['resolutionPreset']): Partial<Record<'maxWidth' | 'maxHeight', number>> => {
+  if (preset === 'native') return {}
+  if (preset === '1080p') return { maxWidth: 1920, maxHeight: 1080 }
+  return { maxWidth: 2560, maxHeight: 1440 }
+}
 
-const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): MediaStreamConstraints => {
+const buildDesktopCaptureConstraints = (
+  sourceId: string,
+  frameRate: number,
+  resolutionPreset: AppSettings['recording']['resolutionPreset']
+): MediaStreamConstraints => {
   const captureFrameRate = browserCaptureFrameRate(frameRate)
+  const resolution = browserCaptureResolution(resolutionPreset)
   return {
     audio: false,
     video: {
@@ -94,8 +102,7 @@ const buildDesktopCaptureConstraints = (sourceId: string, frameRate: number): Me
         chromeMediaSourceId: sourceId,
         minFrameRate: captureFrameRate,
         maxFrameRate: captureFrameRate,
-        maxWidth: browserCaptureMaxWidth,
-        maxHeight: browserCaptureMaxHeight
+        ...resolution
       },
       cursor: 'never'
     } as unknown as MediaTrackConstraints
@@ -317,7 +324,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       browserRecorders.push(session)
 
       const mediaStream = await navigator.mediaDevices.getUserMedia(
-        buildDesktopCaptureConstraints(source.id, settings.recording.frameRate)
+        buildDesktopCaptureConstraints(source.id, settings.recording.frameRate, settings.recording.resolutionPreset)
       )
       session.stream = mediaStream
       try {
@@ -555,6 +562,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     settings?.recording.captureTargets.map((target) => `${target.id}:${target.name}:${target.type}`).join('|'),
     settings?.recording.saveTargetMode,
     settings?.recording.saveTargetId,
+    settings?.recording.resolutionPreset,
     settings?.recording.frameRate,
     settings?.recording.segmentSeconds,
     settings?.recording.systemAudioEnabled,

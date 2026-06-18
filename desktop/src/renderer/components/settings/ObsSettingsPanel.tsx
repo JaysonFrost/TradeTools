@@ -53,6 +53,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [windowSourceName, setWindowSourceName] = useState('')
   const [captureTargets, setCaptureTargets] = useState<AppSettings['recording']['captureTargets']>([])
   const [videoEncoder, setVideoEncoder] = useState<AppSettings['recording']['videoEncoder']>('gpu')
+  const [resolutionPreset, setResolutionPreset] = useState<AppSettings['recording']['resolutionPreset']>('1440p')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
@@ -83,6 +84,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     windowSourceName,
     captureTargets,
     videoEncoder,
+    resolutionPreset,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -107,6 +109,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     windowSourceName: nextSettings.recording.windowSourceName,
     captureTargets: nextSettings.recording.captureTargets,
     videoEncoder: nextSettings.recording.videoEncoder,
+    resolutionPreset: nextSettings.recording.resolutionPreset,
     frameRate: String(nextSettings.recording.frameRate),
     segmentSeconds: String(nextSettings.recording.segmentSeconds),
     systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
@@ -134,6 +137,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setWindowSourceName(settings.recording.windowSourceName)
     setCaptureTargets(settings.recording.captureTargets)
     setVideoEncoder(settings.recording.videoEncoder)
+    setResolutionPreset(settings.recording.resolutionPreset)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
@@ -228,6 +232,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId,
           videoEncoder,
+          resolutionPreset,
           frameRate: numberOrUndefined(frameRate),
           segmentSeconds: numberOrUndefined(segmentSeconds),
           systemAudioEnabled,
@@ -280,6 +285,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     windowSourceName,
     captureTargets,
     videoEncoder,
+    resolutionPreset,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -492,7 +498,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Параметры видео</div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 sm:grid-cols-4">
             <label className="text-xs font-medium text-zinc-500">
               Кодирование
               <select
@@ -502,6 +508,21 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               >
                 <option value="gpu">Видеокарта</option>
                 <option value="cpu">Процессор</option>
+              </select>
+            </label>
+            <label className="text-xs font-medium text-zinc-500">
+              Разрешение
+              <select
+                className={`${inputClass} appearance-none`}
+                value={resolutionPreset}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setResolutionPreset(value === 'native' || value === '1080p' ? value : '1440p')
+                }}
+              >
+                <option value="1440p">Оптимально 1440p</option>
+                <option value="native">Нативное</option>
+                <option value="1080p">Лёгкое 1080p</option>
               </select>
             </label>
             <label className="text-xs font-medium text-zinc-500">

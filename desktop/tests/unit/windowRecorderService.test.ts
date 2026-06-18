@@ -163,7 +163,6 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('createBrowserVideoStream')
     expect(controllerSource).toContain('sampleFrameTimer')
     expect(controllerSource).toContain('browserCaptureMaxFrameRate')
-    expect(controllerSource).toContain('browserCaptureMaxWidth')
     expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
     expect(controllerSource).not.toContain('canvas.captureStream')
     expect(controllerSource).not.toContain('window.setInterval(drawFrame')
