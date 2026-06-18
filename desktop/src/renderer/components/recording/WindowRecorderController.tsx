@@ -70,7 +70,6 @@ const resolveRecordingTargets = (sources: WindowCaptureSource[], settings: AppSe
 
   const selectedSource = resolveSource(sources, settings)
   if (selectedSource) return [selectedSource]
-  if (settings.recording.sourceType === 'screen') return sources.filter((candidate) => candidate.type === 'screen')
   return []
 }
 
@@ -448,6 +447,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
       const sources = await api.recording.listWindowSources()
       let targets = resolveRecordingTargets(sources, settings)
+      if (settings.recording.sourceType === 'screen' && settings.recording.captureTargets.length === 0) {
+        onStatusChange(createLocalStatus(settings, 'Выберите хотя бы один монитор в настройках записи.'))
+        return
+      }
+
       let source = targets[0] ?? resolveSource(sources, settings)
       if (isSavedWindowSourceMissing(settings, source)) {
         onStatusChange(createLocalStatus(settings, `Окно ${settings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`))
@@ -456,12 +460,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
 
       const screenTargetsNeedSync = settings.recording.sourceType === 'screen' && targets.length > 0 && (
-        settings.recording.captureTargets.length === 0 ||
         settings.recording.captureTargets.some((target) => target.type === 'screen' && !target.displayId)
       )
       if (screenTargetsNeedSync) {
         const firstScreen = targets[0]
-        onStatusChange(createLocalStatus(settings, `Автоматически выбрали экран: ${firstScreen.name}`))
+        onStatusChange(createLocalStatus(settings, `Обновляем данные монитора: ${firstScreen.name}`))
         const updated = await api.settings.update({
           recording: {
             ...settings.recording,

@@ -6,6 +6,14 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-18
+
+### Fixed
+
+- Removed the duplicate monitor selector from the auto-recording header; manual buffers and auto clips now use only the monitors selected in recording settings.
+- Made clip progress clearer while TradeTools waits for the configured seconds after trade exit.
+- Fixed terminal auto-recording creating extra videos for scale-ins and partial exits; one trade now creates one clip from the first entry to the final exit.
+
 ## [0.2.9] - 2026-06-15
 
 ### Fixed

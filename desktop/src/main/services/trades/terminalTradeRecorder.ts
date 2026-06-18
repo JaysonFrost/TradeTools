@@ -22,6 +22,7 @@ export type OpenTerminalTrade = Omit<ClosedTrade, 'status' | 'exitTimeMs'> & {
   positionId: string
   size?: number
   recordingTarget?: CaptureTargetRef
+  positionKeys: Set<string>
 }
 
 export type TerminalPositionEvent = {
@@ -565,6 +566,7 @@ export const createTerminalTradeWatcher = ({
   ]
 
   const activeTrades = new Map<string, OpenTerminalTrade>()
+  const positionTradeKeys = new Map<string, string>()
   const renderedTradeIds = new Set<string>()
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
@@ -618,6 +620,15 @@ export const createTerminalTradeWatcher = ({
 
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
+  const getTradeKey = (event: TerminalPositionEvent): string => {
+    if (event.source === 'tigertrade') return getPositionKey(event)
+
+    const sourceScope = event.source === 'vataga'
+      ? String(event.processId ?? 'process')
+      : event.positionId.split(':')[0] || 'connection'
+    return `${event.source}:${sourceScope}:${event.exchange}:${event.symbol}`.toUpperCase()
+  }
+
   const resolveTradeRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
     try {
       return await resolveRecordingTarget?.(event)
@@ -626,9 +637,15 @@ export const createTerminalTradeWatcher = ({
     }
   }
 
-  const createOpenTrade = (event: TerminalPositionEvent, positionKey: string, idSuffix = '', recordingTarget?: CaptureTargetRef): OpenTerminalTrade => ({
+  const createOpenTrade = (
+    event: TerminalPositionEvent,
+    tradeKey: string,
+    positionKey: string,
+    idSuffix = '',
+    recordingTarget?: CaptureTargetRef
+  ): OpenTerminalTrade => ({
     id: `${event.source}-${event.positionId}${idSuffix}`,
-    positionId: positionKey,
+    positionId: tradeKey,
     exchange: event.exchange,
     marketType: 'TERMINAL',
     symbol: event.symbol,
@@ -636,8 +653,19 @@ export const createTerminalTradeWatcher = ({
     status: 'open',
     entryTimeMs: event.eventTimeMs,
     size: event.size,
+    positionKeys: new Set([positionKey]),
     ...(recordingTarget ? { recordingTarget } : {})
   })
+
+  const registerOpenPosition = (tradeKey: string, openTrade: OpenTerminalTrade, positionKey: string) => {
+    openTrade.positionKeys.add(positionKey)
+    positionTradeKeys.set(positionKey, tradeKey)
+  }
+
+  const forgetOpenPositions = (openTrade: OpenTerminalTrade) => {
+    for (const positionKey of openTrade.positionKeys) positionTradeKeys.delete(positionKey)
+    openTrade.positionKeys.clear()
+  }
 
   const createClosedTradeClip = async (
     openTrade: OpenTerminalTrade,
@@ -698,27 +726,35 @@ export const createTerminalTradeWatcher = ({
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
+    const tradeKey = positionTradeKeys.get(positionKey) ?? getTradeKey(event)
     const eventClosesPosition = event.isClosed || (typeof event.size === 'number' && isNearlyZero(event.size))
 
     if (!eventClosesPosition) {
-      const openTrade = activeTrades.get(positionKey)
+      const openTrade = activeTrades.get(tradeKey)
       if (openTrade) {
         if (isPositionReversal(openTrade.size, event.size)) {
           try {
             const closedTrade = await closePositionTrade(openTrade, event, sourceName)
-            activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
+            forgetOpenPositions(openTrade)
+            const nextTrade = createOpenTrade(event, tradeKey, positionKey, '', await resolveTradeRecordingTarget(event))
+            activeTrades.set(tradeKey, nextTrade)
+            positionTradeKeys.set(positionKey, tradeKey)
             if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
           } catch (error) {
-            activeTrades.delete(positionKey)
+            forgetOpenPositions(openTrade)
+            activeTrades.delete(tradeKey)
             await protectActiveTrades()
             emitClipError(event, sourceName, error)
             return
           }
         } else {
+          registerOpenPosition(tradeKey, openTrade, positionKey)
           if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
         }
       } else {
-        activeTrades.set(positionKey, createOpenTrade(event, positionKey, '', await resolveTradeRecordingTarget(event)))
+        const nextTrade = createOpenTrade(event, tradeKey, positionKey, '', await resolveTradeRecordingTarget(event))
+        activeTrades.set(tradeKey, nextTrade)
+        positionTradeKeys.set(positionKey, tradeKey)
       }
 
       await ensureVideoRecordingReady().catch(() => false)
@@ -732,16 +768,29 @@ export const createTerminalTradeWatcher = ({
       return
     }
 
-    const openTrade = activeTrades.get(positionKey)
+    const openTrade = activeTrades.get(tradeKey)
     if (!openTrade) return
+
+    openTrade.positionKeys.delete(positionKey)
+    positionTradeKeys.delete(positionKey)
+    if (openTrade.positionKeys.size > 0) {
+      await protectActiveTrades()
+      emit({
+        source: event.source,
+        message: `${sourceName}: ${event.symbol} частично закрыта, продолжаем запись`,
+        lastEventAtMs: event.eventTimeMs,
+        lastError: undefined
+      })
+      return
+    }
 
     try {
       const closedTrade = await closePositionTrade(openTrade, event, sourceName)
-      activeTrades.delete(positionKey)
+      activeTrades.delete(tradeKey)
       await protectActiveTrades()
       if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
     } catch (error) {
-      activeTrades.delete(positionKey)
+      activeTrades.delete(tradeKey)
       await protectActiveTrades()
       emitClipError(event, sourceName, error)
     }
@@ -895,6 +944,7 @@ export const createTerminalTradeWatcher = ({
       if (timer) clearInterval(timer)
       timer = undefined
       activeTrades.clear()
+      positionTradeKeys.clear()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       protectSince()

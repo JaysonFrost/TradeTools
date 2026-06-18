@@ -265,6 +265,121 @@ describe('terminalTradeRecorder', () => {
     }
   })
 
+  it('records Vataga scale-ins and partial exits as one trade clip', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-vataga-scale-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'Vataga', 'Vataga.terminal', 'Logs')
+    const logPath = join(logsDir, 'log-20260615.clef')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    const finalExitTimeMs = Date.parse('2026-06-15T10:03:00.000Z')
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().message).toContain('Vataga')
+      })
+      await sleep(50)
+      await appendFile(logPath, [
+        JSON.stringify({
+          '@t': '2026-06-15T10:00:00.000Z',
+          '@mt': 'Position changed.',
+          Type: 'Trading',
+          ExchangeType: 'Binance',
+          PositionID: 'entry-1',
+          SymbolTitle: 'Binance/BTCUSDT',
+          IsClosed: false,
+          PositionQuantity: 1,
+          TradeTime: '2026-06-15T10:00:00.000',
+          TradeSide: 'Buy',
+          ProcessId: 39336
+        }),
+        JSON.stringify({
+          '@t': '2026-06-15T10:01:00.000Z',
+          '@mt': 'Position changed.',
+          Type: 'Trading',
+          ExchangeType: 'Binance',
+          PositionID: 'entry-2',
+          SymbolTitle: 'Binance/BTCUSDT',
+          IsClosed: false,
+          PositionQuantity: 1,
+          TradeTime: '2026-06-15T10:01:00.000',
+          TradeSide: 'Buy',
+          ProcessId: 39336
+        }),
+        JSON.stringify({
+          '@t': '2026-06-15T10:02:00.000Z',
+          '@mt': 'Position changed.',
+          Type: 'Trading',
+          ExchangeType: 'Binance',
+          PositionID: 'entry-1',
+          SymbolTitle: 'Binance/BTCUSDT',
+          IsClosed: true,
+          PositionQuantity: 0,
+          TradeTime: '2026-06-15T10:02:00.000',
+          TradeSide: 'Sell',
+          ProcessId: 39336
+        }),
+        JSON.stringify({
+          '@t': '2026-06-15T10:03:00.000Z',
+          '@mt': 'Position changed.',
+          Type: 'Trading',
+          ExchangeType: 'Binance',
+          PositionID: 'entry-2',
+          SymbolTitle: 'Binance/BTCUSDT',
+          IsClosed: true,
+          PositionQuantity: 0,
+          TradeTime: '2026-06-15T10:03:00.000',
+          TradeSide: 'Sell',
+          ProcessId: 39336
+        })
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().lastEventAtMs).toBe(finalExitTimeMs)
+      })
+
+      expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        exchange: 'BINANCE',
+        marketType: 'TERMINAL',
+        symbol: 'BTCUSDT',
+        side: 'LONG',
+        status: 'closed',
+        entryTimeMs: Date.parse('2026-06-15T10:00:00.000Z'),
+        exitTimeMs: finalExitTimeMs
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('clips a TigerTrade reversal as one closed trade and one new trade', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')

@@ -104,12 +104,15 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('selectClipRenderTargets')
-    expect(source).toContain("settings.recording.saveTargetMode === 'all'")
+    expect(source).not.toContain("settings.recording.sourceType === 'screen' && settings.recording.saveTargetMode === 'all'")
+    expect(source).toContain('const screenTargets = targets.filter((target) => target.type === \'screen\')')
+    expect(source).toContain('return screenTargets')
     expect(source).toContain('captureTarget: target')
     expect(source).toContain('recordingTarget: target')
     expect(source).toContain('queueClipForClosedTrade')
     expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
     expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).not.toContain('captureTargetId')
   })
 
   it('does not try to guess the trade monitor in screen recording mode', async () => {
@@ -161,6 +164,16 @@ describe('main app lifecycle', () => {
     expect(source).toContain("appLog.error('clip-queue', 'Clip render failed'")
     expect(source).toContain("ipcMain.handle('logs:get'")
     expect(source).toContain("ipcMain.handle('logs:show-file'")
+  })
+
+  it('explains long after-exit recording waits in the clip progress status', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('paddingAfterSeconds?: number')
+    expect(source).toContain('paddingAfterSeconds: settings.clip.paddingAfterSeconds')
+    expect(source).toContain('afterExitWaitSuffix')
+    expect(source).toContain('После выхода записываем ещё')
+    expect(source).toContain('Секунд после выхода')
   })
 
   it('reports live clip processing progress instead of leaving the UI parked at 35 percent', async () => {

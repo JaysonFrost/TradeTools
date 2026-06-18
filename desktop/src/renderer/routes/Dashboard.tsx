@@ -43,7 +43,7 @@ type VideoPageProps = {
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
-  onCreateBuffer: (captureTargetId?: string) => void
+  onCreateBuffer: () => void
   onCancelClipRender: (jobId?: string) => void
   onClearQueue: () => void
   onDeleteQueueFiles: () => void
@@ -124,11 +124,9 @@ const RecordingStatusPanel = ({
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
-  onCreateBuffer: (captureTargetId?: string) => void
+  onCreateBuffer: () => void
 }) => {
-  const [manualBufferTargetId, setManualBufferTargetId] = useState('')
   const isWindowMode = settings?.recording.mode === 'window'
-  const manualBufferTargets = settings?.recording.mode === 'window' ? settings.recording.captureTargets : []
   const targetSeconds = Math.max(1, Math.round(settings?.clip.replayBufferSeconds ?? 1))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
@@ -186,17 +184,7 @@ const RecordingStatusPanel = ({
                 <Play size={16} className="mr-2" />Включить фоновую запись
               </button>
             )}
-            {manualBufferTargets.length > 1 && (
-              <select
-                className="min-h-10 cursor-pointer rounded-2xl border border-white/10 bg-black/20 px-3 text-sm text-zinc-100 outline-none"
-                value={manualBufferTargetId}
-                onChange={(event) => setManualBufferTargetId(event.target.value)}
-              >
-                <option value="">Все мониторы</option>
-                {manualBufferTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
-              </select>
-            )}
-            <button className={`${buttonBase} border-violet-400/30 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25`} onClick={() => onCreateBuffer(manualBufferTargetId || undefined)} disabled={!settings || !backgroundRecordingEnabled} type="button">
+            <button className={`${buttonBase} border-violet-400/30 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25`} onClick={onCreateBuffer} disabled={!settings || !backgroundRecordingEnabled} type="button">
               <Video size={16} className="mr-2" />Сохранить последний буфер
             </button>
           </div>
@@ -616,7 +604,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
-  const createBuffer = async (captureTargetId?: string) => {
+  const createBuffer = async () => {
     const startedAtMs = Date.now()
     setLocalClipProcessing({
       active: true,
@@ -633,7 +621,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     )
     try {
       const api = getTradeToolsApi()
-      const createdClips = await api.clips.createBuffer({ captureTargetId })
+      const createdClips = await api.clips.createBuffer()
       const firstClip = createdClips[0]
       setLocalClipProcessing({
         active: true,
@@ -878,7 +866,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clipProcessing={activeClipProcessing}
           onBackgroundRecordingStart={() => void startBackgroundRecording()}
           onBackgroundRecordingStop={() => void stopBackgroundRecording()}
-          onCreateBuffer={(captureTargetId) => void createBuffer(captureTargetId)}
+          onCreateBuffer={() => void createBuffer()}
           onCancelClipRender={(jobId) => void cancelClipRender(jobId)}
           onClearQueue={() => void clearQueue()}
           onDeleteQueueFiles={() => void deleteQueueFiles()}

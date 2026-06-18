@@ -215,8 +215,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       const nextCaptureTargets = sourceType === 'screen'
         ? captureTargets.filter((target) => target.type === 'screen')
         : selectedCaptureTarget ? [selectedCaptureTarget] : captureTargets.filter((target) => target.type === 'window')
+      const firstCaptureTarget = nextCaptureTargets[0]
       const saveTargetId = sourceType === 'screen'
-        ? nextCaptureTargets[0]?.id ?? ''
+        ? firstCaptureTarget?.id ?? ''
         : selectedCaptureTarget?.id ?? nextCaptureTargets[0]?.id ?? ''
       const replayBufferSecondsValue = recordingMode === 'window'
         ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
@@ -226,8 +227,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         recording: {
           mode: recordingMode,
           sourceType,
-          windowSourceId,
-          windowSourceName: selectedSource?.name ?? windowSourceName,
+          windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : windowSourceId,
+          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
           captureTargets: nextCaptureTargets,
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId,

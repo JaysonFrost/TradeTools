@@ -134,6 +134,9 @@ describe('Dashboard layout', () => {
 
     expect(settingsPanelSource).toContain('captureTargets')
     expect(settingsPanelSource).toContain("saveTargetMode: sourceType === 'screen' ? 'all' : 'selected'")
+    expect(settingsPanelSource).toContain('const firstCaptureTarget = nextCaptureTargets[0]')
+    expect(settingsPanelSource).toContain("windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : windowSourceId")
+    expect(settingsPanelSource).toContain("windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName")
     expect(settingsPanelSource).not.toContain('saveTradeDisplayOnly')
     expect(settingsPanelSource).not.toContain('Только монитор сделки')
     expect(settingsPanelSource).not.toContain('Все мониторы')
@@ -245,13 +248,17 @@ describe('Dashboard layout', () => {
 
     expect(dashboardSource).toContain('Сохранить последний буфер')
     expect(dashboardSource).not.toContain('Создать тестовый клип')
-    expect(dashboardSource).toContain('manualBufferTargetId')
+    expect(dashboardSource).not.toContain('manualBufferTargetId')
+    expect(dashboardSource).not.toContain('captureTargetId')
+    expect(dashboardSource).toContain('api.clips.createBuffer()')
     expect(dashboardSource).toContain('clips.createBuffer')
     expect(dashboardSource).toContain('clips.cancelRender')
     expect(dashboardSource).toContain('Отменить')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:create-buffer'")
+    expect(preloadSource).not.toContain('captureTargetId')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:cancel-render'")
     expect(appSource).toContain("ipcMain.handle('clips:create-buffer'")
+    expect(appSource).not.toContain('captureTargetId')
     expect(appSource).toContain("ipcMain.handle('clips:cancel-render'")
   })
 
@@ -264,7 +271,8 @@ describe('Dashboard layout', () => {
 
     expect(recordingPanelSource).toContain('Сохранить последний буфер')
     expect(recordingPanelSource).toContain('onCreateBuffer')
-    expect(recordingPanelSource).toContain('manualBufferTargetId')
+    expect(recordingPanelSource).not.toContain('manualBufferTargetId')
+    expect(recordingPanelSource).not.toContain('Все мониторы')
     expect(recordingPanelSource.indexOf('Сохранить последний буфер')).toBeGreaterThan(recordingPanelSource.indexOf('Остановить фоновую запись'))
     expect(queueSectionSource).not.toContain('Сохранить последний буфер')
   })

@@ -932,6 +932,7 @@ app.whenReady().then(() => {
     title: string
     queuedAtMs: number
     protectedSinceMs: number
+    paddingAfterSeconds?: number
     abortController: AbortController
     cancelled: boolean
     resolve?: (clip: ClipQueueItem) => void
@@ -1016,10 +1017,16 @@ app.whenReady().then(() => {
       : clipProcessingStatus.progressPercent
     const queueSuffix = queuedCount > 0 ? ` В очереди ещё ${queuedCount}.` : ''
     const elapsedSuffix = elapsedSeconds >= 5 && dynamicProgress < 95 ? ` Идёт ${elapsedSeconds}с.` : ''
+    const afterExitWaitSeconds = activeClipRenderJob?.trade && activeClipRenderJob.paddingAfterSeconds
+      ? Math.ceil((activeClipRenderJob.trade.exitTimeMs + activeClipRenderJob.paddingAfterSeconds * 1000 - Date.now()) / 1000)
+      : 0
+    const afterExitWaitSuffix = afterExitWaitSeconds > 0
+      ? ` После выхода записываем ещё ${afterExitWaitSeconds}с: так выставлено в настройке "Секунд после выхода".`
+      : ''
 
     return {
       ...clipProcessingStatus,
-      message: `${clipProcessingStatus.message}${queueSuffix}${elapsedSuffix}`,
+      message: `${clipProcessingStatus.message}${afterExitWaitSuffix}${queueSuffix}${elapsedSuffix}`,
       progressPercent: dynamicProgress,
       queuedCount,
       activeJobId: activeClipRenderJob?.id,
@@ -1150,6 +1157,7 @@ app.whenReady().then(() => {
       title,
       queuedAtMs,
       protectedSinceMs,
+      paddingAfterSeconds: settings.clip.paddingAfterSeconds,
       captureTarget: options.captureTarget,
       abortController: new AbortController(),
       cancelled: false,
@@ -1266,9 +1274,9 @@ app.whenReady().then(() => {
     if (preferredTarget) return [preferredTarget]
 
     const targets = configuredCaptureTargets(settings)
-    if (settings.recording.sourceType === 'screen' && settings.recording.saveTargetMode === 'all') {
+    if (settings.recording.sourceType === 'screen') {
       const screenTargets = targets.filter((target) => target.type === 'screen')
-      return screenTargets.length > 0 ? screenTargets : [undefined]
+      return screenTargets
     }
 
     if (settings.recording.saveTargetMode === 'selected' && settings.recording.saveTargetId) {
@@ -1278,10 +1286,12 @@ app.whenReady().then(() => {
     return [targets[0]]
   }
 
-  const selectManualBufferTargets = (settings: AppSettings, captureTargetId?: string): Array<CaptureTargetRef | undefined> => {
+  const selectManualBufferTargets = (settings: AppSettings): Array<CaptureTargetRef | undefined> => {
     const targets = selectClipRenderTargets(settings)
-    if (!captureTargetId) return targets
-    return [configuredCaptureTargets(settings).find((target) => target.id === captureTargetId) ?? targets[0]]
+    if (settings.recording.mode === 'window' && settings.recording.sourceType === 'screen' && targets.length === 0) {
+      throw new Error('Выберите хотя бы один монитор в настройках записи.')
+    }
+    return targets
   }
 
   let lastObsReplayEnsureAtMs = 0
@@ -1762,10 +1772,10 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())
-  ipcMain.handle('clips:create-buffer', async (_event, input?: { captureTargetId?: string }) => {
+  ipcMain.handle('clips:create-buffer', async () => {
     const settings = await settingsStore.load()
     const requestedAtMs = Date.now()
-    const targets = selectManualBufferTargets(settings, asString(input?.captureTargetId))
+    const targets = selectManualBufferTargets(settings)
     const clips = await Promise.all(targets.map((target) => enqueueManualBufferRender({
       waitForCompletion: true,
       requestedAtMs,
