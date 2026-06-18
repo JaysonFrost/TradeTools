@@ -13,6 +13,7 @@ export type WindowCaptureSource = {
   name: string
   displayId: string
   type: AppSettings['recording']['sourceType']
+  processId?: number
 }
 
 export type ScreenCaptureBounds = {

@@ -38,6 +38,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [captureTargets, setCaptureTargets] = useState<AppSettings['recording']['captureTargets']>([])
   const [saveTargetMode, setSaveTargetMode] = useState<AppSettings['recording']['saveTargetMode']>('all')
   const [saveTargetId, setSaveTargetId] = useState('')
+  const [saveTradeDisplayOnly, setSaveTradeDisplayOnly] = useState(false)
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
@@ -65,6 +66,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     captureTargets,
     saveTargetMode,
     saveTargetId,
+    saveTradeDisplayOnly,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -87,6 +89,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     captureTargets: nextSettings.recording.captureTargets,
     saveTargetMode: nextSettings.recording.saveTargetMode,
     saveTargetId: nextSettings.recording.saveTargetId,
+    saveTradeDisplayOnly: nextSettings.recording.saveTradeDisplayOnly,
     frameRate: String(nextSettings.recording.frameRate),
     segmentSeconds: String(nextSettings.recording.segmentSeconds),
     systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
@@ -110,6 +113,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setCaptureTargets(settings.recording.captureTargets)
     setSaveTargetMode(settings.recording.saveTargetMode)
     setSaveTargetId(settings.recording.saveTargetId)
+    setSaveTradeDisplayOnly(settings.recording.saveTradeDisplayOnly)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
@@ -203,6 +207,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           captureTargets: nextCaptureTargets,
           saveTargetMode,
           saveTargetId,
+          saveTradeDisplayOnly,
           frameRate: Number(frameRate),
           segmentSeconds: Number(segmentSeconds),
           systemAudioEnabled,
@@ -248,6 +253,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     captureTargets,
     saveTargetMode,
     saveTargetId,
+    saveTradeDisplayOnly,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -453,6 +459,17 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                           <option key={target.id} value={target.id}>{target.name}</option>
                         ))}
                       </select>
+                    )}
+                    {saveTargetMode === 'all' && (
+                      <label className="mt-2 flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-zinc-200">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-violet-500"
+                          checked={saveTradeDisplayOnly}
+                          onChange={(event) => setSaveTradeDisplayOnly(event.target.checked)}
+                        />
+                        Только монитор сделки
+                      </label>
                     )}
                   </div>
                 </div>

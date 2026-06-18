@@ -66,6 +66,20 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('clips:delete-file'")
   })
 
+  it('opens the clip output folder from the review queue header', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const queueSectionSource = dashboardSource.slice(dashboardSource.indexOf('Очередь проверки'))
+
+    expect(queueSectionSource).toContain('Открыть папку с видео')
+    expect(queueSectionSource).toContain('onOpenClipFolder')
+    expect(dashboardSource).toContain('clips.openOutputFolder()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('clips:open-output-folder'")
+    expect(appSource).toContain("ipcMain.handle('clips:open-output-folder'")
+    expect(appSource).toContain('settings.clip.outputDir')
+  })
+
   it('supports built-in terminal window recording without requiring OBS', async () => {
     const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
@@ -116,6 +130,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('captureTargets')
     expect(settingsPanelSource).toContain('saveTargetMode')
     expect(settingsPanelSource).toContain('saveTargetId')
+    expect(settingsPanelSource).toContain('saveTradeDisplayOnly')
+    expect(settingsPanelSource).toContain('Только монитор сделки')
     expect(settingsPanelSource).toContain('Все мониторы')
     expect(settingsPanelSource).toContain('Выбранный монитор')
     expect(settingsPanelSource).toContain('Мониторы для записи')
@@ -210,6 +226,14 @@ describe('Dashboard layout', () => {
     expect(recordingPanelSource).toContain('manualBufferTargetId')
     expect(recordingPanelSource.indexOf('Сохранить последний буфер')).toBeGreaterThan(recordingPanelSource.indexOf('Остановить фоновую запись'))
     expect(queueSectionSource).not.toContain('Сохранить последний буфер')
+  })
+
+  it('keeps the clip queue to about four visible items with scrolling for the rest', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const queueSectionSource = dashboardSource.slice(dashboardSource.indexOf('Очередь проверки'))
+
+    expect(queueSectionSource).toContain('max-h-[560px]')
+    expect(queueSectionSource).toContain('overflow-y-auto')
   })
 
   it('makes free recording finish immediately instead of pausing first', async () => {

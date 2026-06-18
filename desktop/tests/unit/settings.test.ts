@@ -27,6 +27,7 @@ describe('settings', () => {
       captureTargets: [],
       saveTargetMode: 'all',
       saveTargetId: '',
+      saveTradeDisplayOnly: false,
       frameRate: 30,
       segmentSeconds: 2,
       systemAudioEnabled: false,
@@ -142,6 +143,7 @@ describe('settings', () => {
       }],
       saveTargetMode: 'all',
       saveTargetId: 'screen:1',
+      saveTradeDisplayOnly: false,
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,
@@ -174,6 +176,23 @@ describe('settings', () => {
     }])
     expect(settings.recording.saveTargetMode).toBe('selected')
     expect(settings.recording.saveTargetId).toBe('screen:1')
+  })
+
+  it('keeps the optional trade-display-only screen saving flag', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'screen',
+        captureTargets: [
+          { id: 'screen:1:0', name: 'Экран 1', type: 'screen', displayId: '1453013278' },
+          { id: 'screen:2:0', name: 'Экран 2', type: 'screen', displayId: '2725992212' }
+        ],
+        saveTargetMode: 'all',
+        saveTradeDisplayOnly: true
+      }
+    }, '/app-data')
+
+    expect(settings.recording.saveTradeDisplayOnly).toBe(true)
   })
 
   it('drops legacy window ids that were mislabeled as screen capture targets', () => {

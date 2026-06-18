@@ -208,6 +208,9 @@ const normalizeClipVideoFileName = (value: string): string => {
 }
 
 const minimumUsableFrameRate = 12
+const minimumOutputDurationFloorSeconds = 0.05
+const minimumDurationShortfallToleranceSeconds = 0.25
+const maximumDurationShortfallToleranceSeconds = 2
 
 const usableTargetFrameRate = (details: VideoDetails): number | undefined => {
   const frameRate = details.averageFrameRate ?? details.nominalFrameRate
@@ -220,6 +223,14 @@ const assertUsableFrameRate = (details: VideoDetails, sourceLabel: string): void
   if (!frameRate || frameRate >= minimumUsableFrameRate) return
 
   throw new Error(`${sourceLabel} содержит только ${frameRate.toFixed(1)} fps. TradeTools не может восстановить кадры, которых нет в исходной записи. Проверьте в OBS: Settings > Video > Common FPS Values, Output > Encoder overload, Game/Display Capture и Replay Buffer output.`)
+}
+
+const minimumAcceptableOutputDuration = (trimDurationSeconds: number): number => {
+  const toleranceSeconds = Math.min(
+    maximumDurationShortfallToleranceSeconds,
+    Math.max(minimumDurationShortfallToleranceSeconds, trimDurationSeconds * 0.1)
+  )
+  return Math.max(Math.min(minimumOutputDurationFloorSeconds, trimDurationSeconds * 0.5), trimDurationSeconds - toleranceSeconds)
 }
 
 const createAbortError = (): Error => new Error('Сохранение клипа отменено')
@@ -375,7 +386,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       outputDetails = await getVideoDetails(temporaryVideoPath)
       assertUsableFrameRate(outputDetails, 'Готовый клип')
       const outputDurationSeconds = outputDetails.durationSeconds
-      if (outputDurationSeconds < Math.max(1, trim.durationSeconds - 2)) {
+      if (outputDurationSeconds < minimumAcceptableOutputDuration(trim.durationSeconds)) {
         throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
       }
       await rename(temporaryVideoPath, paths.videoPath)

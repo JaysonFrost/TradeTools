@@ -33,6 +33,7 @@ export type TerminalPositionEvent = {
   isClosed: boolean
   eventTimeMs: number
   size?: number
+  processId?: number
 }
 
 export type VatagaPositionEvent = TerminalPositionEvent & {
@@ -222,6 +223,11 @@ const normalizeVatagaSide = (quantity: unknown, tradeSide: unknown): string => {
   return 'TRADE'
 }
 
+const normalizeProcessId = (value: unknown): number | undefined => {
+  const processId = Number(value)
+  return Number.isInteger(processId) && processId > 0 ? processId : undefined
+}
+
 export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | undefined => {
   let payload: Record<string, unknown>
   try {
@@ -239,6 +245,7 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
   const eventTimeMs = parseVatagaTime(payload.TradeTime) || parseVatagaTime(payload['@t'])
   if (!eventTimeMs) return undefined
   const size = parseNumericValue(payload.PositionQuantity)
+  const processId = normalizeProcessId(payload.ProcessId)
 
   return {
     source: 'vataga',
@@ -248,7 +255,8 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
     side: normalizeVatagaSide(size, payload.TradeSide),
     isClosed: payload.IsClosed === true,
     eventTimeMs,
-    size: Number.isFinite(size) ? size : undefined
+    size: Number.isFinite(size) ? size : undefined,
+    ...(processId ? { processId } : {})
   }
 }
 

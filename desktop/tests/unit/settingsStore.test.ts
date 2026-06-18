@@ -56,6 +56,7 @@ describe('settingsStore', () => {
       }],
       saveTargetMode: 'all',
       saveTargetId: 'screen:1',
+      saveTradeDisplayOnly: false,
       frameRate: 24,
       segmentSeconds: 3,
       systemAudioEnabled: true,

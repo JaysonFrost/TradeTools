@@ -602,6 +602,49 @@ describe('tradeClipPipeline', () => {
     await expect(pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))).rejects.toThrow('ffmpeg создал слишком короткий клип')
   })
 
+  it('accepts very short rendered clips when ffmpeg output closely matches the requested trim', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-tiny-output-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-tiny-output-replays-'))
+    const replayPath = join(replayDir, 'Replay 2026-05-13 12-10-00.mp4')
+    await writeFile(replayPath, 'tiny video')
+    const saveTimeMs = Date.parse('2026-05-13T12:10:00.000Z')
+    await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
+
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          paddingBeforeSeconds: 0,
+          paddingAfterSeconds: 0,
+          replayBufferSeconds: 60,
+          replaySourceDir: replayDir,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        requestedAtMs: saveTimeMs,
+        replayPath
+      })),
+      runFfmpeg: vi.fn(async (args: string[]) => {
+        await writeFile(args.at(-1) ?? '', 'tiny')
+      }),
+      getVideoDetails: vi.fn(async (path: string) => path === replayPath
+        ? { durationSeconds: 10, averageFrameRate: 60 }
+        : { durationSeconds: 0.93, averageFrameRate: 60 })
+    })
+    const tinyTrade = {
+      ...createSimulatedClosedTrade(saveTimeMs, 934),
+      exitTimeMs: saveTimeMs
+    }
+
+    await expect(pipeline.createClipForClosedTrade(tinyTrade)).resolves.toMatchObject({
+      symbol: tinyTrade.symbol,
+      durationSeconds: 1
+    })
+  })
+
   it('rejects low-FPS OBS replays before rendering a broken clip', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-replays-'))

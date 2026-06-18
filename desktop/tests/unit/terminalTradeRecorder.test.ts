@@ -44,7 +44,8 @@ describe('terminalTradeRecorder', () => {
       IsClosed: false,
       PositionQuantity: -13.7,
       TradeTime: '2026-06-10T21:02:36.467',
-      TradeSide: 'Sell'
+      TradeSide: 'Sell',
+      ProcessId: 39336
     }))
 
     expect(event).toEqual({
@@ -55,7 +56,8 @@ describe('terminalTradeRecorder', () => {
       side: 'SHORT',
       isClosed: false,
       eventTimeMs: Date.parse('2026-06-10T21:02:36.467Z'),
-      size: -13.7
+      size: -13.7,
+      processId: 39336
     })
   })
 

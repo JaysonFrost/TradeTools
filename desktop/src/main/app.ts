@@ -237,6 +237,7 @@ const assertHttpUrl = (url: string): string => {
 const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://') || (!app.isPackaged && isAllowedDevUrl(url))
 
 type DesktopCaptureSource = Awaited<ReturnType<typeof desktopCapturer.getSources>>[number]
+type WindowBounds = { x: number, y: number, width: number, height: number }
 
 const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
   types: ['window', 'screen'],
@@ -244,16 +245,128 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
   fetchWindowIcons: false
 })
 
-const toWindowCaptureSource = (source: DesktopCaptureSource): WindowCaptureSource => {
+const desktopSourceWindowId = (sourceId: string): string => /^window:(\d+):/.exec(sourceId)?.[1] ?? ''
+
+const listWindowBounds = (windowIds: string[]): Map<string, WindowBounds> => {
+  if (process.platform !== 'win32') return new Map()
+
+  const handles = [...new Set(windowIds
+    .map((windowId) => Number(windowId))
+    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
+  )]
+  if (handles.length === 0) return new Map()
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsWindowBounds {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  public static string Bounds(long handle) {
+    RECT rect;
+    if (!GetWindowRect(new IntPtr(handle), out rect)) return "";
+    int width = rect.Right - rect.Left;
+    int height = rect.Bottom - rect.Top;
+    if (width <= 0 || height <= 0) return "";
+    return String.Format("{0},{1},{2},{3}", rect.Left, rect.Top, width, height);
+  }
+}
+"@
+Add-Type $source
+foreach ($handle in @(${handles.join(',')})) {
+  $bounds = [TradeToolsWindowBounds]::Bounds([Int64]$handle)
+  if ($bounds) { "{0}:{1}" -f $handle, $bounds }
+}
+`
+
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return new Map()
+
+    return new Map(String(result.stdout)
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const separatorIndex = line.indexOf(':')
+        if (separatorIndex <= 0) return []
+        const windowId = line.slice(0, separatorIndex).trim()
+        const [x, y, width, height] = line.slice(separatorIndex + 1).split(',').map(Number)
+        return windowId && [x, y, width, height].every((value) => Number.isFinite(value))
+          ? [[windowId, { x, y, width, height }] as const]
+          : []
+      }))
+  } catch {
+    return new Map()
+  }
+}
+
+const listWindowProcessIds = (): Map<string, number> => {
+  if (process.platform !== 'win32') return new Map()
+
+  try {
+    const result = spawnSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { "{0}:{1}" -f $_.MainWindowHandle, $_.Id }'
+    ], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return new Map()
+
+    return new Map(String(result.stdout)
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const [windowId, processIdText] = line.trim().split(':')
+        const processId = Number(processIdText)
+        return windowId && Number.isInteger(processId) && processId > 0 ? [[windowId, processId] as const] : []
+      }))
+  } catch {
+    return new Map()
+  }
+}
+
+const resolveWindowDisplayId = (source: DesktopCaptureSource, windowBounds: Map<string, WindowBounds>): string => {
+  const bounds = windowBounds.get(desktopSourceWindowId(source.id))
+  if (!bounds) return ''
+
+  try {
+    return String(electronScreen.getDisplayMatching(bounds).id)
+  } catch {
+    return ''
+  }
+}
+
+const toWindowCaptureSource = (
+  source: DesktopCaptureSource,
+  windowProcessIds = new Map<string, number>(),
+  windowBounds = new Map<string, WindowBounds>()
+): WindowCaptureSource => {
   const type = source.id.startsWith('screen:') ? 'screen' : 'window'
   const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
+  const windowId = desktopSourceWindowId(source.id)
+  const processId = type === 'window' ? windowProcessIds.get(windowId) : undefined
+  const displayId = source.display_id || (type === 'window' ? resolveWindowDisplayId(source, windowBounds) : '')
 
   return {
     id: source.id,
     name: source.name.trim() || fallbackName,
-    displayId: source.display_id,
-    type
+    displayId,
+    type,
+    ...(processId ? { processId } : {})
   }
+}
+
+const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
+  const sources = await listDesktopCaptureSources()
+  const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
+  const windowProcessIds = listWindowProcessIds()
+  const windowBounds = listWindowBounds(windowIds)
+  return sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
 }
 
 const toCaptureTargetRef = (source: WindowCaptureSource): CaptureTargetRef => ({
@@ -279,6 +392,11 @@ const configuredCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => 
     : legacyCaptureTargetFromSettings(settings) ? [legacyCaptureTargetFromSettings(settings)!] : []
 )
 
+const selectedScreenFallbackTarget = (settings: AppSettings, targets = configuredCaptureTargets(settings)): CaptureTargetRef | undefined => {
+  const screenTargets = targets.filter((target) => target.type === 'screen')
+  return screenTargets.find((target) => target.id === settings.recording.saveTargetId) ?? screenTargets[0]
+}
+
 const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
   vataga: [/vataga/i, /ватага/i],
   tigertrade: [/tiger/i, /тигр/i],
@@ -286,9 +404,9 @@ const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
 }
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
-  const sources = await listDesktopCaptureSources()
+  const sources = await listWindowCaptureSources()
   return sources.some((source) => (
-    !source.id.startsWith('screen:') &&
+    source.type === 'window' &&
     ((input.sourceId && source.id === input.sourceId) || (input.sourceName && source.name === input.sourceName))
   ))
 }
@@ -1099,20 +1217,34 @@ app.whenReady().then(() => {
     const settings = await settingsStore.load()
     if (settings.recording.mode !== 'window') return undefined
 
-    const sources = (await listDesktopCaptureSources()).map(toWindowCaptureSource)
+    const sources = await listWindowCaptureSources()
     const patterns = terminalWindowPatterns[event.source]
-    const source = sources.find((candidate) => (
+    const terminalSources = sources.filter((candidate) => (
       candidate.type === 'window' && patterns.some((pattern) => pattern.test(candidate.name))
     ))
+    const source = event.processId
+      ? terminalSources.find((candidate) => candidate.processId === event.processId) ?? terminalSources[0]
+      : terminalSources[0]
     const targets = configuredCaptureTargets(settings)
 
-    if (settings.recording.sourceType === 'screen') {
+    if (event.processId && terminalSources.length > 1 && source?.processId !== event.processId) {
+      void appLog.warn('recording', 'Terminal process id did not match any captured window; using first matching terminal window', {
+        source: event.source,
+        symbol: event.symbol,
+        processId: event.processId,
+        candidates: terminalSources.map((candidate) => ({ id: candidate.id, name: candidate.name, processId: candidate.processId, displayId: candidate.displayId }))
+      })
+    }
+
+    if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly) {
+      const screenFallbackTarget = selectedScreenFallbackTarget(settings, targets)
       if (!source) {
-        void appLog.warn('recording', 'Terminal capture window not found; saving configured screen targets', {
+        void appLog.warn('recording', 'Terminal capture window not found; saving selected screen target instead of all screens', {
           source: event.source,
-          symbol: event.symbol
+          symbol: event.symbol,
+          captureTarget: screenFallbackTarget
         })
-        return undefined
+        return screenFallbackTarget
       }
 
       const matchingScreenTarget = targets.find((candidate) => (
@@ -1131,10 +1263,13 @@ app.whenReady().then(() => {
       void appLog.warn('recording', 'Terminal trade window found but display has no selected screen capture target', {
         source: event.source,
         symbol: event.symbol,
-        displayId: source.displayId
+        displayId: source.displayId,
+        captureTarget: screenFallbackTarget
       })
-      return undefined
+      return screenFallbackTarget
     }
+
+    if (settings.recording.sourceType === 'screen') return undefined
 
     if (source) {
       const target = toCaptureTargetRef(source)
@@ -1287,10 +1422,7 @@ app.whenReady().then(() => {
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
   ipcMain.handle('recording:list-window-sources', async () => {
-    const sources = await listDesktopCaptureSources()
-
-    return sources
-      .map(toWindowCaptureSource)
+    return listWindowCaptureSources()
   })
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
@@ -1575,6 +1707,12 @@ app.whenReady().then(() => {
   ipcMain.handle('clips:cancel-render', (_event, jobId?: string) => cancelClipRender(asString(jobId)))
   ipcMain.handle('clips:clear-queue', () => clipPipeline.clearQueue())
   ipcMain.handle('clips:delete-queue-files', () => clipPipeline.deleteQueueFiles())
+  ipcMain.handle('clips:open-output-folder', async () => {
+    const settings = await settingsStore.load()
+    mkdirSync(settings.clip.outputDir, { recursive: true })
+    const openError = await shell.openPath(settings.clip.outputDir)
+    if (openError) throw new Error(`Не удалось открыть папку с видео: ${openError}`)
+  })
   ipcMain.handle('clips:delete-from-queue', (_event, metadataPath: string) => clipPipeline.deleteClipFromQueue(metadataPath))
   ipcMain.handle('clips:delete-file', (_event, metadataPath: string) => clipPipeline.deleteClipFile(metadataPath))
   ipcMain.handle('clips:rename-file', (_event, input: { metadataPath?: string, fileName?: string }) => {

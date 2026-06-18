@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, FileText, ListX, Pause, Play, RefreshCw, Square, Trash2, Video, XCircle } from 'lucide-react'
+import { Copy, FileText, FolderOpen, ListX, Pause, Play, RefreshCw, Square, Trash2, Video, XCircle } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
@@ -47,6 +47,7 @@ type VideoPageProps = {
   onCancelClipRender: (jobId?: string) => void
   onClearQueue: () => void
   onDeleteQueueFiles: () => void
+  onOpenClipFolder: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
   onFreeRecordingStart: () => void
@@ -320,7 +321,7 @@ const DiagnosticsLogPanel = ({
   </details>
 )
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
       <RecordingStatusPanel
         settings={settings}
@@ -350,6 +351,9 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
             {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
           </div>
           <div className="flex flex-wrap gap-2 sm:justify-end">
+            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08]" onClick={onOpenClipFolder} type="button">
+              <FolderOpen size={16} className="mr-2" />Открыть папку с видео
+            </button>
             <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
               <ListX size={16} className="mr-2" />Очистить очередь
             </button>
@@ -359,7 +363,7 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
           </div>
         </div>
         {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
-        <div className="space-y-3">
+        <div className="max-h-[560px] space-y-3 overflow-y-auto pr-1">
           {clips.length > 0 ? clips.map((clip) => (
             <ClipCard key={clip.id} clip={clip} onDeleted={onClipDeleted} onRenamed={onClipRenamed} />
           )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет клипов в очереди.</div>}
@@ -759,6 +763,14 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
+  const openClipFolder = async () => {
+    try {
+      await getTradeToolsApi().clips.openOutputFolder()
+    } catch (error) {
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось открыть папку с видео')
+    }
+  }
+
   const testNotification = () => getTradeToolsApi().notifications.test()
 
   const refreshLogs = async () => {
@@ -859,6 +871,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           onCancelClipRender={(jobId) => void cancelClipRender(jobId)}
           onClearQueue={() => void clearQueue()}
           onDeleteQueueFiles={() => void deleteQueueFiles()}
+          onOpenClipFolder={() => void openClipFolder()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
           onFreeRecordingStart={() => void startFreeRecording()}

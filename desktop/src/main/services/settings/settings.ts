@@ -37,6 +37,7 @@ export type AppSettings = {
     captureTargets: CaptureTargetRef[]
     saveTargetMode: RecordingSaveTargetMode
     saveTargetId: string
+    saveTradeDisplayOnly: boolean
     frameRate: number
     segmentSeconds: number
     systemAudioEnabled: boolean
@@ -256,6 +257,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     captureTargets: [],
     saveTargetMode: 'all',
     saveTargetId: '',
+    saveTradeDisplayOnly: false,
     frameRate: 30,
     segmentSeconds: 2,
     systemAudioEnabled: false,
@@ -324,6 +326,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       captureTargets,
       saveTargetMode: normalizeRecordingSaveTargetMode(settings.recording?.saveTargetMode ?? defaults.recording.saveTargetMode),
       saveTargetId,
+      saveTradeDisplayOnly: settings.recording?.saveTradeDisplayOnly === true,
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
       systemAudioEnabled: settings.recording?.systemAudioEnabled === true,

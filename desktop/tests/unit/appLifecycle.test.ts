@@ -101,16 +101,35 @@ describe('main app lifecycle', () => {
     expect(source).toContain('recordingTarget: target')
     expect(source).toContain('queueClipForClosedTrade')
     expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
-    expect(source).not.toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
   })
 
   it('routes screen-mode terminal trades to the selected monitor that owns the terminal window when Electron exposes display id', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
+    expect(source).toContain("settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly")
+    expect(source).toContain('listWindowBounds')
+    expect(source).toContain('electronScreen.getDisplayMatching(bounds).id')
+    expect(source).toContain('listWindowProcessIds')
+    expect(source).toContain('event.processId')
+    expect(source).toContain('candidate.processId === event.processId')
     expect(source).toContain('const matchingScreenTarget = targets.find')
     expect(source).toContain("candidate.type === 'screen' && Boolean(candidate.displayId) && candidate.displayId === source.displayId")
     expect(source).toContain('Terminal trade display matched screen capture target')
     expect(source).toContain('Terminal trade window found but display has no selected screen capture target')
+  })
+
+  it('does not expand trade-display-only screen saves back to every monitor when display matching is unavailable', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const branch = source.slice(
+      source.indexOf("if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly)"),
+      source.indexOf("if (settings.recording.sourceType === 'screen') return undefined")
+    )
+
+    expect(source).toContain('const screenFallbackTarget = selectedScreenFallbackTarget(settings, targets)')
+    expect(branch).toContain('return screenFallbackTarget')
+    expect(branch).not.toContain('return undefined')
+    expect(source).toContain('saving selected screen target instead of all screens')
   })
 
   it('updates built-in window recording targets when a terminal trade comes from another window', async () => {
