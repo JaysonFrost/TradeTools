@@ -135,6 +135,7 @@ const RecordingStatusPanel = ({
   const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
   const hasActiveTrade = terminalTrade.active
   const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
+  const activeTradeSummary = `${terminalTrade.activeTradeCount} поз.`
   const showStatusBadge = !isWindowMode || !backgroundRecordingEnabled || hasActiveTrade
   const statusText = !isWindowMode
     ? obs.status
@@ -169,7 +170,7 @@ const RecordingStatusPanel = ({
             <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
               <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
               <div>Буфер: <span className="text-zinc-300">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
-              <div>Сделки: <span className="text-zinc-300">{terminalStatus}</span></div>
+              <div>Сделки: <span className="text-zinc-300">{activeTradeSummary}</span></div>
             </div>
           )}
           {terminalTrade.lastError && <p className="mt-2 text-xs leading-5 text-amber-300">{terminalTrade.lastError}</p>}

@@ -258,6 +258,18 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).toContain('Пишем сделку')
   })
 
+  it('keeps the active trade stats compact instead of repeating the long status message', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const recordingPanelSource = dashboardSource.slice(
+      dashboardSource.indexOf('const RecordingStatusPanel'),
+      dashboardSource.indexOf('const FreeRecordingControls')
+    )
+
+    expect(recordingPanelSource).toContain('const activeTradeSummary')
+    expect(recordingPanelSource).toContain('Сделки: <span className="text-zinc-300">{activeTradeSummary}</span>')
+    expect(recordingPanelSource).not.toContain('Сделки: <span className="text-zinc-300">{terminalStatus}</span>')
+  })
+
   it('restarts background window recording only when main asks while background recording is enabled', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
