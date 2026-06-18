@@ -480,6 +480,14 @@ describe('Dashboard layout', () => {
     expect(source).not.toContain('isBinanceWaitingStatus')
   })
 
+  it('shows the recorded screen on clip cards so fallback multi-monitor clips are easy to delete', async () => {
+    const source = await readFile(resolve('src/renderer/components/trade/ClipCard.tsx'), 'utf8')
+
+    expect(source).toContain('clip.captureTarget?.name')
+    expect(source).toContain('Источник:')
+    expect(source).toContain('truncate')
+  })
+
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
 

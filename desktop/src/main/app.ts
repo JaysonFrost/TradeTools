@@ -1224,13 +1224,6 @@ app.whenReady().then(() => {
     return completion
   }
 
-  const tradeDisplayOnlyWithoutResolvedTarget = (settings: AppSettings, trade: ClosedTrade): boolean => (
-    settings.recording.mode === 'window' &&
-    settings.recording.sourceType === 'screen' &&
-    settings.recording.saveTradeDisplayOnly &&
-    !trade.recordingTarget
-  )
-
   const cancelClipRender = (jobId?: string): { ok: true, cancelledCount: number } => {
     let cancelledCount = 0
     if ((!jobId || activeClipRenderJob?.id === jobId) && activeClipRenderJob) {
@@ -1353,6 +1346,18 @@ app.whenReady().then(() => {
     }
 
     if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly) {
+      if (selection.candidates.length > 1) {
+        void appLog.warn('recording', 'Terminal trade display monitor is ambiguous; saving selected screen targets', {
+          source: event.source,
+          symbol: event.symbol,
+          processId: event.processId,
+          selectionReason: selection.reason,
+          candidates: selection.candidates.map(terminalSourceLog),
+          captureTargets: targets
+        })
+        return undefined
+      }
+
       if (!source) {
         void appLog.warn('recording', 'Terminal trade display monitor could not be resolved', {
           source: event.source,
@@ -1427,16 +1432,6 @@ app.whenReady().then(() => {
 
   const queueClipForClosedTrade = async (trade: ClosedTrade): Promise<void> => {
     const settings = await settingsStore.load()
-    if (tradeDisplayOnlyWithoutResolvedTarget(settings, trade)) {
-      void appLog.warn('clip-queue', 'Clip render skipped because trade monitor was not resolved', {
-        tradeId: trade.id,
-        symbol: trade.symbol,
-        side: trade.side,
-        entryTimeMs: trade.entryTimeMs,
-        exitTimeMs: trade.exitTimeMs
-      })
-      return
-    }
     const targets = selectClipRenderTargets(settings, trade.recordingTarget)
     await Promise.all(targets.map((target) => enqueueClipRender(
       target ? { ...trade, recordingTarget: target } : trade,

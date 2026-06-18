@@ -127,29 +127,27 @@ describe('main app lifecycle', () => {
     expect(source).toContain('Terminal trade window found but display has no selected screen capture target')
   })
 
-  it('distinguishes multiple terminal windows from the same Windows process before choosing a trade monitor', async () => {
+  it('falls back to selected screen targets when multiple terminal windows share one process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('GetWindowThreadProcessId')
     expect(source).toContain('listWindowProcessIds(windowIds)')
-    expect(source).toContain('const foregroundWindowId = getForegroundWindowId()')
-    expect(source).toContain('const cursorPoint = electronScreen.getCursorScreenPoint()')
     expect(source).toContain('selectTerminalSource')
-    expect(source).toContain("reason: 'ambiguous'")
-    expect(source).toContain('Terminal process has multiple matching windows; using focused or cursor window')
+    expect(source).toContain('selection.candidates.length > 1')
+    expect(source).toContain('Terminal trade display monitor is ambiguous; saving selected screen targets')
   })
 
-  it('does not save an arbitrary screen when trade display matching is unavailable', async () => {
+  it('uses selected screen targets instead of skipping when trade display matching is unavailable', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const branch = source.slice(
       source.indexOf("if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly)"),
       source.indexOf("if (settings.recording.sourceType === 'screen') return undefined")
     )
 
-    expect(source).toContain('tradeDisplayOnlyWithoutResolvedTarget')
-    expect(source).toContain("appLog.warn('clip-queue', 'Clip render skipped because trade monitor was not resolved'")
     expect(branch).toContain('return undefined')
     expect(branch).not.toContain('return screenFallbackTarget')
+    expect(source).not.toContain('tradeDisplayOnlyWithoutResolvedTarget')
+    expect(source).not.toContain('Clip render skipped because trade monitor was not resolved')
     expect(source).not.toContain('saving selected screen target instead of all screens')
   })
 
