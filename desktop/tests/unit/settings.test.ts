@@ -28,6 +28,7 @@ describe('settings', () => {
       saveTargetMode: 'all',
       saveTargetId: '',
       saveTradeDisplayOnly: false,
+      videoEncoder: 'gpu',
       frameRate: 30,
       segmentSeconds: 2,
       systemAudioEnabled: false,
@@ -36,6 +37,8 @@ describe('settings', () => {
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
       launchAtLogin: false,
+      alwaysOnTop: false,
+      keepProxyRunningAfterClose: false,
       proxyPaymentNotificationsEnabled: true,
       clipSuccessNotificationsEnabled: true,
       paymentReminderDaysBefore: 5
@@ -126,6 +129,7 @@ describe('settings', () => {
         windowSourceName: ' Terminal ',
         frameRate: 999,
         segmentSeconds: 0,
+        videoEncoder: 'cpu',
         systemAudioEnabled: true,
         microphoneEnabled: false
       }
@@ -144,6 +148,7 @@ describe('settings', () => {
       saveTargetMode: 'all',
       saveTargetId: 'screen:1',
       saveTradeDisplayOnly: false,
+      videoEncoder: 'cpu',
       frameRate: 60,
       segmentSeconds: 1,
       systemAudioEnabled: true,
@@ -224,6 +229,8 @@ describe('settings', () => {
     const settings = normalizeSettings({
       system: {
         launchAtLogin: true,
+        alwaysOnTop: true,
+        keepProxyRunningAfterClose: true,
         proxyPaymentNotificationsEnabled: false,
         clipSuccessNotificationsEnabled: false,
         paymentReminderDaysBefore: 99
@@ -244,6 +251,8 @@ describe('settings', () => {
 
     expect(settings.system).toEqual({
       launchAtLogin: true,
+      alwaysOnTop: true,
+      keepProxyRunningAfterClose: true,
       proxyPaymentNotificationsEnabled: false,
       clipSuccessNotificationsEnabled: false,
       paymentReminderDaysBefore: 30

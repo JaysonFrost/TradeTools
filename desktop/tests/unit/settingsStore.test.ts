@@ -57,6 +57,7 @@ describe('settingsStore', () => {
       saveTargetMode: 'all',
       saveTargetId: 'screen:1',
       saveTradeDisplayOnly: false,
+      videoEncoder: 'gpu',
       frameRate: 24,
       segmentSeconds: 3,
       systemAudioEnabled: true,

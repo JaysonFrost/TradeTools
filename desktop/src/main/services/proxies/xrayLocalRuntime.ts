@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs'
-import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { get as httpsGet } from 'node:https'
 import { arch, platform } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -463,15 +463,71 @@ const runLocalProxyDiagnostics = async (localPort: number): Promise<LocalProxyDi
   return checks
 }
 
+export const isReusableLocalXrayOwner = (owner?: LocalPortOwner): boolean => {
+  const name = owner?.name?.toLowerCase() ?? ''
+  const ownerPath = owner?.path?.toLowerCase() ?? ''
+  return /^xray(?:\.exe)?$/.test(name) || /(?:^|[\\/])xray(?:\.exe)?$/.test(ownerPath)
+}
+
+export const storedLocalXrayConfigMatches = async (configPath: string, config: Record<string, unknown>): Promise<boolean> => {
+  try {
+    const stored = JSON.parse(await readFile(configPath, 'utf8')) as unknown
+    return JSON.stringify(stored) === JSON.stringify(config)
+  } catch {
+    return false
+  }
+}
+
+const finishLocalXrayRuntime = async (
+  localPort: number,
+  progress: (progress: RuntimeProgress) => void,
+  readyMessage: string
+): Promise<LocalXrayRuntimeResult> => {
+  progress({ step: 'local-xray', status: 'success', message: readyMessage })
+  progress({ step: 'diagnostics', status: 'running', message: 'Проверяем exit IP и доступность Binance через локальный proxy' })
+  const diagnostics = await runLocalProxyDiagnostics(localPort)
+  const failed = diagnostics.filter((check) => !check.ok)
+  progress({
+    step: 'diagnostics',
+    status: failed.length === 0 ? 'success' : 'info',
+    message: failed.length === 0
+      ? 'Проверки через proxy прошли'
+      : `Есть предупреждения проверки: ${failed.map((check) => check.name).join(', ')}`
+  })
+
+  return {
+    host: '127.0.0.1',
+    port: localPort,
+    type: 'HTTP',
+    username: '',
+    password: '',
+    authRequired: false,
+    diagnostics
+  }
+}
+
 export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promise<LocalXrayRuntimeResult> => {
   const progress = input.onProgress ?? (() => undefined)
   const binaryPath = await ensureXrayCore(input.appDataDir, progress)
   const configDir = join(input.appDataDir, 'xray-runtime')
   const configPath = join(configDir, 'trade-chain.json')
+  const nextConfig = createLocalXrayConfig(input)
   await mkdir(configDir, { recursive: true })
-  await writeFile(configPath, JSON.stringify(createLocalXrayConfig(input), null, 2), 'utf8')
 
-  await stopLocalXrayRuntime()
+  if (localXrayProcess) {
+    await stopLocalXrayRuntime()
+  } else if (!await isPortAvailable(input.localPort)) {
+    const [owner, suggestedPort] = await Promise.all([
+      describeLocalPortOwner(input.localPort),
+      findAvailableLocalPort(input.localPort + 1)
+    ])
+    if (isReusableLocalXrayOwner(owner) && await storedLocalXrayConfigMatches(configPath, nextConfig)) {
+      return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy уже запущен: 127.0.0.1:${input.localPort}`)
+    }
+    throw new Error(createLocalPortBusyMessage(input.localPort, owner, suggestedPort))
+  }
+
+  await writeFile(configPath, JSON.stringify(nextConfig, null, 2), 'utf8')
   if (!await isPortAvailable(input.localPort)) {
     const [owner, suggestedPort] = await Promise.all([
       describeLocalPortOwner(input.localPort),
@@ -506,26 +562,5 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
   localXrayProcess = child
 
   await waitForTcpPort(input.localPort, 8_000, () => exited ? processLogs.trim() || 'Локальный Xray завершился' : undefined)
-  progress({ step: 'local-xray', status: 'success', message: `Локальный proxy готов: 127.0.0.1:${input.localPort}` })
-
-  progress({ step: 'diagnostics', status: 'running', message: 'Проверяем exit IP и доступность Binance через локальный proxy' })
-  const diagnostics = await runLocalProxyDiagnostics(input.localPort)
-  const failed = diagnostics.filter((check) => !check.ok)
-  progress({
-    step: 'diagnostics',
-    status: failed.length === 0 ? 'success' : 'info',
-    message: failed.length === 0
-      ? 'Проверки через proxy прошли'
-      : `Есть предупреждения проверки: ${failed.map((check) => check.name).join(', ')}`
-  })
-
-  return {
-    host: '127.0.0.1',
-    port: input.localPort,
-    type: 'HTTP',
-    username: '',
-    password: '',
-    authRequired: false,
-    diagnostics
-  }
+  return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy готов: 127.0.0.1:${input.localPort}`)
 }

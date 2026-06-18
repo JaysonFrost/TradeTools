@@ -1,5 +1,6 @@
 export type FfmpegTrimMode = 'copy' | 'reencode'
 export type H264VideoPurpose = 'recording' | 'export'
+export type H264VideoEncoder = 'gpu' | 'cpu'
 
 export type FfmpegTrimInput = {
   inputPath: string
@@ -13,13 +14,26 @@ export type FfmpegTrimInput = {
 export type H264VideoArgsInput = {
   platform?: NodeJS.Platform
   purpose: H264VideoPurpose
+  encoder?: H264VideoEncoder
 }
 
 const formatSeconds = (value: number): string => value.toFixed(3)
 const formatFrameRate = (value: number): string => value.toFixed(3).replace(/\.?0+$/, '')
 
-export const buildH264VideoArgs = ({ platform = process.platform, purpose }: H264VideoArgsInput): string[] => {
+const buildCpuH264VideoArgs = (purpose: H264VideoPurpose): string[] => [
+  '-c:v',
+  'libx264',
+  '-preset',
+  purpose === 'recording' ? 'ultrafast' : 'veryfast',
+  ...(purpose === 'recording' ? ['-tune', 'zerolatency', '-crf', '24'] : ['-crf', '18']),
+  '-pix_fmt',
+  'yuv420p'
+]
+
+export const buildH264VideoArgs = ({ platform = process.platform, purpose, encoder = 'gpu' }: H264VideoArgsInput): string[] => {
   const bitrate = purpose === 'recording' ? '8M' : '10M'
+
+  if (encoder === 'cpu') return buildCpuH264VideoArgs(purpose)
 
   if (platform === 'win32') {
     return [
@@ -46,15 +60,7 @@ export const buildH264VideoArgs = ({ platform = process.platform, purpose }: H26
     ]
   }
 
-  return [
-    '-c:v',
-    'libx264',
-    '-preset',
-    purpose === 'recording' ? 'ultrafast' : 'veryfast',
-    ...(purpose === 'recording' ? ['-tune', 'zerolatency', '-crf', '24'] : ['-crf', '18']),
-    '-pix_fmt',
-    'yuv420p'
-  ]
+  return buildCpuH264VideoArgs(purpose)
 }
 
 export const buildFfmpegTrimArgs = (input: FfmpegTrimInput): string[] => {

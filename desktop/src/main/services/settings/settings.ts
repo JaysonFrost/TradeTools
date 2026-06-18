@@ -4,6 +4,7 @@ import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaul
 
 export type RecordingSourceType = 'window' | 'screen'
 export type RecordingSaveTargetMode = 'all' | 'selected'
+export type RecordingVideoEncoder = 'gpu' | 'cpu'
 
 export type CaptureTargetRef = {
   id: string
@@ -38,6 +39,7 @@ export type AppSettings = {
     saveTargetMode: RecordingSaveTargetMode
     saveTargetId: string
     saveTradeDisplayOnly: boolean
+    videoEncoder: RecordingVideoEncoder
     frameRate: number
     segmentSeconds: number
     systemAudioEnabled: boolean
@@ -60,6 +62,8 @@ export type AppSettings = {
   }
   system: {
     launchAtLogin: boolean
+    alwaysOnTop: boolean
+    keepProxyRunningAfterClose: boolean
     proxyPaymentNotificationsEnabled: boolean
     clipSuccessNotificationsEnabled: boolean
     paymentReminderDaysBefore: number
@@ -146,6 +150,7 @@ const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSet
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
 }
 const normalizeRecordingSaveTargetMode = (value: unknown): RecordingSaveTargetMode => value === 'selected' ? 'selected' : 'all'
+const normalizeRecordingVideoEncoder = (value: unknown): RecordingVideoEncoder => value === 'cpu' ? 'cpu' : 'gpu'
 const isCaptureTargetIdCompatible = (id: string, type: RecordingSourceType): boolean => (
   type === 'screen' ? id.startsWith('screen:') : !id.startsWith('screen:')
 )
@@ -258,6 +263,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     saveTargetMode: 'all',
     saveTargetId: '',
     saveTradeDisplayOnly: false,
+    videoEncoder: 'gpu',
     frameRate: 30,
     segmentSeconds: 2,
     systemAudioEnabled: false,
@@ -280,6 +286,8 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
   },
   system: {
     launchAtLogin: false,
+    alwaysOnTop: false,
+    keepProxyRunningAfterClose: false,
     proxyPaymentNotificationsEnabled: true,
     clipSuccessNotificationsEnabled: true,
     paymentReminderDaysBefore: 5
@@ -327,6 +335,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       saveTargetMode: normalizeRecordingSaveTargetMode(settings.recording?.saveTargetMode ?? defaults.recording.saveTargetMode),
       saveTargetId,
       saveTradeDisplayOnly: settings.recording?.saveTradeDisplayOnly === true,
+      videoEncoder: normalizeRecordingVideoEncoder(settings.recording?.videoEncoder ?? defaults.recording.videoEncoder),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
       systemAudioEnabled: settings.recording?.systemAudioEnabled === true,
@@ -349,6 +358,8 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
     },
     system: {
       launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,
+      alwaysOnTop: settings.system?.alwaysOnTop === true,
+      keepProxyRunningAfterClose: settings.system?.keepProxyRunningAfterClose === true,
       proxyPaymentNotificationsEnabled: settings.system?.proxyPaymentNotificationsEnabled ?? defaults.system.proxyPaymentNotificationsEnabled,
       clipSuccessNotificationsEnabled: settings.system?.clipSuccessNotificationsEnabled ?? defaults.system.clipSuccessNotificationsEnabled,
       paymentReminderDaysBefore: clamp(settings.system?.paymentReminderDaysBefore ?? defaults.system.paymentReminderDaysBefore, 0, 30)

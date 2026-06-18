@@ -206,7 +206,7 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
     expect(serviceSource).toContain("'-segment_list'")
     expect(serviceSource).toContain("backend: 'ffmpeg'")
-    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording' })")
+    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder })")
     expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
     expect(serviceSource).toContain('Фоновый GDI-захват отключён')
     expect(serviceSource).toContain('fallbackRequired')

@@ -303,16 +303,37 @@ foreach ($handle in @(${handles.join(',')})) {
   }
 }
 
-const listWindowProcessIds = (): Map<string, number> => {
+const listWindowProcessIds = (windowIds: string[]): Map<string, number> => {
   if (process.platform !== 'win32') return new Map()
 
+  const handles = [...new Set(windowIds
+    .map((windowId) => Number(windowId))
+    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
+  )]
+  if (handles.length === 0) return new Map()
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsWindowProcess {
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  public static string ProcessId(long handle) {
+    uint processId;
+    GetWindowThreadProcessId(new IntPtr(handle), out processId);
+    return processId > 0 ? processId.ToString() : "";
+  }
+}
+"@
+Add-Type $source
+foreach ($handle in @(${handles.join(',')})) {
+  $processId = [TradeToolsWindowProcess]::ProcessId([Int64]$handle)
+  if ($processId) { "{0}:{1}" -f $handle, $processId }
+}
+`
+
   try {
-    const result = spawnSync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { "{0}:{1}" -f $_.MainWindowHandle, $_.Id }'
-    ], {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
       encoding: 'utf8',
       windowsHide: true
     })
@@ -327,6 +348,36 @@ const listWindowProcessIds = (): Map<string, number> => {
       }))
   } catch {
     return new Map()
+  }
+}
+
+const getForegroundWindowId = (): string => {
+  if (process.platform !== 'win32') return ''
+
+  const script = `
+$source = @"
+using System;
+using System.Runtime.InteropServices;
+public static class TradeToolsForegroundWindow {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  public static long Handle() { return GetForegroundWindow().ToInt64(); }
+}
+"@
+Add-Type $source
+[TradeToolsForegroundWindow]::Handle()
+`
+
+  try {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result.status !== 0) return ''
+
+    const windowId = String(result.stdout).trim()
+    return /^\d+$/.test(windowId) && windowId !== '0' ? windowId : ''
+  } catch {
+    return ''
   }
 }
 
@@ -349,6 +400,7 @@ const toWindowCaptureSource = (
   const type = source.id.startsWith('screen:') ? 'screen' : 'window'
   const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
   const windowId = desktopSourceWindowId(source.id)
+  const bounds = windowBounds.get(windowId)
   const processId = type === 'window' ? windowProcessIds.get(windowId) : undefined
   const displayId = source.display_id || (type === 'window' ? resolveWindowDisplayId(source, windowBounds) : '')
 
@@ -357,14 +409,15 @@ const toWindowCaptureSource = (
     name: source.name.trim() || fallbackName,
     displayId,
     type,
-    ...(processId ? { processId } : {})
+    ...(processId ? { processId } : {}),
+    ...(bounds ? { bounds } : {})
   }
 }
 
 const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
   const sources = await listDesktopCaptureSources()
   const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
-  const windowProcessIds = listWindowProcessIds()
+  const windowProcessIds = listWindowProcessIds(windowIds)
   const windowBounds = listWindowBounds(windowIds)
   return sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
 }
@@ -392,15 +445,51 @@ const configuredCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => 
     : legacyCaptureTargetFromSettings(settings) ? [legacyCaptureTargetFromSettings(settings)!] : []
 )
 
-const selectedScreenFallbackTarget = (settings: AppSettings, targets = configuredCaptureTargets(settings)): CaptureTargetRef | undefined => {
-  const screenTargets = targets.filter((target) => target.type === 'screen')
-  return screenTargets.find((target) => target.id === settings.recording.saveTargetId) ?? screenTargets[0]
-}
-
 const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
   vataga: [/vataga/i, /ватага/i],
   tigertrade: [/tiger/i, /тигр/i],
   metascalp: [/metascalp/i, /metatrader/i, /mt4/i, /mt5/i]
+}
+
+const windowContainsPoint = (source: WindowCaptureSource, point: { x: number, y: number }): boolean => {
+  const bounds = source.bounds
+  return Boolean(bounds) &&
+    point.x >= bounds!.x &&
+    point.x < bounds!.x + bounds!.width &&
+    point.y >= bounds!.y &&
+    point.y < bounds!.y + bounds!.height
+}
+
+const terminalSourceLog = (source: WindowCaptureSource) => ({
+  id: source.id,
+  name: source.name,
+  processId: source.processId,
+  displayId: source.displayId,
+  bounds: source.bounds
+})
+
+const selectTerminalSource = (
+  event: TerminalPositionEvent,
+  terminalSources: WindowCaptureSource[]
+): { source?: WindowCaptureSource, candidates: WindowCaptureSource[], reason: 'process' | 'foreground' | 'cursor' | 'first' | 'ambiguous' | 'none' } => {
+  const processCandidates = event.processId
+    ? terminalSources.filter((candidate) => candidate.processId === event.processId)
+    : []
+  const candidates = processCandidates.length > 0 ? processCandidates : terminalSources
+  if (candidates.length === 0) return { candidates, reason: 'none' }
+  if (candidates.length === 1) return { source: candidates[0], candidates, reason: processCandidates.length > 0 ? 'process' : 'first' }
+
+  const foregroundWindowId = getForegroundWindowId()
+  const foregroundSource = foregroundWindowId
+    ? candidates.find((candidate) => desktopSourceWindowId(candidate.id) === foregroundWindowId)
+    : undefined
+  if (foregroundSource) return { source: foregroundSource, candidates, reason: 'foreground' }
+
+  const cursorPoint = electronScreen.getCursorScreenPoint()
+  const cursorSource = candidates.find((candidate) => windowContainsPoint(candidate, cursorPoint))
+  if (cursorSource) return { source: cursorSource, candidates, reason: 'cursor' }
+
+  return { candidates, reason: 'ambiguous' }
 }
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
@@ -592,6 +681,18 @@ const applyLaunchAtLogin = (settings: AppSettings): void => {
       : {}),
     ...(process.platform === 'darwin' ? { openAsHidden: true } : {})
   })
+}
+
+const applyAlwaysOnTop = (settings: AppSettings): void => {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.setAlwaysOnTop(settings.system.alwaysOnTop)
+  }
+}
+
+let keepProxyRunningAfterClose = false
+
+const applyProxyQuitPreference = (settings: AppSettings): void => {
+  keepProxyRunningAfterClose = settings.system.keepProxyRunningAfterClose
 }
 
 const createMainWindow = (): BrowserWindow => {
@@ -1123,6 +1224,13 @@ app.whenReady().then(() => {
     return completion
   }
 
+  const tradeDisplayOnlyWithoutResolvedTarget = (settings: AppSettings, trade: ClosedTrade): boolean => (
+    settings.recording.mode === 'window' &&
+    settings.recording.sourceType === 'screen' &&
+    settings.recording.saveTradeDisplayOnly &&
+    !trade.recordingTarget
+  )
+
   const cancelClipRender = (jobId?: string): { ok: true, cancelledCount: number } => {
     let cancelledCount = 0
     if ((!jobId || activeClipRenderJob?.id === jobId) && activeClipRenderJob) {
@@ -1222,29 +1330,38 @@ app.whenReady().then(() => {
     const terminalSources = sources.filter((candidate) => (
       candidate.type === 'window' && patterns.some((pattern) => pattern.test(candidate.name))
     ))
-    const source = event.processId
-      ? terminalSources.find((candidate) => candidate.processId === event.processId) ?? terminalSources[0]
-      : terminalSources[0]
+    const selection = selectTerminalSource(event, terminalSources)
+    const source = selection.source
     const targets = configuredCaptureTargets(settings)
 
-    if (event.processId && terminalSources.length > 1 && source?.processId !== event.processId) {
+    if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
       void appLog.warn('recording', 'Terminal process id did not match any captured window; using first matching terminal window', {
         source: event.source,
         symbol: event.symbol,
         processId: event.processId,
-        candidates: terminalSources.map((candidate) => ({ id: candidate.id, name: candidate.name, processId: candidate.processId, displayId: candidate.displayId }))
+        candidates: terminalSources.map(terminalSourceLog)
+      })
+    } else if (event.processId && selection.candidates.length > 1) {
+      void appLog.info('recording', 'Terminal process has multiple matching windows; using focused or cursor window', {
+        source: event.source,
+        symbol: event.symbol,
+        processId: event.processId,
+        selectionReason: selection.reason,
+        selected: source ? terminalSourceLog(source) : undefined,
+        candidates: selection.candidates.map(terminalSourceLog)
       })
     }
 
     if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly) {
-      const screenFallbackTarget = selectedScreenFallbackTarget(settings, targets)
       if (!source) {
-        void appLog.warn('recording', 'Terminal capture window not found; saving selected screen target instead of all screens', {
+        void appLog.warn('recording', 'Terminal trade display monitor could not be resolved', {
           source: event.source,
           symbol: event.symbol,
-          captureTarget: screenFallbackTarget
+          processId: event.processId,
+          selectionReason: selection.reason,
+          candidates: selection.candidates.map(terminalSourceLog)
         })
-        return screenFallbackTarget
+        return undefined
       }
 
       const matchingScreenTarget = targets.find((candidate) => (
@@ -1264,9 +1381,10 @@ app.whenReady().then(() => {
         source: event.source,
         symbol: event.symbol,
         displayId: source.displayId,
-        captureTarget: screenFallbackTarget
+        selected: terminalSourceLog(source),
+        captureTargets: targets
       })
-      return screenFallbackTarget
+      return undefined
     }
 
     if (settings.recording.sourceType === 'screen') return undefined
@@ -1309,6 +1427,16 @@ app.whenReady().then(() => {
 
   const queueClipForClosedTrade = async (trade: ClosedTrade): Promise<void> => {
     const settings = await settingsStore.load()
+    if (tradeDisplayOnlyWithoutResolvedTarget(settings, trade)) {
+      void appLog.warn('clip-queue', 'Clip render skipped because trade monitor was not resolved', {
+        tradeId: trade.id,
+        symbol: trade.symbol,
+        side: trade.side,
+        entryTimeMs: trade.entryTimeMs,
+        exitTimeMs: trade.exitTimeMs
+      })
+      return
+    }
     const targets = selectClipRenderTargets(settings, trade.recordingTarget)
     await Promise.all(targets.map((target) => enqueueClipRender(
       target ? { ...trade, recordingTarget: target } : trade,
@@ -1415,6 +1543,8 @@ app.whenReady().then(() => {
     let updatedSettings = await settingsStore.update(patch)
     if (patch.proxies) updatedSettings = await clearProxyRuntimeConfig()
     applyLaunchAtLogin(updatedSettings)
+    applyAlwaysOnTop(updatedSettings)
+    applyProxyQuitPreference(updatedSettings)
 
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
     return updatedSettings
@@ -1742,6 +1872,8 @@ app.whenReady().then(() => {
 
   void settingsStore.load().then((settings) => {
     applyLaunchAtLogin(settings)
+    applyAlwaysOnTop(settings)
+    applyProxyQuitPreference(settings)
     void startStoredProxyRuntime(settings).catch((error) => {
       const message = error instanceof Error ? error.message : 'неизвестная ошибка'
       console.error('Proxy runtime autostart failed:', error)
@@ -1755,7 +1887,10 @@ app.whenReady().then(() => {
   setInterval(() => void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error)), proxyPaymentReminderIntervalMs)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow()
+      void settingsStore.load().then(applyAlwaysOnTop)
+    }
   })
 })
 
@@ -1764,5 +1899,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  void stopLocalXrayRuntime()
+  if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()
 })

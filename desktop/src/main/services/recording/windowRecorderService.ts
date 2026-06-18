@@ -14,6 +14,12 @@ export type WindowCaptureSource = {
   displayId: string
   type: AppSettings['recording']['sourceType']
   processId?: number
+  bounds?: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
 }
 
 export type ScreenCaptureBounds = {
@@ -482,7 +488,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '-map',
       '0:v:0',
       '-an',
-      ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording' }),
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder }),
       '-r',
       frameRate,
       '-fps_mode',
@@ -906,7 +912,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '-map',
       '0:v:0',
       ...audioArgs,
-      ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
+      ...buildH264VideoArgs({ platform: process.platform, purpose: 'export', encoder: settings.recording.videoEncoder }),
       '-r',
       String(settings.recording.frameRate),
       '-fps_mode',
@@ -1015,7 +1021,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         '-map',
         '0:v:0',
         '-an',
-        ...buildH264VideoArgs({ platform: process.platform, purpose: 'export' }),
+        ...buildH264VideoArgs({ platform: process.platform, purpose: 'export', encoder: settings.recording.videoEncoder }),
         '-r',
         String(settings.recording.frameRate),
         '-fps_mode',

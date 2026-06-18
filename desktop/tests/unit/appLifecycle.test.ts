@@ -127,17 +127,30 @@ describe('main app lifecycle', () => {
     expect(source).toContain('Terminal trade window found but display has no selected screen capture target')
   })
 
-  it('does not expand trade-display-only screen saves back to every monitor when display matching is unavailable', async () => {
+  it('distinguishes multiple terminal windows from the same Windows process before choosing a trade monitor', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('GetWindowThreadProcessId')
+    expect(source).toContain('listWindowProcessIds(windowIds)')
+    expect(source).toContain('const foregroundWindowId = getForegroundWindowId()')
+    expect(source).toContain('const cursorPoint = electronScreen.getCursorScreenPoint()')
+    expect(source).toContain('selectTerminalSource')
+    expect(source).toContain("reason: 'ambiguous'")
+    expect(source).toContain('Terminal process has multiple matching windows; using focused or cursor window')
+  })
+
+  it('does not save an arbitrary screen when trade display matching is unavailable', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const branch = source.slice(
       source.indexOf("if (settings.recording.sourceType === 'screen' && settings.recording.saveTradeDisplayOnly)"),
       source.indexOf("if (settings.recording.sourceType === 'screen') return undefined")
     )
 
-    expect(source).toContain('const screenFallbackTarget = selectedScreenFallbackTarget(settings, targets)')
-    expect(branch).toContain('return screenFallbackTarget')
-    expect(branch).not.toContain('return undefined')
-    expect(source).toContain('saving selected screen target instead of all screens')
+    expect(source).toContain('tradeDisplayOnlyWithoutResolvedTarget')
+    expect(source).toContain("appLog.warn('clip-queue', 'Clip render skipped because trade monitor was not resolved'")
+    expect(branch).toContain('return undefined')
+    expect(branch).not.toContain('return screenFallbackTarget')
+    expect(source).not.toContain('saving selected screen target instead of all screens')
   })
 
   it('updates built-in window recording targets when a terminal trade comes from another window', async () => {
@@ -231,5 +244,27 @@ describe('main app lifecycle', () => {
     expect(source).toContain('path: process.execPath')
     expect(source).toContain('args: getWindowsLaunchArgs()')
     expect(source).toContain("name: 'TradeTools'")
+  })
+
+  it('applies the always-on-top system preference to app windows', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('applyAlwaysOnTop')
+    expect(source).toContain('window.setAlwaysOnTop(settings.system.alwaysOnTop)')
+    expect(source).toContain('for (const window of BrowserWindow.getAllWindows())')
+    expect(source).toContain('applyAlwaysOnTop(updatedSettings)')
+    expect(source).toContain('applyAlwaysOnTop(settings)')
+  })
+
+  it('can leave the local proxy running after app close without spawning duplicates next launch', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const xraySource = await readFile(resolve('src/main/services/proxies/xrayLocalRuntime.ts'), 'utf8')
+
+    expect(appSource).toContain('keepProxyRunningAfterClose')
+    expect(appSource).toContain('applyProxyQuitPreference')
+    expect(appSource).toContain('if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()')
+    expect(xraySource).toContain('isReusableLocalXrayOwner')
+    expect(xraySource).toContain('storedLocalXrayConfigMatches')
+    expect(xraySource).toContain('Локальный proxy уже запущен')
   })
 })

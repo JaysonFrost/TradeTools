@@ -100,4 +100,19 @@ describe('buildFfmpegTrimArgs', () => {
       'yuv420p'
     ])
   })
+
+  it('can force CPU H.264 encoding even on platforms with hardware encoders', () => {
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording', encoder: 'cpu' })).toEqual([
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-tune',
+      'zerolatency',
+      '-crf',
+      '24',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+  })
 })

@@ -39,6 +39,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [saveTargetMode, setSaveTargetMode] = useState<AppSettings['recording']['saveTargetMode']>('all')
   const [saveTargetId, setSaveTargetId] = useState('')
   const [saveTradeDisplayOnly, setSaveTradeDisplayOnly] = useState(false)
+  const [videoEncoder, setVideoEncoder] = useState<AppSettings['recording']['videoEncoder']>('gpu')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
@@ -67,6 +68,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     saveTargetMode,
     saveTargetId,
     saveTradeDisplayOnly,
+    videoEncoder,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -90,6 +92,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     saveTargetMode: nextSettings.recording.saveTargetMode,
     saveTargetId: nextSettings.recording.saveTargetId,
     saveTradeDisplayOnly: nextSettings.recording.saveTradeDisplayOnly,
+    videoEncoder: nextSettings.recording.videoEncoder,
     frameRate: String(nextSettings.recording.frameRate),
     segmentSeconds: String(nextSettings.recording.segmentSeconds),
     systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
@@ -114,6 +117,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setSaveTargetMode(settings.recording.saveTargetMode)
     setSaveTargetId(settings.recording.saveTargetId)
     setSaveTradeDisplayOnly(settings.recording.saveTradeDisplayOnly)
+    setVideoEncoder(settings.recording.videoEncoder)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
@@ -208,6 +212,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           saveTargetMode,
           saveTargetId,
           saveTradeDisplayOnly,
+          videoEncoder,
           frameRate: Number(frameRate),
           segmentSeconds: Number(segmentSeconds),
           systemAudioEnabled,
@@ -254,6 +259,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     saveTargetMode,
     saveTargetId,
     saveTradeDisplayOnly,
+    videoEncoder,
     frameRate,
     segmentSeconds,
     systemAudioEnabled,
@@ -475,6 +481,17 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 </div>
               </div>
             )}
+            <label className="text-xs font-medium text-zinc-500">
+              Кодирование
+              <select
+                className={`${inputClass} appearance-none`}
+                value={videoEncoder}
+                onChange={(event) => setVideoEncoder(event.target.value === 'cpu' ? 'cpu' : 'gpu')}
+              >
+                <option value="gpu">Видеокарта</option>
+                <option value="cpu">Процессор</option>
+              </select>
+            </label>
             <label className="text-xs font-medium text-zinc-500">
               FPS записи
               <input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" />
