@@ -316,7 +316,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
     const startBrowserRecorder = async (
       api: ReturnType<typeof getTradeToolsApi>,
-      sources: WindowCaptureSource[],
       source: WindowCaptureSource
     ) => {
       const session: BrowserRecorderSession = {}
@@ -345,30 +344,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       try {
         session.browserVideoStream = await createBrowserVideoStream(mediaStream, source.type === 'window'
           ? () => {
-              const screenSource = sources.find((candidate) => candidate.type === 'screen')
-              if (!screenSource || disposed) return
-
-              onStatusChange(createLocalStatus(settings, 'Окно Vataga отдаёт чёрный кадр. Переключаемся на запись экрана.'))
-              void api.settings.update({
-                recording: {
-                  ...settings.recording,
-                  sourceType: 'screen',
-                  windowSourceId: screenSource.id,
-                  windowSourceName: screenSource.name,
-                  captureTargets: [{
-                    id: screenSource.id,
-                    name: screenSource.name,
-                    type: screenSource.type,
-                    ...(screenSource.displayId ? { displayId: screenSource.displayId } : {})
-                  }],
-                  saveTargetMode: 'selected',
-                  saveTargetId: screenSource.id
-                }
-              }).then((updated) => {
-                if (!disposed) onSettingsChange?.(updated)
-              }).catch((error) => {
-                onStatusChange(createLocalStatus(settings, error instanceof Error ? error.message : 'Не удалось переключиться на запись экрана'))
-              })
+              if (!disposed) onStatusChange(createLocalStatus(settings, 'Окно записи отдаёт чёрный кадр. Обновите источник записи в настройках.'))
             }
           : undefined)
       } catch (error) {
@@ -540,7 +516,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
       if (targets.length > 1) {
         onStatusChange(createLocalStatus(settings, `Запускаем запись ${targets.length} источников...`, true))
-        await Promise.all(targets.map((target) => startBrowserRecorder(api, sources, target)))
+        await Promise.all(targets.map((target) => startBrowserRecorder(api, target)))
         if (!disposed) onStatusChange(createLocalStatus(settings, `Встроенная запись активна: ${targets.map((target) => target.name).join(', ')}`, true))
         return
       }
@@ -551,7 +527,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         return
       }
 
-      await startBrowserRecorder(api, sources, source)
+      await startBrowserRecorder(api, source)
     }
 
     void start().catch(handleStartError)

@@ -168,6 +168,14 @@ describe('windowRecorderService', () => {
     expect(controllerSource).not.toContain('window.setInterval(drawFrame')
   })
 
+  it('reports black window capture without switching recording settings to another monitor', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('Окно записи отдаёт чёрный кадр')
+    expect(controllerSource).not.toContain("sourceType: 'screen'")
+    expect(controllerSource).not.toContain('Переключаемся на запись экрана')
+  })
+
   it('filters built-in replay segments by the requested capture target', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 

@@ -190,8 +190,22 @@ describe('main app lifecycle', () => {
 
     expect(source).toContain("ipcMain.handle('notifications:test'")
     expect(source).toContain('const notifyClipCreated')
-    expect(source).toContain('await notifyClipCreated(clip)')
+    expect(source).toContain('void notifyClipCreated(clip).catch')
     expect(source).toContain('Клип сделки готов')
+  })
+
+  it('keeps clip rendering queue progress independent from success notifications', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const notifyIndex = source.indexOf('void notifyClipCreated(clip).catch')
+    const resolveIndex = source.indexOf('job.resolve?.(clip)')
+    const finallyIndex = source.indexOf('} finally {', source.indexOf('const runClipRenderQueue'))
+
+    expect(notifyIndex).toBeGreaterThan(-1)
+    expect(resolveIndex).toBeGreaterThan(-1)
+    expect(finallyIndex).toBeGreaterThan(-1)
+    expect(notifyIndex).toBeLessThan(finallyIndex)
+    expect(resolveIndex).toBeLessThan(finallyIndex)
+    expect(source).not.toContain('await notifyClipCreated(clip)')
   })
 
   it('uses a Windows notification fallback when native Electron toasts are silent', async () => {

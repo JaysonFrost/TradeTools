@@ -1097,7 +1097,9 @@ app.whenReady().then(() => {
               videoPath: clip.videoPath,
               metadataPath: clip.metadataPath
             })
-            await notifyClipCreated(clip)
+            void notifyClipCreated(clip).catch((error) => {
+              console.warn(`Clip notification failed: ${getErrorMessage(error)}`)
+            })
             job.resolve?.(clip)
           } catch (error) {
             if (job.cancelled || job.abortController.signal.aborted) {
