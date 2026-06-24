@@ -1,6 +1,6 @@
 export type FfmpegTrimMode = 'copy' | 'reencode'
 export type H264VideoPurpose = 'recording' | 'export'
-export type H264VideoEncoder = 'gpu' | 'cpu'
+export type H264VideoEncoder = 'gpu' | 'nvidia' | 'amd' | 'intel' | `gpu:${'nvidia' | 'amd' | 'intel'}:${number}` | 'cpu'
 
 export type FfmpegTrimInput = {
   inputPath: string
@@ -30,12 +30,65 @@ const buildCpuH264VideoArgs = (purpose: H264VideoPurpose): string[] => [
   'yuv420p'
 ]
 
+const parseGpuH264VideoEncoder = (encoder: H264VideoEncoder): { vendor: 'nvidia' | 'amd' | 'intel', index?: number } | undefined => {
+  if (encoder === 'nvidia' || encoder === 'amd' || encoder === 'intel') return { vendor: encoder }
+
+  const match = /^gpu:(nvidia|amd|intel):(\d+)$/.exec(encoder)
+  if (!match) return undefined
+
+  const index = Number(match[2])
+  return Number.isInteger(index) && index >= 0 ? { vendor: match[1] as 'nvidia' | 'amd' | 'intel', index } : undefined
+}
+
 export const buildH264VideoArgs = ({ platform = process.platform, purpose, encoder = 'gpu' }: H264VideoArgsInput): string[] => {
   const bitrate = purpose === 'recording' ? '5M' : '10M'
+  const gpuEncoder = parseGpuH264VideoEncoder(encoder)
 
   if (encoder === 'cpu') return buildCpuH264VideoArgs(purpose)
 
   if (platform === 'win32') {
+    if (gpuEncoder?.vendor === 'nvidia') {
+      return [
+        '-c:v',
+        'h264_nvenc',
+        ...(gpuEncoder.index === undefined ? [] : ['-gpu', String(gpuEncoder.index)]),
+        '-preset',
+        purpose === 'recording' ? 'p1' : 'p4',
+        '-tune',
+        purpose === 'recording' ? 'ull' : 'hq',
+        '-b:v',
+        bitrate,
+        '-pix_fmt',
+        'yuv420p'
+      ]
+    }
+
+    if (gpuEncoder?.vendor === 'amd') {
+      return [
+        '-c:v',
+        'h264_amf',
+        '-usage',
+        purpose === 'recording' ? 'ultralowlatency' : 'high_quality',
+        '-b:v',
+        bitrate,
+        '-pix_fmt',
+        'nv12'
+      ]
+    }
+
+    if (gpuEncoder?.vendor === 'intel') {
+      return [
+        '-c:v',
+        'h264_qsv',
+        '-preset',
+        purpose === 'recording' ? 'veryfast' : 'medium',
+        '-b:v',
+        bitrate,
+        '-pix_fmt',
+        'nv12'
+      ]
+    }
+
     return [
       '-c:v',
       'h264_mf',

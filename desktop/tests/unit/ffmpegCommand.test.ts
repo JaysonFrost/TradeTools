@@ -111,6 +111,43 @@ describe('buildFfmpegTrimArgs', () => {
     ])
   })
 
+  it('can select a specific Windows GPU encoder device', () => {
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording', encoder: 'gpu:nvidia:1' })).toEqual([
+      '-c:v',
+      'h264_nvenc',
+      '-gpu',
+      '1',
+      '-preset',
+      'p1',
+      '-tune',
+      'ull',
+      '-b:v',
+      '5M',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'export', encoder: 'gpu:amd:0' })).toEqual([
+      '-c:v',
+      'h264_amf',
+      '-usage',
+      'high_quality',
+      '-b:v',
+      '10M',
+      '-pix_fmt',
+      'nv12'
+    ])
+    expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording', encoder: 'gpu:intel:0' })).toEqual([
+      '-c:v',
+      'h264_qsv',
+      '-preset',
+      'veryfast',
+      '-b:v',
+      '5M',
+      '-pix_fmt',
+      'nv12'
+    ])
+  })
+
   it('can force CPU H.264 encoding even on platforms with hardware encoders', () => {
     expect(buildH264VideoArgs({ platform: 'win32', purpose: 'recording', encoder: 'cpu' })).toEqual([
       '-c:v',

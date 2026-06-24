@@ -318,10 +318,15 @@ describe('windowRecorderService', () => {
 
   it('marks a partial native multi-screen recorder set for restart instead of reporting it as healthy', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const settingsKeySource = serviceSource.slice(
+      serviceSource.indexOf('const nativeSettingsKey'),
+      serviceSource.indexOf('const nativeSourceName')
+    )
 
     expect(serviceSource).toContain('expectedNativeRecorderSettingsKeys')
     expect(serviceSource).toContain('activeNativeRecorderSettingsKeys')
     expect(serviceSource).toContain("settings.recording.sourceType === 'screen'")
+    expect(settingsKeySource).toContain('settings.recording.videoEncoder')
     expect(serviceSource).toContain('Часть ffmpeg-рекордеров экранов остановилась')
     expect(serviceSource).toContain('fallbackRequired: true')
   })

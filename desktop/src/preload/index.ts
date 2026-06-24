@@ -8,6 +8,7 @@ import type { TerminalTradeRecordingStatus } from '../main/services/trades/termi
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
 import type { AppLogSnapshot } from '../main/services/logging/appLogService'
+import type { VideoEncoderOption } from '../main/services/video/videoEncoderDevices'
 
 export type ProxySaveInput = {
   id?: string
@@ -132,6 +133,7 @@ const api = {
   },
   recording: {
     listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
+    listVideoEncoders: (): Promise<VideoEncoderOption[]> => ipcRenderer.invoke('recording:list-video-encoders'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
     getFreeStatus: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-status'),
     start: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:start'),

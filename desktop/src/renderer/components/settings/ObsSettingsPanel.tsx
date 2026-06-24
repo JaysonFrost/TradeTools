@@ -2,6 +2,7 @@ import { CircleHelp, Clock3, Clapperboard, FolderOpen, Monitor, Pin, Power, Radi
 import { useEffect, useRef, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
+import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
@@ -33,6 +34,11 @@ const numberOrUndefined = (value: string): number | undefined => {
   return Number.isFinite(numericValue) ? numericValue : undefined
 }
 
+const normalizeVideoEncoderValue = (value: string): AppSettings['recording']['videoEncoder'] => {
+  if (value === 'cpu' || value === 'gpu' || value === 'nvidia' || value === 'amd' || value === 'intel') return value
+  return /^gpu:(nvidia|amd|intel):\d+$/.test(value) ? value as AppSettings['recording']['videoEncoder'] : 'gpu'
+}
+
 const FieldHint = ({ text }: { text: string }) => (
   <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
     <CircleHelp size={13} />
@@ -62,6 +68,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const [clipSuccessNotificationsEnabled, setClipSuccessNotificationsEnabled] = useState(true)
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
+  const [videoEncoderOptions, setVideoEncoderOptions] = useState<VideoEncoderOption[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
   const [host, setHost] = useState('127.0.0.1')
   const [port, setPort] = useState('4455')
@@ -188,6 +195,18 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     const interval = window.setInterval(() => void refreshWindowSources({ announce: false }), 60_000)
     return () => window.clearInterval(interval)
   }, [recordingMode, sourceType, windowSourceId, windowSourceName])
+
+  useEffect(() => {
+    void getTradeToolsApi().recording.listVideoEncoders()
+      .then(setVideoEncoderOptions)
+      .catch(() => setVideoEncoderOptions([{ id: 'gpu', label: 'Видеокарта (авто)', kind: 'gpu' }, { id: 'cpu', label: 'Процессор', kind: 'cpu' }]))
+  }, [])
+
+  useEffect(() => {
+    if (videoEncoderOptions.length === 0 || videoEncoderOptions.some((option) => option.id === videoEncoder)) return
+
+    setVideoEncoder(videoEncoderOptions[0]?.id ?? 'cpu')
+  }, [videoEncoderOptions, videoEncoder])
 
   const windowOptions = windowSources.filter((source) => source.type === 'window')
   const screenSources = windowSources.filter((source) => source.type === 'screen')
@@ -502,10 +521,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               <select
                 className={`${inputClass} appearance-none`}
                 value={videoEncoder}
-                onChange={(event) => setVideoEncoder(event.target.value === 'cpu' ? 'cpu' : 'gpu')}
+                onChange={(event) => setVideoEncoder(normalizeVideoEncoderValue(event.target.value))}
               >
-                <option value="gpu">Видеокарта</option>
-                <option value="cpu">Процессор</option>
+                {videoEncoderOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
             </label>
             <label className="text-xs font-medium text-zinc-500">

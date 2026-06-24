@@ -159,6 +159,32 @@ describe('settings', () => {
     })
   })
 
+  it('normalizes explicit GPU encoder devices and falls back to auto GPU', () => {
+    expect(normalizeSettings({
+      recording: {
+        videoEncoder: 'gpu:nvidia:1' as never
+      }
+    }, '/app-data').recording.videoEncoder).toBe('gpu:nvidia:1')
+
+    expect(normalizeSettings({
+      recording: {
+        videoEncoder: 'gpu:amd:0' as never
+      }
+    }, '/app-data').recording.videoEncoder).toBe('gpu:amd:0')
+
+    expect(normalizeSettings({
+      recording: {
+        videoEncoder: 'gpu:intel:0' as never
+      }
+    }, '/app-data').recording.videoEncoder).toBe('gpu:intel:0')
+
+    expect(normalizeSettings({
+      recording: {
+        videoEncoder: 'broken' as never
+      }
+    }, '/app-data').recording.videoEncoder).toBe('gpu')
+  })
+
   it('normalizes selected multi-monitor capture targets', () => {
     const settings = normalizeSettings({
       recording: {

@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-24
+
+### Added
+
+- Added recording encoder device discovery so settings show only detected GPUs plus CPU.
+- Added explicit ffmpeg encoder selection for detected NVIDIA, AMD and Intel adapters.
+
 ## [0.3.3] - 2026-06-24
 
 ### Fixed

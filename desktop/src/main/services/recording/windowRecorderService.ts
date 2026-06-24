@@ -328,6 +328,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     settings.recording.sourceType,
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
+    settings.recording.videoEncoder,
     settings.recording.frameRate,
     settings.recording.segmentSeconds,
     String(settings.recording.systemAudioEnabled),

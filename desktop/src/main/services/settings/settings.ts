@@ -4,7 +4,7 @@ import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaul
 
 export type RecordingSourceType = 'window' | 'screen'
 export type RecordingSaveTargetMode = 'all' | 'selected'
-export type RecordingVideoEncoder = 'gpu' | 'cpu'
+export type RecordingVideoEncoder = 'gpu' | 'nvidia' | 'amd' | 'intel' | `gpu:${'nvidia' | 'amd' | 'intel'}:${number}` | 'cpu'
 export type RecordingResolutionPreset = 'native' | '1440p' | '1080p'
 
 export type CaptureTargetRef = {
@@ -152,7 +152,16 @@ const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSet
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
 }
 const normalizeRecordingSaveTargetMode = (value: unknown): RecordingSaveTargetMode => value === 'selected' ? 'selected' : 'all'
-const normalizeRecordingVideoEncoder = (value: unknown): RecordingVideoEncoder => value === 'cpu' ? 'cpu' : 'gpu'
+const normalizeRecordingVideoEncoder = (value: unknown): RecordingVideoEncoder => {
+  if (value === 'cpu' || value === 'gpu' || value === 'nvidia' || value === 'amd' || value === 'intel') return value
+  if (typeof value !== 'string') return 'gpu'
+
+  const match = /^gpu:(nvidia|amd|intel):(\d+)$/.exec(value)
+  if (!match) return 'gpu'
+
+  const index = Number(match[2])
+  return Number.isInteger(index) && index >= 0 && index < 64 ? value as RecordingVideoEncoder : 'gpu'
+}
 const normalizeRecordingResolutionPreset = (value: unknown): RecordingResolutionPreset => (
   value === 'native' || value === '1080p' ? value : '1440p'
 )

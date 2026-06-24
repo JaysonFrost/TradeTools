@@ -19,6 +19,7 @@ import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
 import { createAppUpdateService } from './services/updates/appUpdateService'
+import { listAvailableVideoEncoders } from './services/video/videoEncoderDevices'
 import { defaultLocalProxyPort } from '../shared/defaults'
 import { createAppLogService } from './services/logging/appLogService'
 
@@ -1516,6 +1517,7 @@ app.whenReady().then(() => {
   ipcMain.handle('recording:list-window-sources', async () => {
     return listWindowCaptureSources()
   })
+  ipcMain.handle('recording:list-video-encoders', async () => listAvailableVideoEncoders())
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
   ipcMain.handle('recording:start', async () => {
