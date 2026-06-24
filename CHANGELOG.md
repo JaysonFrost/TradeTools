@@ -6,6 +6,14 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-24
+
+### Fixed
+
+- Fixed stale built-in recorder segments being reused after increasing the pre-entry buffer.
+- Terminal auto-recording now tracks only trades opened after recording starts.
+- Ignored TigerTrade startup position snapshots that report no executions.
+
 ## [0.3.2] - 2026-06-18
 
 ### Fixed
