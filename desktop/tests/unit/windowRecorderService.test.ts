@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createWindowRecorderService, selectAvailableReplayWindow } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
@@ -91,6 +91,69 @@ describe('windowRecorderService', () => {
     expect(source).toContain('const requiredSeconds')
     expect(source).toContain('Накоплено ${formatRoundedSeconds(bufferedSeconds)}')
     expect(source).toContain('selectAvailableReplayWindow')
+  })
+
+  it('does not make old 60s browser segments become a full 600s buffer after increasing the setting', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-buffer-resize-'))
+    const defaultSettings = createDefaultSettings(dataDir)
+    const settings60 = {
+      ...defaultSettings,
+      recording: {
+        ...defaultSettings.recording,
+        mode: 'window' as const,
+        windowSourceId: 'window:tiger',
+        windowSourceName: 'TigerTrade'
+      },
+      clip: {
+        ...defaultSettings.clip,
+        replayBufferSeconds: 60
+      }
+    }
+    const settings600 = {
+      ...settings60,
+      clip: {
+        ...settings60.clip,
+        replayBufferSeconds: 600
+      }
+    }
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const nowMs = Date.parse('2026-06-18T10:00:00.000Z')
+
+    vi.useFakeTimers()
+    vi.setSystemTime(nowMs)
+    try {
+      await service.appendSegment({
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade',
+        sessionId: 'browser-session',
+        sequence: 0,
+        startedAtMs: nowMs - 600_000,
+        endedAtMs: nowMs - 598_000,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings60)
+      await service.appendSegment({
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade',
+        sessionId: 'browser-session',
+        sequence: 1,
+        startedAtMs: nowMs - 2_000,
+        endedAtMs: nowMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings60)
+
+      const status = await service.getStatus(settings600)
+
+      expect(source).not.toContain('sessionLastEndedAt')
+      expect(status.bufferedSeconds).toBeLessThan(600)
+      expect(status.bufferedSeconds).toBeLessThanOrEqual(5)
+    } finally {
+      vi.useRealTimers()
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
   })
 
   it('falls back to the nearest built-in segment when the requested trade window is not buffered', () => {

@@ -101,6 +101,14 @@ describe('terminalTradeRecorder', () => {
     expect(event?.positionId).toBe('BINANCE FUTURES:ETHUSDT')
   })
 
+  it('ignores TigerTrade position snapshots that have no executions', () => {
+    const event = parseTigerTradePositionEvent(
+      '11.06.2026 10:07:45.162 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=ETHUSDT;Account=BINANCE FUTURES;Price=0;Size=2;Comission=0;Executions=0'
+    )
+
+    expect(event).toBeUndefined()
+  })
+
   it('matches TigerTrade open and close rows when the symbol slash differs', () => {
     const openEvent = parseTigerTradePositionEvent(
       '11.06.2026 10:07:45.162 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=USDC/USDT;Account=BINANCE SPOT;Price=0.9995;Size=22;Comission=0;Executions=1'
@@ -256,6 +264,67 @@ describe('terminalTradeRecorder', () => {
         status: 'closed',
         entryTimeMs: new Date(2026, 5, 15, 10, 0, 0).getTime(),
         exitTimeMs: new Date(2026, 5, 15, 10, 2, 0).getTime()
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('tracks only terminal positions opened after recording starts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-start-boundary-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_15.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const recordingStartedAtMs = new Date(2026, 5, 15, 10, 1, 0).getTime()
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().message).toContain('TigerTrade')
+      })
+      await sleep(50)
+      await appendFile(logPath, [
+        '15.06.2026 10:00:00.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=OLDUSDT;Account=BINANCE FUTURES;Price=1;Size=1;Comission=0;Executions=1',
+        '15.06.2026 10:01:10.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=NEWUSDT;Account=BINANCE FUTURES;Price=1;Size=1;Comission=0;Executions=1',
+        '15.06.2026 10:01:20.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=NEWUSDT;Account=BINANCE FUTURES;Price=1;Size=0;Comission=0;Executions=2'
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'NEWUSDT',
+        entryTimeMs: new Date(2026, 5, 15, 10, 1, 10).getTime(),
+        exitTimeMs: new Date(2026, 5, 15, 10, 1, 20).getTime()
       })
       expect(watcher.getStatus().activeTradeCount).toBe(0)
     } finally {

@@ -49,6 +49,7 @@ export type TerminalTradeWatcher = {
 
 export type TerminalTradeWatcherInput = {
   getSettings: () => Promise<AppSettings>
+  getRecordingStartedAtMs?: () => number | undefined
   ensureVideoRecordingReady: () => Promise<boolean>
   protectSince: (timeMs?: number) => void
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
@@ -284,6 +285,8 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
   const account = normalizeAnyText(fields.Account)
   const size = parseNumericValue(fields.Size)
   if (!symbol || !account || !Number.isFinite(size)) return undefined
+  const executions = parseNumericValue(fields.Executions)
+  if (Number.isFinite(executions) && executions <= 0) return undefined
   const normalizedSymbol = normalizeTerminalSymbol(symbol)
 
   const eventTimeMs = parseLocalDateTime(match[1], match[2], match[3], match[4], match[5], match[6], match[7] ?? '0')
@@ -534,6 +537,7 @@ const fetchJsonWithTimeout = async (url: string, timeoutMs: number): Promise<unk
 
 export const createTerminalTradeWatcher = ({
   getSettings,
+  getRecordingStartedAtMs,
   ensureVideoRecordingReady,
   protectSince,
   createClipForClosedTrade,
@@ -577,6 +581,7 @@ export const createTerminalTradeWatcher = ({
   let polling = false
   let processing = Promise.resolve()
   let status = createIdleTerminalTradeStatus()
+  let lastRecordingStartedAtMs: number | undefined
 
   const emit = (patch: Partial<TerminalTradeRecordingStatus>) => {
     const startedAtMs = activeTrades.size
@@ -590,6 +595,29 @@ export const createTerminalTradeWatcher = ({
       ...patch
     }
     onStatusChange?.(status)
+  }
+
+  const clearActiveTrades = () => {
+    activeTrades.clear()
+    positionTradeKeys.clear()
+    protectSince()
+  }
+
+  const syncRecordingBoundary = (settings: AppSettings) => {
+    if (settings.recording.mode !== 'window' || !getRecordingStartedAtMs) return
+
+    const nextRecordingStartedAtMs = getRecordingStartedAtMs()
+    if (nextRecordingStartedAtMs === lastRecordingStartedAtMs) return
+
+    lastRecordingStartedAtMs = nextRecordingStartedAtMs
+    clearActiveTrades()
+    emit({
+      source: 'multi-terminal',
+      message: nextRecordingStartedAtMs
+        ? 'Автозапись терминалов включена: ждём новые сделки'
+        : 'Фоновая запись остановлена',
+      lastError: undefined
+    })
   }
 
   const providerNames = () => {
@@ -723,6 +751,16 @@ export const createTerminalTradeWatcher = ({
     return createClosedTradeClip(openTrade, event, sourceName)
   }
 
+  const isBeforeActiveRecording = async (event: TerminalPositionEvent): Promise<boolean> => {
+    if (!getRecordingStartedAtMs) return false
+
+    const settings = await getSettings()
+    if (settings.recording.mode !== 'window') return false
+
+    const recordingStartedAtMs = getRecordingStartedAtMs()
+    return !recordingStartedAtMs || event.eventTimeMs < recordingStartedAtMs
+  }
+
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
@@ -730,6 +768,8 @@ export const createTerminalTradeWatcher = ({
     const eventClosesPosition = event.isClosed || (typeof event.size === 'number' && isNearlyZero(event.size))
 
     if (!eventClosesPosition) {
+      if (await isBeforeActiveRecording(event)) return
+
       const openTrade = activeTrades.get(tradeKey)
       if (openTrade) {
         if (isPositionReversal(openTrade.size, event.size)) {
@@ -919,6 +959,7 @@ export const createTerminalTradeWatcher = ({
     try {
       const settings = await getSettings()
       if (settings.tradeSource.mode !== 'terminal-window') return
+      syncRecordingBoundary(settings)
 
       await Promise.all(providers.map((provider) => pollLogProvider(provider)))
       await pollMetaScalpApi()
@@ -943,11 +984,9 @@ export const createTerminalTradeWatcher = ({
     stop() {
       if (timer) clearInterval(timer)
       timer = undefined
-      activeTrades.clear()
-      positionTradeKeys.clear()
+      clearActiveTrades()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
-      protectSince()
       emit({ active: false, startedAtMs: 0, source: 'multi-terminal', message: 'Автозапись терминалов остановлена' })
     },
     getStatus() {

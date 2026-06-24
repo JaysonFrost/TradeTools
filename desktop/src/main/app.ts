@@ -1299,6 +1299,7 @@ app.whenReady().then(() => {
   let lastObsReplayEnsureAtMs = 0
   let obsReplayBufferReady = false
   let backgroundWindowRecordingEnabled = true
+  let backgroundWindowRecordingStartedAtMs = 0
 
   const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
@@ -1406,6 +1407,7 @@ app.whenReady().then(() => {
 
   const terminalTradeWatcher = createTerminalTradeWatcher({
     getSettings: () => settingsStore.load(),
+    getRecordingStartedAtMs: () => backgroundWindowRecordingStartedAtMs,
     ensureVideoRecordingReady,
     protectSince: setWatcherProtectedSince,
     createClipForClosedTrade: queueClipForClosedTrade,
@@ -1518,6 +1520,7 @@ app.whenReady().then(() => {
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
   ipcMain.handle('recording:start', async () => {
     backgroundWindowRecordingEnabled = true
+    backgroundWindowRecordingStartedAtMs = Date.now()
     return windowRecorderService.start(await settingsStore.load())
   })
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
@@ -1530,6 +1533,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('recording:stop', async () => {
     backgroundWindowRecordingEnabled = false
+    backgroundWindowRecordingStartedAtMs = 0
     return windowRecorderService.stop()
   })
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (

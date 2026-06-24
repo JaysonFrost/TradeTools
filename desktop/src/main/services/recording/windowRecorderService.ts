@@ -771,15 +771,9 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0, freeRecordingExportProtectedSinceMs].filter((value) => value > 0)
     const protectedCutoffMs = protectedCutoffs.length > 0 ? Math.min(...protectedCutoffs) : 0
     const cutoffMs = protectedCutoffMs > 0 ? Math.min(replayCutoffMs, protectedCutoffMs) : replayCutoffMs
-    const sessionLastEndedAt = new Map<string, number>()
-
-    for (const segment of segments) {
-      sessionLastEndedAt.set(segment.sessionId, Math.max(sessionLastEndedAt.get(segment.sessionId) ?? 0, segment.endedAtMs))
-    }
-
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       const segment = segments[index]
-      if (!segment || (sessionLastEndedAt.get(segment.sessionId) ?? segment.endedAtMs) >= cutoffMs) continue
+      if (!segment || segment.endedAtMs >= cutoffMs) continue
 
       segments.splice(index, 1)
       await rm(segment.path, { force: true }).catch(() => undefined)

@@ -26,9 +26,12 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('let backgroundWindowRecordingEnabled = true')
+    expect(source).toContain('let backgroundWindowRecordingStartedAtMs = 0')
     expect(source).toContain('if (!backgroundWindowRecordingEnabled) return false')
     expect(source).toContain('backgroundWindowRecordingEnabled = true')
+    expect(source).toContain('backgroundWindowRecordingStartedAtMs = Date.now()')
     expect(source).toContain('backgroundWindowRecordingEnabled = false')
+    expect(source).toContain('backgroundWindowRecordingStartedAtMs = 0')
     expect(source).toContain('notifyWindowRecordingNeeded')
     expect(source).toContain("webContents.send('recording:ensure-window')")
     expect(source).toContain('await windowRecorderService.start(settings)')
@@ -82,6 +85,7 @@ describe('main app lifecycle', () => {
     expect(source).toContain('protectSince()')
     expect(source).toContain('protectActiveTrades')
     expect(source).toContain('earliestEntryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
+    expect(source).toContain('getRecordingStartedAtMs')
   })
 
   it('queues clip rendering jobs without blocking terminal trade event processing', async () => {
