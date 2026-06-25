@@ -58,7 +58,17 @@ const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): W
 )
 
 const sourceMatchesTarget = (source: WindowCaptureSource, target: AppSettings['recording']['captureTargets'][number]): boolean => (
-  source.type === target.type && (source.id === target.id || source.name === target.name)
+  source.type === target.type && (
+    source.id === target.id ||
+    source.name === target.name ||
+    (source.type === 'screen' && Boolean(source.displayId) && source.displayId === target.displayId)
+  )
+)
+
+const targetNeedsSync = (source: WindowCaptureSource, target: AppSettings['recording']['captureTargets'][number]): boolean => (
+  target.id !== source.id ||
+  target.name !== source.name ||
+  target.displayId !== source.displayId
 )
 
 const resolveRecordingTargets = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource[] => {
@@ -436,7 +446,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       }
 
       const screenTargetsNeedSync = settings.recording.sourceType === 'screen' && targets.length > 0 && (
-        settings.recording.captureTargets.some((target) => target.type === 'screen' && !target.displayId)
+        settings.recording.captureTargets.some((target) => {
+          if (target.type !== 'screen') return false
+          const source = targets.find((source) => sourceMatchesTarget(source, target))
+          return !target.displayId || (source ? targetNeedsSync(source, target) : false)
+        })
       )
       if (screenTargetsNeedSync) {
         const firstScreen = targets[0]
@@ -538,7 +552,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     settings?.recording.sourceType,
     settings?.recording.windowSourceId,
     settings?.recording.windowSourceName,
-    settings?.recording.captureTargets.map((target) => `${target.id}:${target.name}:${target.type}`).join('|'),
+    settings?.recording.captureTargets.map((target) => `${target.id}:${target.name}:${target.type}:${target.displayId ?? ''}`).join('|'),
     settings?.recording.saveTargetMode,
     settings?.recording.saveTargetId,
     settings?.recording.resolutionPreset,

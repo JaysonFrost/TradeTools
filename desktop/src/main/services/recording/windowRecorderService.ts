@@ -485,6 +485,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget, targets: NativeRecorderTarget[]): string[] => {
     const frameRate = nativeRecordingFrameRate(settings, targets)
     const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
+    const segmentFrameCount = String(Math.max(1, Math.trunc(Number(frameRate) * Number(segmentSeconds))))
 
     return [
       '-hide_banner',
@@ -500,6 +501,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       frameRate,
       '-fps_mode',
       'cfr',
+      '-g',
+      segmentFrameCount,
       '-f',
       'segment',
       '-segment_time',

@@ -307,6 +307,14 @@ describe('windowRecorderService', () => {
     expect(appSource).toContain("ipcMain.handle('recording:start'")
   })
 
+  it('sets native recorder GOP to the segment length so ffmpeg segment lists keep advancing', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('const segmentFrameCount')
+    expect(serviceSource).toContain("'-g'")
+    expect(serviceSource).toContain('segmentFrameCount')
+  })
+
   it('avoids cursor capture in both native screen recording and the Chromium fallback', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

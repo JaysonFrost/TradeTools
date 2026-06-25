@@ -52,6 +52,14 @@ const toCaptureTarget = (source: WindowCaptureSource): AppSettings['recording'][
   ...(source.displayId ? { displayId: source.displayId } : {})
 })
 
+const sourceMatchesCaptureTarget = (source: WindowCaptureSource, target: AppSettings['recording']['captureTargets'][number]): boolean => (
+  source.type === target.type && (
+    source.id === target.id ||
+    source.name === target.name ||
+    (source.type === 'screen' && Boolean(source.displayId) && source.displayId === target.displayId)
+  )
+)
+
 export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
   const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
@@ -83,6 +91,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [editingDraft, setEditingDraft] = useState(false)
   const hydratedSettingsRef = useRef(false)
   const lastSavedSnapshotRef = useRef('')
+  const skipNextAutosaveRef = useRef(false)
 
   const buildSettingsSnapshot = (password = obsPassword): string => JSON.stringify({
     recordingMode,
@@ -138,6 +147,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     if (!settings) return
     if (editingDraft && hydratedSettingsRef.current) return
 
+    skipNextAutosaveRef.current = true
     setRecordingMode(settings.recording.mode)
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
@@ -210,14 +220,14 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   const windowOptions = windowSources.filter((source) => source.type === 'window')
   const screenSources = windowSources.filter((source) => source.type === 'screen')
-  const selectedCaptureTargetIds = new Set(captureTargets.map((target) => target.id))
+  const isCaptureTargetSelected = (source: WindowCaptureSource): boolean => captureTargets.some((target) => sourceMatchesCaptureTarget(source, target))
 
   const toggleScreenCaptureTarget = (source: WindowCaptureSource, checked: boolean) => {
     const target = toCaptureTarget(source)
     setCaptureTargets((current) => (
       checked
-        ? [...current.filter((candidate) => candidate.id !== target.id), target]
-        : current.filter((candidate) => candidate.id !== target.id)
+        ? [...current.filter((candidate) => !sourceMatchesCaptureTarget(source, candidate)), target]
+        : current.filter((candidate) => !sourceMatchesCaptureTarget(source, candidate))
     ))
   }
 
@@ -231,8 +241,16 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
       const selectedCaptureTarget = selectedSource ? toCaptureTarget(selectedSource) : undefined
+      const savedScreenCaptureTargets = settings?.recording.sourceType === 'screen'
+        ? settings.recording.captureTargets.filter((target) => target.type === 'screen')
+        : []
+      const screenCaptureTargets = captureTargets.filter((target) => target.type === 'screen')
       const nextCaptureTargets = sourceType === 'screen'
-        ? captureTargets.filter((target) => target.type === 'screen')
+        ? (screenCaptureTargets.length > 0 ? screenCaptureTargets : savedScreenCaptureTargets)
+            .map((target) => {
+              const source = windowSources.find((source) => sourceMatchesCaptureTarget(source, target))
+              return source ? toCaptureTarget(source) : target
+            })
         : selectedCaptureTarget ? [selectedCaptureTarget] : captureTargets.filter((target) => target.type === 'window')
       const firstCaptureTarget = nextCaptureTargets[0]
       const saveTargetId = sourceType === 'screen'
@@ -288,6 +306,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   useEffect(() => {
     if (!settings || !hydratedSettingsRef.current) return
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false
+      return
+    }
+
     const snapshot = buildSettingsSnapshot()
     if (snapshot === lastSavedSnapshotRef.current) return
 
@@ -317,7 +340,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     replayBufferSeconds,
     replaySourceDir,
     outputDir,
-    obsPassword
+    obsPassword,
+    settings
   ])
 
   const applyDefaultClipPreset = () => {
@@ -459,7 +483,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                         <input
                           type="checkbox"
                           className="mt-1 h-4 w-4 accent-violet-500"
-                          checked={selectedCaptureTargetIds.has(source.id)}
+                          checked={isCaptureTargetSelected(source)}
                           onChange={(event) => toggleScreenCaptureTarget(source, event.target.checked)}
                         />
                         <span>

@@ -6,6 +6,14 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-06-25
+
+### Fixed
+
+- Fixed built-in monitor recording so selected monitors stay saved after restart.
+- Fixed trade clips failing with "0 seconds accumulated" even while TradeTools was running.
+- Improved multi-monitor recording recovery when Windows changes internal screen IDs.
+
 ## [0.3.4] - 2026-06-24
 
 ### Added

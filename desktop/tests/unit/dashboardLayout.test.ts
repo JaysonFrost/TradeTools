@@ -146,8 +146,17 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).not.toContain('Выбранный монитор')
     expect(settingsPanelSource).toContain('Мониторы для записи')
     expect(settingsPanelSource).toContain('Каждый выбранный монитор сохранится отдельным видео')
+    expect(settingsPanelSource).toContain('sourceMatchesCaptureTarget')
+    expect(settingsPanelSource).toContain('source.displayId === target.displayId')
+    expect(settingsPanelSource).toContain('captureTargets.some((target) => sourceMatchesCaptureTarget(source, target))')
+    expect(settingsPanelSource).toContain('skipNextAutosaveRef')
+    expect(settingsPanelSource).toContain('savedScreenCaptureTargets')
+    expect(settingsPanelSource).toContain('screenCaptureTargets.length > 0 ? screenCaptureTargets : savedScreenCaptureTargets')
     expect(controllerSource).toContain('resolveRecordingTargets')
     expect(controllerSource).toContain('settings.recording.captureTargets')
+    expect(controllerSource).toContain('source.displayId === target.displayId')
+    expect(controllerSource).toContain('targetNeedsSync')
+    expect(controllerSource).toContain("`${target.id}:${target.name}:${target.type}:${target.displayId ?? ''}`")
   })
 
   it('renames video recording settings to recording settings', async () => {
