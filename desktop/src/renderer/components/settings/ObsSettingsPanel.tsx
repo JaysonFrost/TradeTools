@@ -202,9 +202,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   useEffect(() => {
     if (recordingMode !== 'window') return
     void refreshWindowSources({ announce: false })
-    const interval = window.setInterval(() => void refreshWindowSources({ announce: false }), 60_000)
-    return () => window.clearInterval(interval)
-  }, [recordingMode, sourceType, windowSourceId, windowSourceName])
+  }, [recordingMode, sourceType])
 
   useEffect(() => {
     void getTradeToolsApi().recording.listVideoEncoders()

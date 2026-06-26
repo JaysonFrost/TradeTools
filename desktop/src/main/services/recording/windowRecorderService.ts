@@ -194,7 +194,7 @@ const pollIntervalMs = 250
 const exportToleranceMs = 1_500
 const segmentStaleAfterMs = 8_000
 const nativeRecorderStartupGraceMs = 900
-const nativeScreenFrameRateCap = 30
+const nativeScreenFrameRateCap = 24
 
 const sleep = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 

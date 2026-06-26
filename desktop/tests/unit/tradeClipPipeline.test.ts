@@ -735,6 +735,7 @@ describe('tradeClipPipeline', () => {
 
     expect(runFfmpeg).not.toHaveBeenCalled()
     expect(await readFile(clip.videoPath, 'utf8')).toBe('ready built-in clip')
+    await expect(access(replayPath)).rejects.toThrow()
     await expect(stat(clip.metadataPath)).resolves.toBeDefined()
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
     expect(metadata.replayPath).toBe(clip.videoPath)

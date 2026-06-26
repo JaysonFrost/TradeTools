@@ -35,6 +35,8 @@ type BrowserRecorderSession = {
 const browserCaptureMaxFrameRate = 24
 const browserVideoBitrate = 2_500_000
 const browserAudioBitrate = 128_000
+const sourceRetryDelayMs = 15_000
+const nativeStatusPollMs = 5_000
 
 const chooseMimeType = (hasAudio: boolean): string => {
   const candidates = hasAudio
@@ -321,7 +323,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       sourceRetryTimer = window.setTimeout(() => {
         sourceRetryTimer = undefined
         if (!disposed) void start().catch(handleStartError)
-      }, 2_000)
+      }, sourceRetryDelayMs)
     }
 
     const startBrowserRecorder = async (
@@ -524,7 +526,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
               void start().catch(handleStartError)
             }
           }).catch(handleStartError)
-        }, 2_000)
+        }, nativeStatusPollMs)
         return
       }
 

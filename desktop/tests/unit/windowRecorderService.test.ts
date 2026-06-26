@@ -347,6 +347,16 @@ describe('windowRecorderService', () => {
     expect(controllerSource).not.toContain('Автоматически выбрали экран')
   })
 
+  it('throttles source retries and native status polling to avoid source-scan thread buildup', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).toContain('sourceRetryDelayMs')
+    expect(controllerSource).toContain('15_000')
+    expect(controllerSource).toContain('nativeStatusPollMs')
+    expect(controllerSource).toContain('5_000')
+    expect(controllerSource).not.toContain('}, 2_000)')
+  })
+
   it('uses Chromium capture for audio-enabled built-in recording and keeps audio in browser exports', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

@@ -6,6 +6,17 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-06-26
+
+### Changed
+
+- Reduced built-in window recorder source scans and status polling to avoid background thread buildup.
+- Lowered native screen recording frame rate cap to 24 FPS.
+
+### Fixed
+
+- Removed temporary replay files after ready built-in clips are moved into the final clip folder.
+
 ## [0.3.5] - 2026-06-25
 
 ### Fixed

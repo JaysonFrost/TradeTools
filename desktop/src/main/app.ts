@@ -246,6 +246,9 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
   fetchWindowIcons: false
 })
 
+const windowCaptureSourcesCacheMs = 5_000
+let windowCaptureSourcesCache: { loadedAtMs: number, sources: WindowCaptureSource[] } | undefined
+
 const desktopSourceWindowId = (sourceId: string): string => /^window:(\d+):/.exec(sourceId)?.[1] ?? ''
 
 const listWindowBounds = (windowIds: string[]): Map<string, WindowBounds> => {
@@ -416,11 +419,20 @@ const toWindowCaptureSource = (
 }
 
 const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
+  if (windowCaptureSourcesCache && Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs) {
+    return windowCaptureSourcesCache.sources
+  }
+
   const sources = await listDesktopCaptureSources()
   const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
   const windowProcessIds = listWindowProcessIds(windowIds)
   const windowBounds = listWindowBounds(windowIds)
-  return sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
+  const mappedSources = sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
+  windowCaptureSourcesCache = {
+    loadedAtMs: Date.now(),
+    sources: mappedSources
+  }
+  return mappedSources
 }
 
 const toCaptureTargetRef = (source: WindowCaptureSource): CaptureTargetRef => ({

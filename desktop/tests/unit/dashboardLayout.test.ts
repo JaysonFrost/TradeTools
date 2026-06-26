@@ -186,12 +186,13 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).not.toContain('<SystemSettingsPanel mode="video"')
   })
 
-  it('auto-saves video settings and refreshes window sources every minute', async () => {
+  it('auto-saves video settings without polling window sources forever', async () => {
     const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('saveCurrentSettings')
-    expect(settingsPanelSource).toContain('window.setInterval')
-    expect(settingsPanelSource).toContain('60_000')
+    expect(settingsPanelSource).toContain('refreshWindowSources({ announce: false })')
+    expect(settingsPanelSource).not.toContain('window.setInterval(() => void refreshWindowSources')
+    expect(settingsPanelSource).not.toContain('60_000')
     expect(settingsPanelSource).toContain('Настройки применены')
     expect(settingsPanelSource).not.toContain('Нажмите «Сохранить»')
     expect(settingsPanelSource).not.toContain("{saving ? 'Сохраняем...' : 'Сохранить'}")
@@ -486,6 +487,8 @@ describe('Dashboard layout', () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('refreshPendingClips')
+    expect(source).toContain('dashboardRefreshIntervalMs')
+    expect(source).toContain('5_000')
     expect(source).toContain('setInterval')
     expect(source).toContain('api.clips.listPending()')
     expect(source).toContain('api.clips.getProcessingStatus()')

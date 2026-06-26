@@ -70,6 +70,14 @@ describe('main app lifecycle', () => {
     expect(source).not.toContain("filter((source) => source.name.trim().length > 0)")
   })
 
+  it('caches desktop capture source scans because they are expensive in the Electron browser process', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('windowCaptureSourcesCacheMs')
+    expect(source).toContain('windowCaptureSourcesCache')
+    expect(source).toContain('Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs')
+  })
+
   it('does not keep Binance API polling code in the main process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

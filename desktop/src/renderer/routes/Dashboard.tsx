@@ -69,6 +69,8 @@ type ProxyPageProps = {
   onSettingsSaved: (settings: AppSettings) => void
 }
 
+const dashboardRefreshIntervalMs = 5_000
+
 const ClipProcessingBar = ({ status, onCancel }: { status: ClipProcessingStatus, onCancel: (jobId?: string) => void }) => (
   <div className="rounded-3xl border border-violet-400/20 bg-violet-500/[0.07] p-4">
     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -815,7 +817,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     } catch {
       // loadLocalState already surfaces Electron API errors.
     }
-    const interval = window.setInterval(() => void refreshPendingClips(), 2_000)
+    const interval = window.setInterval(() => void refreshPendingClips(), dashboardRefreshIntervalMs)
     return () => {
       window.clearInterval(interval)
       unsubscribeProxyCheck?.()
