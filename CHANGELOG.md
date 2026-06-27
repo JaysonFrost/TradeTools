@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-06-28
+
+### Fixed
+
+- Fixed phantom TigerTrade positions from startup WorkLog replay, including simulator rows and stale historical executions.
+- Fixed TigerTrade zero-size close rows with `Executions=0` being ignored.
+
 ## [0.3.7] - 2026-06-27
 
 ### Fixed

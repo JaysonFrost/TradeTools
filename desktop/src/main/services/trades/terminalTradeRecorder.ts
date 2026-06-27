@@ -68,10 +68,15 @@ type LogProviderState = {
   source: TerminalTradeSource
   displayName: string
   getLogFiles: () => Promise<string[]>
-  parseLine: (line: string) => TerminalPositionEvent | undefined
+  parseLine: (line: string, options?: { initialReplay?: boolean }) => TerminalPositionEvent | undefined
   cursors: Map<string, LogCursor>
   initialized: boolean
   available: boolean
+}
+
+type TigerTradeExecutionEvent = {
+  positionId: string
+  eventTimeMs: number
 }
 
 type MetaScalpConnection = Record<string, unknown>
@@ -86,6 +91,7 @@ const readChunkSize = 128 * 1024
 const metaScalpPorts = Array.from({ length: 11 }, (_, index) => 17_845 + index)
 const metaScalpProbeCooldownMs = 5_000
 const metaScalpRequestTimeoutMs = 900
+const tigerTradeReplayExecutionToleranceMs = 6 * 60 * 60 * 1000
 const zeroTolerance = 1e-12
 
 const sourceDisplayNames: Record<TerminalTradeSource, string> = {
@@ -274,6 +280,31 @@ const parseKeyValuePairs = (text: string): Record<string, string> => {
   return result
 }
 
+const getTigerTradePositionId = (account: string, symbol: string): string => (
+  `${account}:${normalizeTerminalSymbol(symbol)}`.toUpperCase()
+)
+
+const parseTigerTradeExecutionEvent = (line: string): TigerTradeExecutionEvent | undefined => {
+  if (!line.includes('EnqueueExecution:')) return undefined
+
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\s+(.+?):\s+EnqueueExecution:\s+(.+)$/.exec(line.trim())
+  if (!match) return undefined
+
+  const fields = parseKeyValuePairs(match[9])
+  const symbol = normalizeAnyText(fields.Symbol)
+  const account = normalizeAnyText(fields.Account)
+  if (!symbol || !account) return undefined
+
+  const eventTimeMs = parseMaybeTime(fields.Time)
+    || parseLocalDateTime(match[1], match[2], match[3], match[4], match[5], match[6], match[7] ?? '0')
+  if (!eventTimeMs) return undefined
+
+  return {
+    positionId: getTigerTradePositionId(account, symbol),
+    eventTimeMs
+  }
+}
+
 export const parseTigerTradePositionEvent = (line: string): TerminalPositionEvent | undefined => {
   if (!line.includes('EnqueueUserPosition:')) return undefined
 
@@ -285,8 +316,10 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
   const account = normalizeAnyText(fields.Account)
   const size = parseNumericValue(fields.Size)
   if (!symbol || !account || !Number.isFinite(size)) return undefined
+  if (/^simulator$/i.test(normalizeAnyText(match[8])) || /^sim\d*$/i.test(account)) return undefined
   const executions = parseNumericValue(fields.Executions)
-  if (Number.isFinite(executions) && executions <= 0) return undefined
+  const eventCloses = isNearlyZero(size)
+  if (!eventCloses && Number.isFinite(executions) && executions <= 0) return undefined
   const normalizedSymbol = normalizeTerminalSymbol(symbol)
 
   const eventTimeMs = parseLocalDateTime(match[1], match[2], match[3], match[4], match[5], match[6], match[7] ?? '0')
@@ -294,11 +327,11 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
 
   return {
     source: 'tigertrade',
-    positionId: `${account}:${normalizedSymbol}`.toUpperCase(),
+    positionId: getTigerTradePositionId(account, symbol),
     exchange: normalizeExchangeName(account || match[8], 'TIGERTRADE'),
     symbol: normalizedSymbol,
     side: normalizeSideFromSize(size),
-    isClosed: isNearlyZero(size),
+    isClosed: eventCloses,
     eventTimeMs,
     size
   }
@@ -548,6 +581,27 @@ export const createTerminalTradeWatcher = ({
 }: TerminalTradeWatcherInput): TerminalTradeWatcher => {
   const vatagaLogsDir = getVatagaLogsDir(env)
   const tigerTradeRootDir = getTigerTradeRootDir(env)
+  const tigerTradeExecutionTimes = new Map<string, number>()
+  const parseTigerTradeLogLine = (
+    line: string,
+    options?: { initialReplay?: boolean }
+  ): TerminalPositionEvent | undefined => {
+    const execution = parseTigerTradeExecutionEvent(line)
+    if (execution) {
+      tigerTradeExecutionTimes.set(execution.positionId, execution.eventTimeMs)
+      return undefined
+    }
+
+    const event = parseTigerTradePositionEvent(line)
+    if (!event) return undefined
+    if (!options?.initialReplay || event.isClosed) return event
+
+    const executionTimeMs = tigerTradeExecutionTimes.get(event.positionId)
+    if (!executionTimeMs) return undefined
+    return Math.abs(event.eventTimeMs - executionTimeMs) <= tigerTradeReplayExecutionToleranceMs
+      ? event
+      : undefined
+  }
   const providers: LogProviderState[] = [
     {
       source: 'vataga',
@@ -562,7 +616,7 @@ export const createTerminalTradeWatcher = ({
       source: 'tigertrade',
       displayName: 'TigerTrade',
       getLogFiles: () => listTigerTradeLogFiles(tigerTradeRootDir),
-      parseLine: parseTigerTradePositionEvent,
+      parseLine: parseTigerTradeLogLine,
       cursors: new Map(),
       initialized: false,
       available: false
@@ -860,11 +914,13 @@ export const createTerminalTradeWatcher = ({
 
     provider.available = true
     const recentFiles = files.slice(-2)
+    const initialReplayFiles = new Set<string>()
     if (!provider.initialized) {
       const readExistingLines = shouldReadInitialLogLines(settings)
       await Promise.all(recentFiles.map(async (filePath) => {
         const fileStat = await stat(filePath)
         provider.cursors.set(filePath, { offset: readExistingLines ? 0 : fileStat.size, remainder: '' })
+        if (readExistingLines) initialReplayFiles.add(filePath)
       }))
       provider.initialized = true
       if (!readExistingLines) return true
@@ -877,7 +933,7 @@ export const createTerminalTradeWatcher = ({
         provider.cursors.set(filePath, cursor)
       }
       await readNewLines(filePath, cursor, (line) => {
-        const event = provider.parseLine(line)
+        const event = provider.parseLine(line, { initialReplay: initialReplayFiles.has(filePath) })
         if (event) enqueueEvent(event)
       })
     }

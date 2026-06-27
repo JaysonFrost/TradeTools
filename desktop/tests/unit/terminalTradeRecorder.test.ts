@@ -101,9 +101,26 @@ describe('terminalTradeRecorder', () => {
     expect(event?.positionId).toBe('BINANCE FUTURES:ETHUSDT')
   })
 
+  it('marks TigerTrade zero-size updates with no executions as closes', () => {
+    const event = parseTigerTradePositionEvent(
+      '11.06.2026 10:08:45.162 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=ETHUSDT;Account=BINANCE FUTURES;Price=0;Size=0;Comission=0;PriceMode=PartClose:false;Executions=0'
+    )
+
+    expect(event?.isClosed).toBe(true)
+    expect(event?.positionId).toBe('BINANCE FUTURES:ETHUSDT')
+  })
+
   it('ignores TigerTrade position snapshots that have no executions', () => {
     const event = parseTigerTradePositionEvent(
       '11.06.2026 10:07:45.162 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=ETHUSDT;Account=BINANCE FUTURES;Price=0;Size=2;Comission=0;Executions=0'
+    )
+
+    expect(event).toBeUndefined()
+  })
+
+  it('ignores TigerTrade simulator position snapshots', () => {
+    const event = parseTigerTradePositionEvent(
+      '11.06.2026 10:07:45.162 Simulator: EnqueueUserPosition: Symbol=CAMPUSDT;Account=SIM1;Price=8632;Size=-4600;Comission=0;Executions=1'
     )
 
     expect(event).toBeUndefined()
@@ -334,7 +351,7 @@ describe('terminalTradeRecorder', () => {
     }
   })
 
-  it('tracks the first TigerTrade position when the log appears after recording starts', async () => {
+  it('ignores stale TigerTrade startup replay before tracking a fresh fill', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')
     }))
@@ -369,7 +386,17 @@ describe('terminalTradeRecorder', () => {
       await sleep(50)
       await mkdir(logsDir, { recursive: true })
       await writeFile(logPath, [
-        '15.06.2026 10:00:10.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=SKYAIUSDT;Account=BINANCE FUTURES;Price=27103;Size=36;Comission=0,00487854;PriceMode=[Unified] Open Only;Executions=1'
+        '15.06.2026 10:00:10.000 Simulator: EnqueueUserPosition: Symbol=CAMPUSDT;Account=SIM1;Price=8632;Size=-4600;Comission=0;PriceMode=[Unified] Open Only;Executions=1',
+        '15.06.2026 10:00:11.000 Binance via TIGER.COM Broker Spot: EnqueueExecution: ExecutionID=339707546;OrderID=1183534940;Symbol=USDC/USDT;Account=BINANCE SPOT;Time=17.10.2025 21:51:44;Price=99950;Quantity=22;Side=Sell;Comission(Q)=0',
+        '15.06.2026 10:00:11.000 Binance via TIGER.COM Broker Spot: EnqueueUserPosition: Symbol=USDC/USDT;Account=BINANCE SPOT;Price=9995;Size=-22;Comission=0;PriceMode=[Unified] Open Only;Executions=1'
+      ].join('\n') + '\n', 'utf8')
+
+      await sleep(120)
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+
+      await appendFile(logPath, [
+        '15.06.2026 10:00:20.000 Binance via TIGER.COM Broker Futures: EnqueueExecution: ExecutionID=173915325;OrderID=2135213143;Symbol=SKYAIUSDT;Account=BINANCE FUTURES;Time=15.06.2026 07:00:20;Price=27103;Quantity=36;Side=Buy;Comission(Q)=0,00487854',
+        '15.06.2026 10:00:20.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=SKYAIUSDT;Account=BINANCE FUTURES;Price=27103;Size=36;Comission=0,00487854;PriceMode=[Unified] Open Only;Executions=1'
       ].join('\n') + '\n', 'utf8')
 
       await waitForAssertion(() => {
