@@ -334,6 +334,113 @@ describe('terminalTradeRecorder', () => {
     }
   })
 
+  it('tracks the first TigerTrade position when the log appears after recording starts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-late-log-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_15.06.2026.log')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const recordingStartedAtMs = new Date(2026, 5, 15, 10, 0, 0).getTime()
+    const ensureVideoRecordingReady = vi.fn(async () => true)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade: vi.fn(async (_trade: ClosedTrade) => undefined),
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await sleep(50)
+      await mkdir(logsDir, { recursive: true })
+      await writeFile(logPath, [
+        '15.06.2026 10:00:10.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=SKYAIUSDT;Account=BINANCE FUTURES;Price=27103;Size=36;Comission=0,00487854;PriceMode=[Unified] Open Only;Executions=1'
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+      expect(watcher.getStatus().message).toContain('SKYAIUSDT')
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an active terminal trade when background recording restarts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-recording-restart-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_15.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    let recordingStartedAtMs = new Date(2026, 5, 15, 10, 0, 0).getTime()
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade: vi.fn(async (_trade: ClosedTrade) => undefined),
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().message).toContain('TigerTrade')
+      })
+      await sleep(50)
+      await appendFile(logPath, [
+        '15.06.2026 10:00:10.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=SKYAIUSDT;Account=BINANCE FUTURES;Price=27103;Size=36;Comission=0,00487854;PriceMode=[Unified] Open Only;Executions=1'
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+
+      recordingStartedAtMs = new Date(2026, 5, 15, 10, 1, 0).getTime()
+      await sleep(80)
+
+      expect(watcher.getStatus().activeTradeCount).toBe(1)
+      expect(watcher.getStatus().message).toContain('SKYAIUSDT')
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('records Vataga scale-ins and partial exits as one trade clip', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')

@@ -610,6 +610,8 @@ export const createTerminalTradeWatcher = ({
     if (nextRecordingStartedAtMs === lastRecordingStartedAtMs) return
 
     lastRecordingStartedAtMs = nextRecordingStartedAtMs
+    if (activeTrades.size > 0 && nextRecordingStartedAtMs) return
+
     clearActiveTrades()
     emit({
       source: 'multi-terminal',
@@ -845,7 +847,11 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
-  const pollLogProvider = async (provider: LogProviderState): Promise<boolean> => {
+  const shouldReadInitialLogLines = (settings: AppSettings): boolean => (
+    settings.recording.mode === 'window' && Boolean(getRecordingStartedAtMs?.())
+  )
+
+  const pollLogProvider = async (provider: LogProviderState, settings: AppSettings): Promise<boolean> => {
     const files = await provider.getLogFiles()
     if (files.length === 0) {
       provider.available = false
@@ -855,12 +861,13 @@ export const createTerminalTradeWatcher = ({
     provider.available = true
     const recentFiles = files.slice(-2)
     if (!provider.initialized) {
+      const readExistingLines = shouldReadInitialLogLines(settings)
       await Promise.all(recentFiles.map(async (filePath) => {
         const fileStat = await stat(filePath)
-        provider.cursors.set(filePath, { offset: fileStat.size, remainder: '' })
+        provider.cursors.set(filePath, { offset: readExistingLines ? 0 : fileStat.size, remainder: '' })
       }))
       provider.initialized = true
-      return true
+      if (!readExistingLines) return true
     }
 
     for (const filePath of recentFiles) {
@@ -961,7 +968,7 @@ export const createTerminalTradeWatcher = ({
       if (settings.tradeSource.mode !== 'terminal-window') return
       syncRecordingBoundary(settings)
 
-      await Promise.all(providers.map((provider) => pollLogProvider(provider)))
+      await Promise.all(providers.map((provider) => pollLogProvider(provider, settings)))
       await pollMetaScalpApi()
       await processing
       emitAvailabilityStatus()

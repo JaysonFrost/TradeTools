@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-06-27
+
+### Fixed
+
+- Fixed terminal auto-recording missing the first TigerTrade position when the terminal log appears after TradeTools has already started recording.
+- Fixed active terminal trades being forgotten after a background recording restart.
+
 ## [0.3.6] - 2026-06-26
 
 ### Changed
