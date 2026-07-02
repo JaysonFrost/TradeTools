@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
-import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
@@ -214,9 +214,15 @@ const extractSettingsPatch = (input: SettingsUpdateInput): SettingsUpdateInput =
   return patch
 }
 
-const assertPreviewVideoPath = async (videoPath: string): Promise<void> => {
+const isPathInside = (parentPath: string, childPath: string): boolean => {
+  const childRelativePath = relative(parentPath, childPath)
+  return Boolean(childRelativePath) && !childRelativePath.startsWith('..') && !isAbsolute(childRelativePath)
+}
+
+const assertPreviewVideoPath = async (videoPath: string, outputDir: string): Promise<void> => {
   if (!isAbsolute(videoPath)) throw new Error('Некорректный путь к клипу')
   if (!previewVideoExtensions.has(extname(videoPath).toLowerCase())) throw new Error('Предпросмотр доступен только для видеофайлов')
+  if (!isPathInside(resolve(outputDir), resolve(videoPath))) throw new Error('Клип находится вне папки записей')
 
   const fileStat = await stat(videoPath).catch(() => undefined)
   if (!fileStat?.isFile()) throw new Error('Файл клипа не найден')
@@ -1833,12 +1839,14 @@ app.whenReady().then(() => {
     return clipPipeline.renameClipFile({ metadataPath, fileName })
   })
   ipcMain.handle('clips:open-preview', async (_event, videoPath: string) => {
-    await assertPreviewVideoPath(videoPath)
+    const settings = await settingsStore.load()
+    await assertPreviewVideoPath(videoPath, settings.clip.outputDir)
     const openError = await shell.openPath(videoPath)
     if (openError) throw new Error(`Не удалось открыть предпросмотр: ${openError}`)
   })
   ipcMain.handle('clips:show-in-folder', async (_event, videoPath: string) => {
-    await assertPreviewVideoPath(videoPath)
+    const settings = await settingsStore.load()
+    await assertPreviewVideoPath(videoPath, settings.clip.outputDir)
     shell.showItemInFolder(videoPath)
   })
   createMainWindow()
