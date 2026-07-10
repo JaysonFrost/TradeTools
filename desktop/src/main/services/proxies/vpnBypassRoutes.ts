@@ -58,6 +58,18 @@ type CurrentVpnBypassRoute = {
   interfaceIndex: number
 }
 
+export const normalizeVpnBypassRoutes = (value: unknown): CurrentVpnBypassRoute[] => {
+  const values = Array.isArray(value) ? value : value ? [value] : []
+  return values.flatMap((route) => {
+    if (!route || typeof route !== 'object') return []
+    const value = route as Partial<CurrentVpnBypassRoute>
+    const interfaceIndex = Number(value.interfaceIndex)
+    return typeof value.address === 'string' && typeof value.nextHop === 'string' && Number.isInteger(interfaceIndex)
+      ? [{ address: value.address, nextHop: value.nextHop, interfaceIndex }]
+      : []
+  })
+}
+
 const tunnelPatternSource = 'vpn|wireguard|tailscale|zerotier|openvpn|wintun|utun|tun|tap|ppp|ipsec|clash|sing-box|v2ray|outline|nord|proton|surfshark|windscribe|warp|adguard|antizapret|антизапрет|zapret'
 
 const powershellLiteral = (value: string): string => `'${value.replace(/'/g, "''")}'`
@@ -327,7 +339,7 @@ export const inspectVpnBypassState = async (input: {
     gateway: typeof snapshot.gateway === 'string' ? snapshot.gateway : '',
     interfaceName: typeof snapshot.interfaceName === 'string' ? snapshot.interfaceName : '',
     interfaceIndex: Number(snapshot.interfaceIndex) || 0,
-    routes: Array.isArray(snapshot.routes) ? snapshot.routes : [],
+    routes: normalizeVpnBypassRoutes(snapshot.routes),
     managedRoutes: await loadManagedRoutes(input.appDataDir)
   })
 }

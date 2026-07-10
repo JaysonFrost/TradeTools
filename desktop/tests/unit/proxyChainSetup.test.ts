@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProxyRecord } from '../../src/main/services/settings/settings'
 import { createProxyNetworkAdvice, findLikelyTunnelInterfaces } from '../../src/main/services/proxies/networkEnvironment'
-import { createVpnBypassStatus, createWindowsVpnBypassRouteScript } from '../../src/main/services/proxies/vpnBypassRoutes'
+import { createVpnBypassStatus, createWindowsVpnBypassRouteScript, normalizeVpnBypassRoutes } from '../../src/main/services/proxies/vpnBypassRoutes'
 import { createLocalPortBusyMessage, createLocalXrayConfig, createPowerShellExpandArchiveCommand, createXrayReleaseDownloadUrl } from '../../src/main/services/proxies/xrayLocalRuntime'
 import { createProxyChainRoute, createXrayServerConfig } from '../../src/main/services/proxies/proxyChainSetup'
 import { defaultLocalProxyPort } from '../../src/shared/defaults'
@@ -183,5 +183,11 @@ describe('proxyChainSetup', () => {
       routes: [],
       managedRoutes: []
     })).toMatchObject({ state: 'needs-uac' })
+  })
+
+  it('normalizes the one-route PowerShell response into a route list', () => {
+    expect(normalizeVpnBypassRoutes({ address: '198.51.100.10', nextHop: '192.168.1.1', interfaceIndex: 5 })).toEqual([
+      { address: '198.51.100.10', nextHop: '192.168.1.1', interfaceIndex: 5 }
+    ])
   })
 })
