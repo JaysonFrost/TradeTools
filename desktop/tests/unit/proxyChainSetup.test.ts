@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProxyRecord } from '../../src/main/services/settings/settings'
 import { createProxyNetworkAdvice, findLikelyTunnelInterfaces } from '../../src/main/services/proxies/networkEnvironment'
-import { createWindowsVpnBypassRouteScript } from '../../src/main/services/proxies/vpnBypassRoutes'
+import { createVpnBypassStatus, createWindowsVpnBypassRouteScript } from '../../src/main/services/proxies/vpnBypassRoutes'
 import { createLocalPortBusyMessage, createLocalXrayConfig, createPowerShellExpandArchiveCommand, createXrayReleaseDownloadUrl } from '../../src/main/services/proxies/xrayLocalRuntime'
 import { createProxyChainRoute, createXrayServerConfig } from '../../src/main/services/proxies/proxyChainSetup'
 import { defaultLocalProxyPort } from '../../src/shared/defaults'
@@ -150,5 +150,38 @@ describe('proxyChainSetup', () => {
     expect(script).toContain('Не перезаписываю чужой маршрут автоматически')
     expect(script).toContain('92.38.129.126')
     expect(script).toContain('45.77.31.20')
+  })
+
+  it('allows updating only a route recorded as managed by TradeTools', () => {
+    const script = createWindowsVpnBypassRouteScript({
+      targets: [{ host: 'entry.example', address: '198.51.100.10' }],
+      managedRoutes: [{ address: '198.51.100.10', gateway: '192.168.1.1', interfaceIndex: 5 }],
+      outputPath: 'C:\\Users\\Trader\\AppData\\Roaming\\TradeTools\\vpn-bypass\\result.json'
+    })
+
+    expect(script).toContain('route.exe DELETE $target.address')
+    expect(script).toContain('Persistent route обновлён мимо VPN')
+  })
+
+  it('requires UAC only when a TUN route is missing or owned by TradeTools', () => {
+    expect(createVpnBypassStatus({
+      targets: [{ host: 'entry.example', address: '198.51.100.10' }],
+      tunnelActive: true,
+      gateway: '192.168.1.1',
+      interfaceName: 'Ethernet',
+      interfaceIndex: 5,
+      routes: [{ address: '198.51.100.10', nextHop: '10.0.0.1', interfaceIndex: 42 }],
+      managedRoutes: []
+    })).toMatchObject({ state: 'attention', message: expect.stringContaining('Не перезаписываю чужой маршрут') })
+
+    expect(createVpnBypassStatus({
+      targets: [{ host: 'entry.example', address: '198.51.100.10' }],
+      tunnelActive: true,
+      gateway: '192.168.1.1',
+      interfaceName: 'Ethernet',
+      interfaceIndex: 5,
+      routes: [],
+      managedRoutes: []
+    })).toMatchObject({ state: 'needs-uac' })
   })
 })
