@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
-import type { VpnBypassRouteResult } from '../main/services/proxies/vpnBypassRoutes'
+import type { VpnBypassRouteResult, VpnBypassStatus } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
@@ -66,12 +66,16 @@ export type ProxyChainSetupResult = {
   configuredAtMs: number
 }
 
+export type ProxyChainConnectionResult = ProxyChainSetupResult & {
+  reusedRuntime: boolean
+}
+
 export type SystemNotificationResult = {
   ok: boolean
   message: string
 }
 
-export type { VpnBypassRouteResult }
+export type { VpnBypassRouteResult, VpnBypassStatus }
 
 const api = {
   app: {
@@ -114,8 +118,16 @@ const api = {
     copyPassword: (proxyId: string): Promise<void> => ipcRenderer.invoke('proxies:copy-password', proxyId),
     openDashboard: (proxyId: string): Promise<void> => ipcRenderer.invoke('proxies:open-dashboard', proxyId),
     configureChain: (proxyId: string): Promise<ProxyChainInstructionResult> => ipcRenderer.invoke('proxies:configure-chain', proxyId),
+    connectChain: (input: { proxyId: string }): Promise<ProxyChainConnectionResult> => ipcRenderer.invoke('proxies:connect-chain', input),
     setupChain: (input: { proxyId: string }): Promise<ProxyChainSetupResult> => ipcRenderer.invoke('proxies:setup-chain', input),
     configureVpnBypass: (input: { proxyId: string }): Promise<VpnBypassRouteResult> => ipcRenderer.invoke('proxies:configure-vpn-bypass', input),
+    getVpnBypassStatus: (): Promise<VpnBypassStatus> => ipcRenderer.invoke('proxies:get-vpn-bypass-status'),
+    refreshVpnBypass: (): Promise<VpnBypassStatus> => ipcRenderer.invoke('proxies:refresh-vpn-bypass'),
+    onVpnBypassStatus: (callback: (status: VpnBypassStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, status: VpnBypassStatus) => callback(status)
+      ipcRenderer.on('proxies:vpn-bypass-status', listener)
+      return () => ipcRenderer.removeListener('proxies:vpn-bypass-status', listener)
+    },
     onConfigureChainProgress: (callback: (progress: ProxyChainSetupProgress) => void): (() => void) => {
       const listener = (_event: IpcRendererEvent, progress: ProxyChainSetupProgress) => callback(progress)
       ipcRenderer.on('proxies:configure-chain-progress', listener)

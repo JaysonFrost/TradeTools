@@ -275,4 +275,17 @@ describe('main app lifecycle', () => {
     expect(xraySource).toContain('storedLocalXrayConfigMatches')
     expect(xraySource).toContain('Локальный proxy уже запущен')
   })
+
+  it('starts VPN bypass monitoring with the local proxy and exposes its status through preload', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(appSource).toContain('vpnBypassMonitor.start()')
+    expect(appSource).toContain('vpnBypassMonitor.stop()')
+    expect(appSource).toContain("'proxies:connect-chain'")
+    expect(appSource).toContain("'proxies:refresh-vpn-bypass'")
+    expect(preloadSource).toContain('connectChain')
+    expect(preloadSource).toContain('getVpnBypassStatus')
+    expect(preloadSource).toContain('onVpnBypassStatus')
+  })
 })

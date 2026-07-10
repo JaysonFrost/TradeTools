@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, connect as netConnect } from 'node:net'
+import { localXrayConfigPath } from './xrayBypassTargets'
 
 type RuntimeProgress = {
   step: string
@@ -512,7 +513,7 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
   const keepRunningAfterClose = input.keepRunningAfterClose === true
   const binaryPath = await ensureXrayCore(input.appDataDir, progress)
   const configDir = join(input.appDataDir, 'xray-runtime')
-  const configPath = join(configDir, 'trade-chain.json')
+  const configPath = localXrayConfigPath(input.appDataDir)
   const nextConfig = createLocalXrayConfig(input)
   await mkdir(configDir, { recursive: true })
 

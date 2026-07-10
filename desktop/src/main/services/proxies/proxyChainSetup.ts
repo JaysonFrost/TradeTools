@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Client, type ConnectConfig } from 'ssh2'
-import type { ProxyRecord } from '../settings/settings'
+import type { AppSettings, ProxyRecord } from '../settings/settings'
 import { inspectProxyNetworkEnvironment, type NetworkEnvironmentSnapshot, type NetworkDiagnosticStatus } from './networkEnvironment'
 import { parseSshEndpoint } from './sshConnectionCheck'
 import { setupLocalXrayRuntime, type LocalProxyDiagnostic } from './xrayLocalRuntime'
@@ -30,6 +30,10 @@ export type ProxyChainSetupResult = {
   diagnostics: LocalProxyDiagnostic[]
   network: NetworkEnvironmentSnapshot
   configuredAtMs: number
+}
+
+export type ProxyChainConnectionResult = ProxyChainSetupResult & {
+  reusedRuntime: boolean
 }
 
 export type ProxyChainRuntimeConfig = {
@@ -218,7 +222,36 @@ const networkStatusToProgressStatus = (status: NetworkDiagnosticStatus): ProxyCh
   return 'info'
 }
 
-export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Promise<ProxyChainSetupResult> => {
+export const reconnectStoredProxyRuntime = async (input: {
+  appDataDir: string
+  runtime: AppSettings['proxyRuntime']
+  entryUuid: string
+  keepRunningAfterClose: boolean
+}): Promise<ProxyChainConnectionResult> => {
+  const entryProxy = await setupLocalXrayRuntime({
+    appDataDir: input.appDataDir,
+    localPort: input.runtime.localPort,
+    entryHost: input.runtime.entryHost,
+    entryPort: input.runtime.entryPort,
+    entryUuid: input.entryUuid,
+    keepRunningAfterClose: input.keepRunningAfterClose
+  })
+  const network = await inspectProxyNetworkEnvironment({
+    entryHost: input.runtime.entryHost,
+    localPort: input.runtime.localPort
+  })
+  return {
+    ok: true,
+    reusedRuntime: true,
+    route: input.runtime.route,
+    entryProxy,
+    diagnostics: entryProxy.diagnostics,
+    network,
+    configuredAtMs: input.runtime.configuredAtMs
+  }
+}
+
+export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Promise<ProxyChainConnectionResult> => {
   if (input.chain.length === 0) throw new Error('Связка пустая')
 
   const progress = (progress: Omit<ProxyChainSetupProgress, 'timestampMs'>) => {
@@ -374,6 +407,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
 
   return {
     ok: true,
+    reusedRuntime: false,
     route: createProxyChainRoute(input.chain),
     entryProxy,
     diagnostics: entryProxy.diagnostics,

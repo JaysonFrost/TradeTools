@@ -7,10 +7,12 @@ import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
-import { setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
+import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
 import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
-import { configureVpnBypassRoutes, type VpnBypassRouteResult } from './services/proxies/vpnBypassRoutes'
+import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
+import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
+import { localXrayConfigPath } from './services/proxies/xrayBypassTargets'
 import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type CaptureTargetRef, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
@@ -784,6 +786,28 @@ app.whenReady().then(() => {
     return settingsStore.update({ proxyRuntime: emptyProxyRuntime() })
   }
 
+  let vpnBypassMonitor: VpnBypassMonitor | undefined
+  const idleVpnBypassStatus = (): VpnBypassStatus => ({
+    state: 'idle',
+    message: 'Локальный proxy ещё не подключён',
+    fingerprint: '',
+    targets: [],
+    gateway: '',
+    interfaceName: '',
+    checkedAtMs: Date.now()
+  })
+  const startVpnBypassMonitor = async (): Promise<void> => {
+    if (vpnBypassMonitor) vpnBypassMonitor.stop()
+    vpnBypassMonitor = createVpnBypassMonitor({
+      appDataDir: app.getPath('userData'),
+      configPath: localXrayConfigPath(app.getPath('userData')),
+      onStatus: (status) => {
+        for (const window of BrowserWindow.getAllWindows()) window.webContents.send('proxies:vpn-bypass-status', status)
+      }
+    })
+    await vpnBypassMonitor.start()
+  }
+
   const startStoredProxyRuntime = async (settings: AppSettings): Promise<void> => {
     const runtime = settings.proxyRuntime
     if (!runtime.entryUuidConfigured || !runtime.activeStartProxyId || !runtime.entryHost || !runtime.localPort) return
@@ -803,6 +827,7 @@ app.whenReady().then(() => {
       keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
       onProgress: (progress) => console.log(`[proxy-autostart] ${progress.status} ${progress.step}: ${progress.message}`)
     })
+    await startVpnBypassMonitor()
   }
 
   const focusMainWindow = () => {
@@ -1767,7 +1792,7 @@ app.whenReady().then(() => {
     const settings = await settingsStore.load()
     const chain = resolveProxyChain(settings, id)
 
-    return setupProxyChainOnServers({
+    const result = await setupProxyChainOnServers({
       chain,
       appDataDir: app.getPath('userData'),
       keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
@@ -1777,18 +1802,46 @@ app.whenReady().then(() => {
         event.sender.send('proxies:setup-chain-progress', progress)
       }
     })
+    await startVpnBypassMonitor()
+    return result
+  })
+  ipcMain.handle('proxies:connect-chain', async (event, input: ProxyChainSetupRequest) => {
+    const id = asString(input?.proxyId)
+    if (!id) throw new Error('Некорректный ID сервера')
+
+    const settings = await settingsStore.load()
+    const runtime = settings.proxyRuntime
+    const entryUuid = runtime.activeStartProxyId === id && runtime.entryUuidConfigured
+      ? await secretStore.getProxyRuntimeEntryUuid()
+      : undefined
+    const result = entryUuid
+      ? await reconnectStoredProxyRuntime({
+          appDataDir: app.getPath('userData'),
+          runtime,
+          entryUuid,
+          keepRunningAfterClose: settings.system.keepProxyRunningAfterClose
+        })
+      : await setupProxyChainOnServers({
+          chain: resolveProxyChain(settings, id),
+          appDataDir: app.getPath('userData'),
+          keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
+          getSshPassword: (proxyId) => secretStore.getProxyPassword(proxyId),
+          onRuntimeConfigured: saveProxyRuntimeConfig,
+          onProgress: (progress) => event.sender.send('proxies:setup-chain-progress', progress)
+        })
+    await startVpnBypassMonitor()
+    return result
   })
   ipcMain.handle('proxies:configure-vpn-bypass', async (_event, input: ProxyVpnBypassRequest): Promise<VpnBypassRouteResult> => {
     const id = asString(input?.proxyId)
     if (!id) throw new Error('Некорректный ID сервера')
 
-    const settings = await settingsStore.load()
-    const chain = resolveProxyChain(settings, id)
     return configureVpnBypassRoutes({
-      chain,
       appDataDir: app.getPath('userData')
     })
   })
+  ipcMain.handle('proxies:get-vpn-bypass-status', () => vpnBypassMonitor?.getStatus() ?? idleVpnBypassStatus())
+  ipcMain.handle('proxies:refresh-vpn-bypass', () => vpnBypassMonitor ? vpnBypassMonitor.refresh({ force: true }) : idleVpnBypassStatus())
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())
@@ -1845,6 +1898,9 @@ app.whenReady().then(() => {
   appUpdateService.startBackgroundCheck()
   terminalTradeWatcher.start()
   app.on('before-quit', () => terminalTradeWatcher.stop())
+  app.on('before-quit', () => {
+    if (vpnBypassMonitor) vpnBypassMonitor.stop()
+  })
   app.on('before-quit', () => {
     void windowRecorderService.stop()
   })
