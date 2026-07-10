@@ -1,12 +1,13 @@
 import { ArrowDown, ArrowUp, CalendarClock, ExternalLink, GripVertical, KeyRound, Pencil, Plus, Route, Save, Server, ShieldAlert, Trash2, UserRound, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, ProxyRecord } from '../../../main/services/settings/settings'
-import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult, VpnBypassRouteResult } from '../../../preload'
+import type { ProxyChainConnectionResult, ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult, VpnBypassRouteResult, VpnBypassStatus } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { createProxyConnectionSummary } from './proxyConnectionState'
 
 export type ProxyVaultPanelProps = {
   settings?: AppSettings
@@ -21,7 +22,9 @@ export type ProxyVaultRuntimeState = {
   chainSetupResult?: ProxyChainSetupResult
   chainSetupProgress: ProxyChainSetupProgress[]
   vpnBypassResult?: VpnBypassRouteResult
-  activeOperation?: 'check' | 'setup' | 'vpn-bypass'
+  connectionResult?: ProxyChainConnectionResult
+  vpnBypassStatus?: VpnBypassStatus
+  activeOperation?: 'check' | 'connect' | 'vpn-bypass'
 }
 
 type ProxyFormState = {
@@ -286,7 +289,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     })
   }, [chainOrderIds, settings?.proxies])
   const busy = saving || runtimeState.activeOperation !== undefined
-  const { chainResult, chainCheckProgress, chainSetupResult, chainSetupProgress, vpnBypassResult } = runtimeState
+  const { chainResult, chainCheckProgress, chainSetupResult, chainSetupProgress, vpnBypassResult, connectionResult, vpnBypassStatus } = runtimeState
 
   const updateRuntimeState = (patch: Partial<ProxyVaultRuntimeState>) => {
     onRuntimeStateChange((current) => ({ ...current, ...patch }))
@@ -295,9 +298,30 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
   const clearCheckState = () => updateRuntimeState({ chainResult: undefined, chainCheckProgress: [] })
   const clearSetupState = () => updateRuntimeState({ chainSetupResult: undefined, chainSetupProgress: [] })
 
+  const connectionSummary = createProxyConnectionSummary({
+    connected: Boolean(connectionResult),
+    connecting: runtimeState.activeOperation === 'connect',
+    bypassState: vpnBypassStatus?.state
+  })
+
   useEffect(() => {
     setChainOrderIds(buildChainOrderIds(settings?.proxies ?? []))
   }, [settings?.proxies])
+
+  useEffect(() => {
+    const api = getTradeToolsApi()
+    let active = true
+    void api.proxies.getVpnBypassStatus().then((status) => {
+      if (active) updateRuntimeState({ vpnBypassStatus: status })
+    }).catch(() => undefined)
+    const unsubscribe = api.proxies.onVpnBypassStatus((status) => {
+      if (active) updateRuntimeState({ vpnBypassStatus: status })
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     if (!settings || !form.id) return
@@ -467,7 +491,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     await configureChain(proxyForCheck)
   }
 
-  const setupChainOnServers = async () => {
+  const connectProxy = async () => {
     const firstProxyId = chainOrderIds[0]
     const firstProxy = firstProxyId ? proxyById.get(firstProxyId) : undefined
     if (!firstProxy) {
@@ -478,44 +502,38 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     setSaving(true)
     setMessage('')
     updateRuntimeState({
-      activeOperation: 'setup',
+      activeOperation: 'connect',
       chainResult: undefined,
       chainSetupResult: undefined,
-      chainSetupProgress: []
+      chainSetupProgress: [],
+      connectionResult: undefined
     })
     try {
       let settingsForSetup = settings
       if (chainOrderDirty) {
-        settingsForSetup = await saveChainOrder('Порядок связки сохранён, начинаем настройку серверов...')
+        settingsForSetup = await saveChainOrder('Порядок связки сохранён, подключаем proxy...')
         if (!settingsForSetup) return
         setSaving(true)
       }
 
       const latestFirstProxy = settingsForSetup?.proxies.find((proxy) => proxy.id === firstProxy.id) ?? firstProxy
-      const result = await getTradeToolsApi().proxies.setupChain({
+      const result = await getTradeToolsApi().proxies.connectChain({
         proxyId: latestFirstProxy.id
       })
-      updateRuntimeState({ chainSetupResult: result })
-      setMessage('Связка настроена, локальный proxy запущен')
+      updateRuntimeState({ chainSetupResult: result, connectionResult: result })
+      setMessage(result.reusedRuntime ? 'Локальный proxy подключён' : 'Связка настроена, локальный proxy запущен')
     } catch (error) {
       setMessage(userFacingErrorMessage(error, 'Не удалось настроить связку на серверах'))
     } finally {
       setSaving(false)
       onRuntimeStateChange((current) => ({
         ...current,
-        activeOperation: current.activeOperation === 'setup' ? undefined : current.activeOperation
+        activeOperation: current.activeOperation === 'connect' ? undefined : current.activeOperation
       }))
     }
   }
 
-  const configureVpnBypass = async () => {
-    const firstProxyId = chainOrderIds[0]
-    const firstProxy = firstProxyId ? proxyById.get(firstProxyId) : undefined
-    if (!firstProxy) {
-      setMessage('Добавьте серверы, затем соберите связку')
-      return
-    }
-
+  const refreshVpnBypass = async () => {
     setSaving(true)
     setMessage('')
     updateRuntimeState({
@@ -523,19 +541,9 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
       vpnBypassResult: undefined
     })
     try {
-      let settingsForBypass = settings
-      if (chainOrderDirty) {
-        settingsForBypass = await saveChainOrder('Порядок связки сохранён, открываем настройку обхода VPN...')
-        if (!settingsForBypass) return
-        setSaving(true)
-      }
-
-      const latestFirstProxy = settingsForBypass?.proxies.find((proxy) => proxy.id === firstProxy.id) ?? firstProxy
-      const result = await getTradeToolsApi().proxies.configureVpnBypass({
-        proxyId: latestFirstProxy.id
-      })
-      updateRuntimeState({ vpnBypassResult: result })
-      setMessage(result.message)
+      const status = await getTradeToolsApi().proxies.refreshVpnBypass()
+      updateRuntimeState({ vpnBypassStatus: status })
+      setMessage(status.message)
     } catch (error) {
       setMessage(userFacingErrorMessage(error, 'Не удалось настроить обход VPN'))
     } finally {
@@ -570,14 +578,33 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
         <Button variant="ghost" onClick={resetForm}><Plus size={17} className="mr-2" />Новый сервер</Button>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-xs leading-5 text-zinc-300">
-        <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-          <ShieldAlert size={17} />
-          <span>Если пинг выше ожидаемого</span>
+      <div className={`mt-5 rounded-2xl border p-4 ${connectionSummary.tone === 'success' ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-sky-400/20 bg-sky-500/10'}`}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+              <Server size={17} className={connectionSummary.tone === 'success' ? 'text-emerald-200' : 'text-sky-200'} />
+              <span>{connectionSummary.title}</span>
+            </div>
+            <div className="mt-2 text-xs text-zinc-300">{connectionSummary.bypassLabel}</div>
+            <div className="mt-2 text-xs text-zinc-400">Маршрут: {connectionResult?.route || orderedChainProxies.map(proxyName).join(' -> ') || 'добавьте серверы'}</div>
+            <div className="mt-1 text-xs text-zinc-400">Терминал: HTTP 127.0.0.1:{connectionResult?.entryProxy.port || orderedChainProxies[0]?.localProxyPort || defaultLocalProxyPort}</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => void connectProxy()} disabled={busy || orderedChainProxies.length === 0}>
+              <Server size={16} className="mr-2" />
+              {runtimeState.activeOperation === 'connect' ? 'Подключаем...' : 'Подключить прокси'}
+            </Button>
+            <Button variant="ghost" onClick={() => void configureOrderedChain()} disabled={busy || orderedChainProxies.length === 0}>
+              <Wrench size={16} className="mr-2" />Проверить подключение
+            </Button>
+            {(vpnBypassStatus?.state === 'needs-uac' || vpnBypassStatus?.state === 'attention') && (
+              <Button variant="ghost" onClick={() => void refreshVpnBypass()} disabled={busy}>
+                <ShieldAlert size={16} className="mr-2" />Обновить VPN bypass
+              </Button>
+            )}
+          </div>
         </div>
-        <p className="mt-2">
-          При проверке и настройке TradeTools автоматически смотрит VPN/антизапрет, системный proxy и маршрут к первому VPS. Если найден туннель, сначала нажмите `Обойти VPN для VPS`: на Windows приложение добавит прямые /32 маршруты до серверов через обычный gateway. Если ваш VPN поддерживает split tunneling, исключите TradeTools и локальный Xray core. После этого перезапустите связку и терминал.
-        </p>
+        {message && <div className="mt-3 text-xs text-zinc-300">{message}</div>}
       </div>
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -609,7 +636,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
                     {proxy.notes && <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">{proxy.notes}</p>}
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <Button variant="ghost" className={compactButtonClass} title="Подключиться и подготовить связку" onClick={() => void configureProxyFromCard(proxy)} disabled={busy}><Wrench size={15} /></Button>
+                    <Button variant="ghost" className={compactButtonClass} title="Проверить подключение" onClick={() => void configureProxyFromCard(proxy)} disabled={busy}><Wrench size={15} /></Button>
                     <Button variant="ghost" className={compactButtonClass} title="Редактировать" onClick={() => editProxy(proxy)}><Pencil size={15} /></Button>
                     <Button variant="ghost" className={compactButtonClass} title="Скопировать IP" onClick={() => void copyText(proxy.server, 'IP скопирован')}><Server size={15} className="mr-1.5" />IP</Button>
                     <Button variant="ghost" className={compactButtonClass} title="Скопировать логин" onClick={() => void copyText(proxy.login, 'Логин скопирован')}><UserRound size={15} className="mr-1.5" />Логин</Button>
@@ -687,15 +714,11 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             </Button>
             <Button onClick={() => void configureOrderedChain()} disabled={busy || orderedChainProxies.length === 0}>
               <Wrench size={16} className="mr-2" />
-              Проверить связку
+              Проверить подключение
             </Button>
-            <Button variant="ghost" onClick={() => void configureVpnBypass()} disabled={busy || orderedChainProxies.length === 0}>
-              <ShieldAlert size={16} className="mr-2" />
-              Обойти VPN для VPS
-            </Button>
-            <Button onClick={() => void setupChainOnServers()} disabled={busy || orderedChainProxies.length === 0}>
+            <Button onClick={() => void connectProxy()} disabled={busy || orderedChainProxies.length === 0}>
               <Server size={16} className="mr-2" />
-              Настроить и запустить
+              Подключить прокси
             </Button>
           </div>
         </div>
@@ -753,6 +776,9 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           </div>
         )}
 
+        <details className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-zinc-200">Диагностика</summary>
+          <div className="mt-3">
         {chainCheckProgress.length > 0 && (
           <div className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
             <div className="mb-2 text-sm font-semibold text-zinc-100">Проверка связки</div>
@@ -811,10 +837,14 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             <div className="mt-3 text-zinc-400">В торговом терминале укажите HTTP proxy: Host 127.0.0.1, Port {chainSetupResult.entryProxy.port}, логин и пароль пустые. Дополнительный proxy-клиент для этой схемы не нужен.</div>
           </div>
         )}
+          </div>
+        </details>
       </div>
 
       {chainResult && (
-        <div className="mt-5 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
+        <details className="mt-5 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-sky-100">Диагностика проверки подключения</summary>
+          <div className="mt-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
             <Route size={17} />
             <span>Инструкция по связке</span>
@@ -835,10 +865,10 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               {chainResult.terminal.map((item) => <li key={item}>{item}</li>)}
             </ol>
           </div>
-        </div>
+          </div>
+        </details>
       )}
 
-      {message && <p className="mt-4 text-sm text-violet-100">{message}</p>}
     </Card>
   )
 }

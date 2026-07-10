@@ -560,7 +560,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
-  const appendProxyProgress = (kind: 'check' | 'setup', progress: ProxyChainSetupProgress) => {
+  const appendProxyProgress = (kind: 'check' | 'connect', progress: ProxyChainSetupProgress) => {
     setProxyVaultRuntime((current) => ({
       ...current,
       activeOperation: progress.step === 'done' || progress.status === 'error'
@@ -810,7 +810,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     try {
       const api = getTradeToolsApi()
       unsubscribeProxyCheck = api.proxies.onConfigureChainProgress((progress) => appendProxyProgress('check', progress))
-      unsubscribeProxySetup = api.proxies.onSetupChainProgress((progress) => appendProxyProgress('setup', progress))
+      unsubscribeProxySetup = api.proxies.onSetupChainProgress((progress) => appendProxyProgress('connect', progress))
       unsubscribeRecordingEnsure = api.recording.onEnsureWindowRecording(() => {
         if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })
       })
