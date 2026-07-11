@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,15 @@ import { createWindowRecorderService, selectAvailableReplayWindow } from '../../
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
 
 describe('windowRecorderService', () => {
+  const pathExists = async (path: string): Promise<boolean> => {
+    try {
+      await access(path)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const createMissingVatagaWindowFixture = async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-recorder-'))
     const settings = createDefaultSettings(dataDir)
@@ -67,6 +76,131 @@ describe('windowRecorderService', () => {
       expect(status.fallbackRequired).toBe(true)
       expect(status.message).toContain('Окно Vataga.terminal не найдено')
       expect(status.message).not.toBe('Ждём сегменты от встроенного рекордера')
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('stores browser recording segments under the configured clip folder cache', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-cache-path-'))
+    const defaults = createDefaultSettings(dataDir)
+    const settings = {
+      ...defaults,
+      recording: {
+        ...defaults.recording,
+        mode: 'window' as const,
+        windowSourceId: 'window:tiger',
+        windowSourceName: 'TigerTrade'
+      },
+      clip: {
+        ...defaults.clip,
+        outputDir: join(dataDir, 'selected-clips')
+      }
+    }
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+
+    try {
+      await service.appendSegment({
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade',
+        sessionId: 'browser-session',
+        sequence: 0,
+        startedAtMs: Date.now() - 2_000,
+        endedAtMs: Date.now(),
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      const cacheEntries = await readdir(join(settings.clip.outputDir, '.tradetools-cache', 'segments'))
+
+      expect(cacheEntries).toHaveLength(1)
+      expect(cacheEntries[0]).toMatch(/\.webm$/)
+      expect(await pathExists(join(dataDir, 'window-recording'))).toBe(false)
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears the current and legacy video caches without deleting final clips', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-cache-clear-'))
+    const defaults = createDefaultSettings(dataDir)
+    const settings = {
+      ...defaults,
+      recording: {
+        ...defaults.recording,
+        mode: 'window' as const,
+        windowSourceId: 'window:tiger',
+        windowSourceName: 'TigerTrade'
+      },
+      clip: {
+        ...defaults.clip,
+        outputDir: join(dataDir, 'selected-clips')
+      }
+    }
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const finalClipPath = join(settings.clip.outputDir, '2026-07-11', 'final.mp4')
+    const legacyVideoPath = join(dataDir, 'window-recording', 'segments', 'old.mp4')
+
+    try {
+      await mkdir(settings.clip.outputDir, { recursive: true })
+      await mkdir(join(settings.clip.outputDir, '2026-07-11'), { recursive: true })
+      await mkdir(join(dataDir, 'window-recording', 'segments'), { recursive: true })
+      await writeFile(finalClipPath, 'final clip')
+      await writeFile(legacyVideoPath, 'legacy cache')
+      await service.appendSegment({
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade',
+        sessionId: 'browser-session',
+        sequence: 0,
+        startedAtMs: Date.now() - 2_000,
+        endedAtMs: Date.now(),
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      const result = await service.clearCache(settings)
+
+      expect(result.legacyCacheRemoved).toBe(true)
+      expect(await pathExists(join(settings.clip.outputDir, '.tradetools-cache'))).toBe(false)
+      expect(await pathExists(join(dataDir, 'window-recording'))).toBe(false)
+      expect(await pathExists(finalClipPath)).toBe(true)
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not clear the video cache while a trade is protected', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-cache-protected-'))
+    const defaults = createDefaultSettings(dataDir)
+    const settings = {
+      ...defaults,
+      recording: {
+        ...defaults.recording,
+        mode: 'window' as const,
+        windowSourceId: 'window:tiger',
+        windowSourceName: 'TigerTrade'
+      }
+    }
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+
+    try {
+      await service.appendSegment({
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade',
+        sessionId: 'browser-session',
+        sequence: 0,
+        startedAtMs: Date.now() - 2_000,
+        endedAtMs: Date.now(),
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      service.protectSince(Date.now() - 1_000)
+
+      await expect(service.clearCache(settings)).rejects.toThrow('Нельзя очистить кэш')
+      expect(await pathExists(join(settings.clip.outputDir, '.tradetools-cache'))).toBe(true)
     } finally {
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })

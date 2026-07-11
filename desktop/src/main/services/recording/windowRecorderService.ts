@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
@@ -77,6 +77,12 @@ export type WindowReplaySaveResult = {
   readyClip?: boolean
 }
 
+export type VideoCacheClearResult = {
+  ok: true
+  cachePath: string
+  legacyCacheRemoved: boolean
+}
+
 export type FreeRecordingStatus = {
   active: boolean
   paused: boolean
@@ -99,6 +105,7 @@ export type FreeRecordingFinishResult = {
 
 export type WindowRecorderService = {
   appendSegment: (input: WindowRecordingSegmentInput, settings: AppSettings) => Promise<WindowRecorderStatus>
+  clearCache: (settings: AppSettings) => Promise<VideoCacheClearResult>
   finishFreeRecording: (settings: AppSettings) => Promise<FreeRecordingFinishResult>
   getFreeRecordingStatus: (settings: AppSettings) => Promise<FreeRecordingStatus>
   getStatus: (settings: AppSettings) => Promise<WindowRecorderStatus>
@@ -165,6 +172,7 @@ type NativeRecorderState = {
   sourceId: string
   sourceName: string
   startedAtMs: number
+  segmentsDir: string
   listPath: string
   outputPattern: string
   stderr: string
@@ -314,8 +322,7 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
 }
 
 export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable, getDisplayBounds }: WindowRecorderServiceInput): WindowRecorderService => {
-  const segmentsDir = join(appDataDir, 'window-recording', 'segments')
-  const replaysDir = join(appDataDir, 'window-recording', 'replays')
+  const legacyCacheRoot = resolve(join(appDataDir, 'window-recording'))
   const segments: StoredSegment[] = []
   let protectedSinceMs = 0
   let freeRecording: FreeRecordingState | undefined
@@ -324,7 +331,27 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   let nativeLastError = ''
   let nativeMissingSource: { settingsKey: string, message: string } | undefined
 
+  const cachePaths = (settings: AppSettings) => {
+    const root = resolve(join(settings.clip.outputDir, '.tradetools-cache'))
+    return {
+      root,
+      segmentsDir: join(root, 'segments'),
+      replaysDir: join(root, 'replays')
+    }
+  }
+
+  const isPathInside = (parentPath: string, childPath: string): boolean => {
+    const childRelativePath = relative(parentPath, childPath)
+    return Boolean(childRelativePath) && !childRelativePath.startsWith('..') && !isAbsolute(childRelativePath)
+  }
+
+  const canRemoveLegacyCache = (settings: AppSettings): boolean => {
+    const outputRoot = resolve(settings.clip.outputDir)
+    return outputRoot !== legacyCacheRoot && !isPathInside(legacyCacheRoot, outputRoot)
+  }
+
   const nativeSettingsKey = (settings: AppSettings, target?: NativeRecorderTarget): string => [
+    cachePaths(settings).root,
     settings.recording.sourceType,
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
@@ -562,7 +589,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         const endSeconds = Number(rawEnd)
         if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) continue
 
-        const segmentPath = isAbsolute(rawPath) ? rawPath : join(segmentsDir, rawPath)
+        const segmentPath = isAbsolute(rawPath) ? rawPath : join(current.segmentsDir, rawPath)
         const fileStat = await stat(segmentPath).catch(() => undefined)
         if (!fileStat?.isFile() || fileStat.size <= 0) continue
 
@@ -591,6 +618,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     targets: NativeRecorderTarget[],
     startedMessage: string
   ): Promise<WindowRecorderStatus> => {
+    const { segmentsDir } = cachePaths(settings)
     const settingsKeys = targets.map((target) => nativeSettingsKey(settings, target))
     const activeRecorders = nativeRecorders.filter((recorder) => recorder.process.exitCode === null)
     if (
@@ -622,6 +650,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         sourceId: target.sourceId,
         sourceName: target.sourceName,
         startedAtMs: processStartedAtMs,
+        segmentsDir,
         listPath,
         outputPattern,
         stderr: '',
@@ -749,7 +778,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     return startNativeRecorders(settings, [nativeWindowTarget(settings)], 'Оптимизированная ffmpeg-запись запущена, ждём первые сегменты')
   }
 
-  const pruneDiskFiles = async (keepPaths: Set<string>) => {
+  const pruneDiskFiles = async (segmentsDir: string, keepPaths: Set<string>) => {
     const entries = await readdir(segmentsDir, { withFileTypes: true }).catch(() => [])
     await Promise.all(entries.map(async (entry) => {
       if (!entry.isFile()) return
@@ -768,7 +797,20 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }))
   }
 
+  const pruneReplayFiles = async (replaysDir: string, cutoffMs: number) => {
+    const entries = await readdir(replaysDir, { withFileTypes: true }).catch(() => [])
+    await Promise.all(entries.map(async (entry) => {
+      if (!entry.isFile() || !['.mp4', '.txt'].includes(extname(entry.name).toLowerCase())) return
+
+      const filePath = join(replaysDir, entry.name)
+      const fileStat = await stat(filePath).catch(() => undefined)
+      if (!fileStat || fileStat.mtimeMs >= cutoffMs) return
+      await rm(filePath, { force: true }).catch(() => undefined)
+    }))
+  }
+
   const pruneSegments = async (settings: AppSettings, nowMs = Date.now()) => {
+    const { segmentsDir, replaysDir } = cachePaths(settings)
     await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
@@ -784,7 +826,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }
 
     const keepPaths = new Set(segments.map((segment) => segment.path))
-    await pruneDiskFiles(keepPaths)
+    await pruneDiskFiles(segmentsDir, keepPaths)
+    await pruneReplayFiles(replaysDir, replayCutoffMs)
   }
 
   const primaryCaptureTarget = (settings: AppSettings): CaptureTargetRef | undefined => (
@@ -1068,6 +1111,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   }
 
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade, captureTarget?: CaptureTargetRef, signal?: AbortSignal): Promise<ReplayExportResult> => {
+    const { replaysDir } = cachePaths(settings)
     const replayEndMs = trade.exitTimeMs + settings.clip.paddingAfterSeconds * 1000
     const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
     const timeoutMs = Math.max(5_000, settings.clip.paddingAfterSeconds * 1000 + settings.recording.segmentSeconds * 2_000 + 2_000)
@@ -1172,6 +1216,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   }
 
   const finishFreeRecording = async (settings: AppSettings): Promise<FreeRecordingFinishResult> => {
+    const { replaysDir } = cachePaths(settings)
     const recording = freeRecording
     if (!recording) throw new Error('Свободная запись не запущена')
 
@@ -1228,6 +1273,27 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }
   }
 
+  const clearCache = async (settings: AppSettings): Promise<VideoCacheClearResult> => {
+    if (protectedSinceMs > 0 || freeRecording || freeRecordingExportProtectedSinceMs > 0) {
+      throw new Error('Нельзя очистить кэш во время активной сделки или свободной записи')
+    }
+
+    await stopNativeRecorder()
+    segments.splice(0, segments.length)
+
+    const { root } = cachePaths(settings)
+    await rm(root, { recursive: true, force: true })
+
+    const legacyCacheRemoved = canRemoveLegacyCache(settings)
+    if (legacyCacheRemoved) await rm(legacyCacheRoot, { recursive: true, force: true })
+
+    return {
+      ok: true,
+      cachePath: root,
+      legacyCacheRemoved
+    }
+  }
+
   const getWindowRecorderStatus = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
     if (hasPartialNativeScreenRecorderSet(settings)) {
       return buildStatus(settings, {
@@ -1249,6 +1315,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   }
 
   return {
+    clearCache,
     protectSince(timeMs) {
       const parsed = Number(timeMs)
       protectedSinceMs = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
@@ -1266,6 +1333,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         throw new Error('Некорректный сегмент встроенной записи')
       }
 
+      const { segmentsDir } = cachePaths(settings)
       await mkdir(segmentsDir, { recursive: true })
       const id = randomUUID()
       const sessionId = typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : id
