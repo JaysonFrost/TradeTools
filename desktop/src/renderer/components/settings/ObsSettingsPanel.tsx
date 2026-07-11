@@ -1,4 +1,4 @@
-import { CircleHelp, Clock3, Clapperboard, FolderOpen, Monitor, Pin, Power, Radio, RefreshCw } from 'lucide-react'
+import { CircleHelp, Clock3, Clapperboard, FolderOpen, Monitor, Pin, Power, Radio, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
@@ -87,6 +87,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
   const [saving, setSaving] = useState(false)
+  const [clearingCache, setClearingCache] = useState(false)
   const [message, setMessage] = useState('')
   const [editingDraft, setEditingDraft] = useState(false)
   const hydratedSettingsRef = useRef(false)
@@ -369,6 +370,22 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       setMessage('Папка выбрана, настройки применяются')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось открыть выбор папки')
+    }
+  }
+
+  const clearVideoCache = async () => {
+    if (!window.confirm('Удалить временные записи кэша? Итоговые клипы в папке клипов не будут затронуты.')) return
+
+    setClearingCache(true)
+    try {
+      const result = await getTradeToolsApi().recording.clearCache()
+      setMessage(result.legacyCacheRemoved
+        ? 'Кэш видео очищен, включая старые записи после обновления. Итоговые клипы сохранены.'
+        : 'Кэш видео очищен. Итоговые клипы сохранены.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось очистить кэш видео')
+    } finally {
+      setClearingCache(false)
     }
   }
 
@@ -664,6 +681,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 <Button variant="ghost" onClick={() => void selectDirectory(outputDir, setOutputDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
               </div>
             </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button variant="ghost" onClick={() => void clearVideoCache()} disabled={saving || clearingCache}>
+              <Trash2 size={16} className="mr-2" />{clearingCache ? 'Очищаем...' : 'Очистить кэш видео'}
+            </Button>
+            <span className={sectionHintClass}>Удаляются только временные записи, итоговые клипы остаются.</span>
           </div>
           {recordingMode === 'window' && <p className={sectionHintClass}>Если window capture замирает на Windows, выберите мониторы. На macOS может потребоваться разрешение записи экрана.</p>}
         </section>

@@ -6,7 +6,7 @@ import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/serv
 import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
-import type { FreeRecordingFinishResult, FreeRecordingStatus, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
+import type { FreeRecordingFinishResult, FreeRecordingStatus, VideoCacheClearResult, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
 import type { AppLogSnapshot } from '../main/services/logging/appLogService'
 import type { VideoEncoderOption } from '../main/services/video/videoEncoderDevices'
 
@@ -119,6 +119,8 @@ const api = {
     openDashboard: (proxyId: string): Promise<void> => ipcRenderer.invoke('proxies:open-dashboard', proxyId),
     configureChain: (proxyId: string): Promise<ProxyChainInstructionResult> => ipcRenderer.invoke('proxies:configure-chain', proxyId),
     connectChain: (input: { proxyId: string }): Promise<ProxyChainConnectionResult> => ipcRenderer.invoke('proxies:connect-chain', input),
+    disconnect: (): Promise<AppSettings> => ipcRenderer.invoke('proxies:disconnect'),
+    getLocalRuntimeStatus: (): Promise<boolean> => ipcRenderer.invoke('proxies:get-local-runtime-status'),
     setupChain: (input: { proxyId: string }): Promise<ProxyChainSetupResult> => ipcRenderer.invoke('proxies:setup-chain', input),
     configureVpnBypass: (input: { proxyId: string }): Promise<VpnBypassRouteResult> => ipcRenderer.invoke('proxies:configure-vpn-bypass', input),
     getVpnBypassStatus: (): Promise<VpnBypassStatus> => ipcRenderer.invoke('proxies:get-vpn-bypass-status'),
@@ -153,6 +155,7 @@ const api = {
     pauseFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-pause'),
     resumeFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-resume'),
     finishFree: (): Promise<FreeRecordingFinishResult> => ipcRenderer.invoke('recording:free-finish'),
+    clearCache: (): Promise<VideoCacheClearResult> => ipcRenderer.invoke('recording:clear-cache'),
     stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input),
     onEnsureWindowRecording: (callback: () => void): (() => void) => {

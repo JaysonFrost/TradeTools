@@ -131,6 +131,18 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
   })
 
+  it('offers video cache cleanup without touching the configured clip output', async () => {
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(settingsPanelSource).toContain('Очистить кэш видео')
+    expect(settingsPanelSource).toContain('recording.clearCache()')
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:clear-cache'")
+    expect(appSource).toContain("ipcMain.handle('recording:clear-cache'")
+    expect(appSource).toContain('windowRecorderService.clearCache(settings)')
+  })
+
   it('supports multi-monitor capture target selection in built-in recording settings', async () => {
     const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')

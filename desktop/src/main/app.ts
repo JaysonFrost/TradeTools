@@ -13,7 +13,7 @@ import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } f
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
 import { localXrayConfigPath } from './services/proxies/xrayBypassTargets'
-import { setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
+import { isLocalXrayRuntimeRunning, setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
 import { type AppSettings, type CaptureTargetRef, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
@@ -1562,6 +1562,15 @@ app.whenReady().then(() => {
     backgroundWindowRecordingStartedAtMs = Date.now()
     return windowRecorderService.start(await settingsStore.load())
   })
+  ipcMain.handle('recording:clear-cache', async () => {
+    const settings = await settingsStore.load()
+    const result = await windowRecorderService.clearCache(settings)
+    if (backgroundWindowRecordingEnabled && settings.recording.mode === 'window') {
+      backgroundWindowRecordingStartedAtMs = Date.now()
+      await windowRecorderService.start(settings)
+    }
+    return result
+  })
   ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
   ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
@@ -1831,6 +1840,22 @@ app.whenReady().then(() => {
         })
     await startVpnBypassMonitor()
     return result
+  })
+  ipcMain.handle('proxies:disconnect', async () => {
+    const settings = await settingsStore.load()
+    await stopLocalXrayRuntime(settings.proxyRuntime.localPort)
+    if (vpnBypassMonitor) vpnBypassMonitor.stop()
+    const updatedSettings = await settingsStore.update({
+      system: { keepProxyRunningAfterClose: false }
+    })
+    applyProxyQuitPreference(updatedSettings)
+    return updatedSettings
+  })
+  ipcMain.handle('proxies:get-local-runtime-status', async () => {
+    const settings = await settingsStore.load()
+    return settings.proxyRuntime.entryUuidConfigured && settings.proxyRuntime.activeStartProxyId
+      ? isLocalXrayRuntimeRunning(settings.proxyRuntime.localPort)
+      : false
   })
   ipcMain.handle('proxies:configure-vpn-bypass', async (_event, input: ProxyVpnBypassRequest): Promise<VpnBypassRouteResult> => {
     const id = asString(input?.proxyId)
