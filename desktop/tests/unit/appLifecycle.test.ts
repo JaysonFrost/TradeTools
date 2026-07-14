@@ -276,6 +276,36 @@ describe('main app lifecycle', () => {
     expect(xraySource).toContain('Локальный proxy уже запущен')
   })
 
+  it('exposes a proxy disconnect action that stops Xray and disables background running', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const panelSource = await readFile(resolve('src/renderer/components/settings/ProxyVaultPanel.tsx'), 'utf8')
+
+    expect(appSource).toContain("'proxies:disconnect'")
+    expect(appSource).toContain("await stopLocalXrayRuntime(settings.proxyRuntime.localPort, app.getPath('userData'))")
+    expect(appSource).toContain('keepProxyRunningAfterClose: false')
+    expect(preloadSource).toContain("disconnect: (): Promise<AppSettings> => ipcRenderer.invoke('proxies:disconnect')")
+    expect(panelSource).toContain('proxies.disconnect()')
+  })
+
+  it('uses the main-process local Xray status for disconnect visibility', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const panelSource = await readFile(resolve('src/renderer/components/settings/ProxyVaultPanel.tsx'), 'utf8')
+    const xraySource = await readFile(resolve('src/main/services/proxies/xrayLocalRuntime.ts'), 'utf8')
+
+    expect(appSource).toContain("'proxies:get-local-runtime-status'")
+    expect(preloadSource).toContain("getLocalRuntimeStatus: (): Promise<boolean> => ipcRenderer.invoke('proxies:get-local-runtime-status')")
+    expect(panelSource).toContain('getLocalRuntimeStatus()')
+    expect(panelSource).toContain('{localProxyRunning && (')
+    expect(panelSource).toContain('const refreshInterval = setInterval(refresh, 5_000)')
+    expect(panelSource).toContain('clearInterval(refreshInterval)')
+    expect(panelSource).toContain('localProxyStatusRefresh.current')
+    expect(panelSource).toContain('refreshLocalProxyRuntimeStatus')
+    expect(xraySource).toContain('isLocalXrayRuntimeRunning')
+    expect(xraySource).toContain('Локальный Xray не остановился')
+  })
+
   it('starts VPN bypass monitoring with the local proxy and exposes its status through preload', async () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

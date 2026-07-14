@@ -1843,7 +1843,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('proxies:disconnect', async () => {
     const settings = await settingsStore.load()
-    await stopLocalXrayRuntime(settings.proxyRuntime.localPort)
+    await stopLocalXrayRuntime(settings.proxyRuntime.localPort, app.getPath('userData'))
     if (vpnBypassMonitor) vpnBypassMonitor.stop()
     const updatedSettings = await settingsStore.update({
       system: { keepProxyRunningAfterClose: false }
@@ -1854,7 +1854,7 @@ app.whenReady().then(() => {
   ipcMain.handle('proxies:get-local-runtime-status', async () => {
     const settings = await settingsStore.load()
     return settings.proxyRuntime.entryUuidConfigured && settings.proxyRuntime.activeStartProxyId
-      ? isLocalXrayRuntimeRunning(settings.proxyRuntime.localPort)
+      ? isLocalXrayRuntimeRunning(settings.proxyRuntime.localPort, app.getPath('userData'))
       : false
   })
   ipcMain.handle('proxies:configure-vpn-bypass', async (_event, input: ProxyVpnBypassRequest): Promise<VpnBypassRouteResult> => {

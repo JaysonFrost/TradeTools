@@ -1,5 +1,5 @@
-import { ArrowDown, ArrowUp, CalendarClock, ExternalLink, GripVertical, KeyRound, Pencil, Plus, Route, Save, Server, ShieldAlert, Trash2, UserRound, Wrench } from 'lucide-react'
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { ArrowDown, ArrowUp, CalendarClock, ExternalLink, GripVertical, KeyRound, Pencil, Plus, Power, Route, Save, Server, ShieldAlert, Trash2, UserRound, Wrench } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { AppSettings, ProxyRecord } from '../../../main/services/settings/settings'
 import type { ProxyChainConnectionResult, ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult, VpnBypassRouteResult, VpnBypassStatus } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
@@ -24,7 +24,7 @@ export type ProxyVaultRuntimeState = {
   vpnBypassResult?: VpnBypassRouteResult
   connectionResult?: ProxyChainConnectionResult
   vpnBypassStatus?: VpnBypassStatus
-  activeOperation?: 'check' | 'connect' | 'vpn-bypass'
+  activeOperation?: 'check' | 'connect' | 'disconnect' | 'vpn-bypass'
 }
 
 type ProxyFormState = {
@@ -269,6 +269,9 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
   const [form, setForm] = useState<ProxyFormState>(() => createEmptyForm(settings))
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [localProxyRunning, setLocalProxyRunning] = useState(false)
+  const localProxyStatusRefresh = useRef<Promise<void>>(Promise.resolve())
+  const localProxyStatusMounted = useRef(true)
   const [chainOrderIds, setChainOrderIds] = useState<string[]>(() => buildChainOrderIds(settings?.proxies ?? []))
   const [draggedProxyId, setDraggedProxyId] = useState('')
   const proxies = useMemo(() => sortProxies(settings?.proxies ?? []), [settings?.proxies])
@@ -297,9 +300,19 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
 
   const clearCheckState = () => updateRuntimeState({ chainResult: undefined, chainCheckProgress: [] })
   const clearSetupState = () => updateRuntimeState({ chainSetupResult: undefined, chainSetupProgress: [] })
+  const refreshLocalProxyRuntimeStatus = (): Promise<void> => {
+    const refresh = localProxyStatusRefresh.current
+      .then(() => getTradeToolsApi().proxies.getLocalRuntimeStatus())
+      .then((running) => {
+        if (localProxyStatusMounted.current) setLocalProxyRunning(running)
+      })
+      .catch(() => undefined)
+    localProxyStatusRefresh.current = refresh
+    return refresh
+  }
 
   const connectionSummary = createProxyConnectionSummary({
-    connected: Boolean(connectionResult),
+    connected: localProxyRunning,
     connecting: runtimeState.activeOperation === 'connect',
     bypassState: vpnBypassStatus?.state
   })
@@ -320,6 +333,17 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
     return () => {
       active = false
       unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    localProxyStatusMounted.current = true
+    const refresh = () => void refreshLocalProxyRuntimeStatus()
+    refresh()
+    const refreshInterval = setInterval(refresh, 5_000)
+    return () => {
+      localProxyStatusMounted.current = false
+      clearInterval(refreshInterval)
     }
   }, [])
 
@@ -520,6 +544,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
       const result = await getTradeToolsApi().proxies.connectChain({
         proxyId: latestFirstProxy.id
       })
+      await refreshLocalProxyRuntimeStatus()
       updateRuntimeState({ chainSetupResult: result, connectionResult: result })
       setMessage(result.reusedRuntime ? 'Локальный proxy подключён' : 'Связка настроена, локальный proxy запущен')
     } catch (error) {
@@ -551,6 +576,27 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
       onRuntimeStateChange((current) => ({
         ...current,
         activeOperation: current.activeOperation === 'vpn-bypass' ? undefined : current.activeOperation
+      }))
+    }
+  }
+
+  const disconnectProxy = async () => {
+    setSaving(true)
+    setMessage('')
+    updateRuntimeState({ activeOperation: 'disconnect' })
+    try {
+      const updated = await getTradeToolsApi().proxies.disconnect()
+      onSaved(updated)
+      await refreshLocalProxyRuntimeStatus()
+      updateRuntimeState({ connectionResult: undefined, vpnBypassStatus: undefined })
+      setMessage('Локальный proxy остановлен, фоновый запуск выключен')
+    } catch (error) {
+      setMessage(userFacingErrorMessage(error, 'Не удалось отключить proxy'))
+    } finally {
+      setSaving(false)
+      onRuntimeStateChange((current) => ({
+        ...current,
+        activeOperation: current.activeOperation === 'disconnect' ? undefined : current.activeOperation
       }))
     }
   }
@@ -594,6 +640,12 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               <Server size={16} className="mr-2" />
               {runtimeState.activeOperation === 'connect' ? 'Подключаем...' : 'Подключить прокси'}
             </Button>
+            {localProxyRunning && (
+              <Button variant="ghost" onClick={() => void disconnectProxy()} disabled={busy}>
+                <Power size={16} className="mr-2" />
+                {runtimeState.activeOperation === 'disconnect' ? 'Отключаем...' : 'Отключить proxy'}
+              </Button>
+            )}
             <Button variant="ghost" onClick={() => void configureOrderedChain()} disabled={busy || orderedChainProxies.length === 0}>
               <Wrench size={16} className="mr-2" />Проверить подключение
             </Button>

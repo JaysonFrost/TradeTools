@@ -18,6 +18,7 @@ type LocalPortOwner = {
   pid: number
   name?: string
   path?: string
+  commandLine?: string
 }
 
 export type LocalProxyDiagnostic = {
@@ -282,11 +283,18 @@ export const createLocalXrayConfig = (input: {
   ]
 })
 
-export const stopLocalXrayRuntime = async (): Promise<void> => {
-  if (!localXrayProcess) return
-  localXrayProcess.kill()
-  localXrayProcess = undefined
+export const stopLocalXrayRuntime = async (localPort?: number, appDataDir?: string): Promise<void> => {
+  if (localXrayProcess) {
+    localXrayProcess.kill()
+    localXrayProcess = undefined
+  } else if (localPort) {
+    const owner = await describeLocalPortOwner(localPort)
+    if (owner && appDataDir && isManagedLocalXrayOwner(owner, localXrayConfigPath(appDataDir))) process.kill(owner.pid)
+  }
   await delay(500)
+  if (localPort && await isLocalXrayRuntimeRunning(localPort, appDataDir)) {
+    throw new Error(`Локальный Xray не остановился на порту 127.0.0.1:${localPort}`)
+  }
 }
 
 const isPortAvailable = async (port: number): Promise<boolean> => {
@@ -321,7 +329,8 @@ const parsePortOwner = (stdout: string): LocalPortOwner | undefined => {
     return {
       pid,
       name: typeof value.name === 'string' && value.name.trim() ? value.name.trim() : undefined,
-      path: typeof value.path === 'string' && value.path.trim() ? value.path.trim() : undefined
+      path: typeof value.path === 'string' && value.path.trim() ? value.path.trim() : undefined,
+      commandLine: typeof value.commandLine === 'string' && value.commandLine.trim() ? value.commandLine.trim() : undefined
     }
   } catch {
     return undefined
@@ -340,7 +349,8 @@ const describeLocalPortOwner = async (port: number): Promise<LocalPortOwner | un
           `$connection = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort ${port} -State Listen | Select-Object -First 1`,
           'if ($connection) {',
           '  $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue',
-          '  [PSCustomObject]@{ pid = $connection.OwningProcess; name = $process.ProcessName; path = $process.Path } | ConvertTo-Json -Compress',
+          '  $processInfo = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $connection.OwningProcess) -ErrorAction SilentlyContinue',
+          '  [PSCustomObject]@{ pid = $connection.OwningProcess; name = $process.ProcessName; path = $process.Path; commandLine = $processInfo.CommandLine } | ConvertTo-Json -Compress',
           '}'
         ].join('; ')
       ], 5_000)
@@ -354,9 +364,16 @@ const describeLocalPortOwner = async (port: number): Promise<LocalPortOwner | un
     const result = await runProcess('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-F', 'pcn'], 5_000)
     const pid = Number(result.stdout.match(/^p(\d+)/m)?.[1])
     if (!Number.isFinite(pid) || pid <= 0) return undefined
+    let commandLine: string | undefined
+    try {
+      commandLine = (await runProcess('ps', ['-p', String(pid), '-o', 'command='], 5_000)).stdout.trim() || undefined
+    } catch {
+      // Keep the existing port-owner result when the OS does not expose process arguments.
+    }
     return {
       pid,
-      name: result.stdout.match(/^c(.+)$/m)?.[1]?.trim() || undefined
+      name: result.stdout.match(/^c(.+)$/m)?.[1]?.trim() || undefined,
+      commandLine
     }
   } catch {
     return undefined
@@ -469,6 +486,17 @@ export const isReusableLocalXrayOwner = (owner?: LocalPortOwner): boolean => {
   const name = owner?.name?.toLowerCase() ?? ''
   const ownerPath = owner?.path?.toLowerCase() ?? ''
   return /^xray(?:\.exe)?$/.test(name) || /(?:^|[\\/])xray(?:\.exe)?$/.test(ownerPath)
+}
+
+export const isManagedLocalXrayOwner = (owner: LocalPortOwner | undefined, configPath: string): boolean => {
+  return isReusableLocalXrayOwner(owner) && owner?.commandLine?.includes(configPath) === true
+}
+
+export const isLocalXrayRuntimeRunning = async (localPort: number, appDataDir?: string): Promise<boolean> => {
+  if (localXrayProcess && !localXrayProcess.killed) return true
+  return appDataDir
+    ? isManagedLocalXrayOwner(await describeLocalPortOwner(localPort), localXrayConfigPath(appDataDir))
+    : false
 }
 
 export const storedLocalXrayConfigMatches = async (configPath: string, config: Record<string, unknown>): Promise<boolean> => {
