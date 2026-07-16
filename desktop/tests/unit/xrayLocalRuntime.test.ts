@@ -31,3 +31,16 @@ describe('isManagedLocalXrayOwner', () => {
     }, configPath)).toBe(true)
   })
 })
+
+describe('getXrayCoreCandidates', () => {
+  it('uses only an explicit TradeTools override or a TradeTools-owned Xray core', () => {
+    expect(xrayLocalRuntime.getXrayCoreCandidates(
+      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools',
+      'D:\\tools\\tradetools-xray.exe'
+    )).toEqual([
+      'D:\\tools\\tradetools-xray.exe',
+      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools\\xray-core\\xray.exe',
+      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools\\xray\\xray.exe'
+    ])
+  })
+})

@@ -657,6 +657,77 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           </div>
         </div>
         {message && <div className="mt-3 text-xs text-zinc-300">{message}</div>}
+        <details className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-zinc-200">Состояние и проверки</summary>
+          <div className="mt-3">
+            {chainCheckProgress.length > 0 && (
+              <div className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
+                <div className="mb-2 text-sm font-semibold text-zinc-100">Проверка связки</div>
+                <div className="space-y-2 text-xs leading-5">
+                  {chainCheckProgress.map((progress, index) => (
+                    <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
+                      <span className={progressStatusClass(progress.status)}>{progressStatusLabel(progress.status)}</span>
+                      <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chainSetupProgress.length > 0 && (
+              <div className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
+                <div className="mb-2 text-sm font-semibold text-zinc-100">Прогресс настройки</div>
+                <div className="space-y-2 text-xs leading-5">
+                  {chainSetupProgress.map((progress, index) => (
+                    <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
+                      <span className={progressStatusClass(progress.status)}>{progressStatusLabel(progress.status)}</span>
+                      <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <VpnBypassResultBlock result={vpnBypassResult} />
+
+            {chainSetupResult && (
+              <div className="mt-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-xs leading-5 text-zinc-200">
+                <div className="text-sm font-semibold text-emerald-100">Локальный proxy запущен</div>
+                <div className="mt-2 break-words">Маршрут: {chainSetupResult.route}</div>
+                {chainSetupResult.diagnostics.length > 0 && (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {chainSetupResult.diagnostics.map((check) => (
+                      <div key={check.name} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                        <div className={check.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-amber-200'}>{check.name}</div>
+                        <div className="mt-1 break-words text-zinc-400">{check.message}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <NetworkDiagnosticsBlock network={chainSetupResult.network} />
+              </div>
+            )}
+
+            {chainResult && (
+              <div className="mt-3 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
+                  <Route size={17} />
+                  <span>Проверка подключения</span>
+                </div>
+                <p className="mt-3 break-words text-xs leading-5 text-zinc-300">Маршрут: {chainResult.route}</p>
+                <div className="mt-3 grid gap-2 text-xs text-zinc-300 sm:grid-cols-2">
+                  {chainResult.sshChecks.map((check) => (
+                    <div key={`${check.host}:${check.port}:${check.login}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                      <div className="font-semibold text-emerald-200">{check.host}:{check.port}</div>
+                      <div className="mt-1 text-zinc-500">{check.message}{check.serverInfo ? `, ${check.serverInfo}` : ''}</div>
+                    </div>
+                  ))}
+                </div>
+                <NetworkDiagnosticsBlock network={chainResult.network} />
+              </div>
+            )}
+          </div>
+        </details>
       </div>
 
       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -828,98 +899,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           </div>
         )}
 
-        <details className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-zinc-200">Диагностика</summary>
-          <div className="mt-3">
-        {chainCheckProgress.length > 0 && (
-          <div className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
-            <div className="mb-2 text-sm font-semibold text-zinc-100">Проверка связки</div>
-            <div className="space-y-2 text-xs leading-5">
-              {chainCheckProgress.map((progress, index) => (
-                <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
-                  <span className={progressStatusClass(progress.status)}>
-                    {progressStatusLabel(progress.status)}
-                  </span>
-                  <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {chainSetupProgress.length > 0 && (
-          <div className="mt-4 max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
-            <div className="mb-2 text-sm font-semibold text-zinc-100">Прогресс настройки</div>
-            <div className="space-y-2 text-xs leading-5">
-              {chainSetupProgress.map((progress, index) => (
-                <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
-                  <span className={progressStatusClass(progress.status)}>
-                    {progressStatusLabel(progress.status)}
-                  </span>
-                  <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <VpnBypassResultBlock result={vpnBypassResult} />
-
-        {chainSetupResult && (
-          <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-xs leading-5 text-zinc-200">
-            <div className="text-sm font-semibold text-emerald-100">Связка настроена и локальный proxy запущен</div>
-            <div className="mt-2 break-words">Маршрут: {chainSetupResult.route}</div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">Host: {chainSetupResult.entryProxy.host}</div>
-              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">Port: {chainSetupResult.entryProxy.port}</div>
-              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">Type: {chainSetupResult.entryProxy.type}</div>
-              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">Auth: не нужен</div>
-            </div>
-            {chainSetupResult.diagnostics.length > 0 && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                {chainSetupResult.diagnostics.map((check) => (
-                  <div key={check.name} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                    <div className={check.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-amber-200'}>{check.name}</div>
-                    <div className="mt-1 break-words text-zinc-400">{check.message}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <NetworkDiagnosticsBlock network={chainSetupResult.network} />
-            <div className="mt-3 text-zinc-400">В торговом терминале укажите HTTP proxy: Host 127.0.0.1, Port {chainSetupResult.entryProxy.port}, логин и пароль пустые. Дополнительный proxy-клиент для этой схемы не нужен.</div>
-          </div>
-        )}
-          </div>
-        </details>
       </div>
-
-      {chainResult && (
-        <details className="mt-5 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
-          <summary className="cursor-pointer text-sm font-semibold text-sky-100">Диагностика проверки подключения</summary>
-          <div className="mt-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
-            <Route size={17} />
-            <span>Инструкция по связке</span>
-          </div>
-          <p className="mt-3 break-words text-xs leading-5 text-zinc-300">Маршрут: {chainResult.route}</p>
-          <div className="mt-3 grid gap-2 text-xs text-zinc-300 sm:grid-cols-2">
-            {chainResult.sshChecks.map((check) => (
-              <div key={`${check.host}:${check.port}:${check.login}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                <div className="font-semibold text-emerald-200">{check.host}:{check.port}</div>
-                <div className="mt-1 text-zinc-500">{check.message}{check.serverInfo ? `, ${check.serverInfo}` : ''}</div>
-              </div>
-            ))}
-          </div>
-          <NetworkDiagnosticsBlock network={chainResult.network} />
-          <div className="mt-3 text-xs leading-5 text-zinc-300">
-            <h4 className="m-0 text-sm font-semibold text-zinc-100">Терминал</h4>
-            <ol className="mt-2 list-decimal space-y-1 pl-4">
-              {chainResult.terminal.map((item) => <li key={item}>{item}</li>)}
-            </ol>
-          </div>
-          </div>
-        </details>
-      )}
 
     </Card>
   )

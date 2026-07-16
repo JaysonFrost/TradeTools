@@ -276,6 +276,14 @@ describe('main app lifecycle', () => {
     expect(xraySource).toContain('Локальный proxy уже запущен')
   })
 
+  it('starts the saved local proxy before opening the TradeTools window', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('void startStoredProxyRuntime(settings, resolveProxyReady)')
+    expect(source).toContain('await Promise.race([')
+    expect(source.indexOf('void startStoredProxyRuntime(settings, resolveProxyReady)')).toBeLessThan(source.lastIndexOf('createMainWindow()'))
+  })
+
   it('exposes a proxy disconnect action that stops Xray and disables background running', async () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

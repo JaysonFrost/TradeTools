@@ -808,13 +808,17 @@ app.whenReady().then(() => {
     await vpnBypassMonitor.start()
   }
 
-  const startStoredProxyRuntime = async (settings: AppSettings): Promise<void> => {
+  const startStoredProxyRuntime = async (settings: AppSettings, onReady?: () => void): Promise<void> => {
     const runtime = settings.proxyRuntime
-    if (!runtime.entryUuidConfigured || !runtime.activeStartProxyId || !runtime.entryHost || !runtime.localPort) return
+    if (!runtime.entryUuidConfigured || !runtime.activeStartProxyId || !runtime.entryHost || !runtime.localPort) {
+      onReady?.()
+      return
+    }
 
     const uuid = await secretStore.getProxyRuntimeEntryUuid()
     if (!uuid) {
       await clearProxyRuntimeConfig()
+      onReady?.()
       return
     }
 
@@ -825,6 +829,7 @@ app.whenReady().then(() => {
       entryPort: runtime.entryPort,
       entryUuid: uuid,
       keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
+      onReady,
       onProgress: (progress) => console.log(`[proxy-autostart] ${progress.status} ${progress.step}: ${progress.message}`)
     })
     await startVpnBypassMonitor()
@@ -1919,22 +1924,22 @@ app.whenReady().then(() => {
     await assertPreviewVideoPath(videoPath)
     shell.showItemInFolder(videoPath)
   })
-  createMainWindow()
-  appUpdateService.startBackgroundCheck()
-  terminalTradeWatcher.start()
-  app.on('before-quit', () => terminalTradeWatcher.stop())
-  app.on('before-quit', () => {
-    if (vpnBypassMonitor) vpnBypassMonitor.stop()
-  })
-  app.on('before-quit', () => {
-    void windowRecorderService.stop()
-  })
-
-  void settingsStore.load().then((settings) => {
+  const startApp = async (): Promise<void> => {
+    const settings = await settingsStore.load()
     applyLaunchAtLogin(settings)
     applyAlwaysOnTop(settings)
     applyProxyQuitPreference(settings)
-    void startStoredProxyRuntime(settings).catch((error) => {
+    let proxyReady = false
+    let resolveProxyReady: (() => void) | undefined
+    const proxyReadyPromise = new Promise<void>((resolve) => {
+      resolveProxyReady = () => {
+        if (proxyReady) return
+        proxyReady = true
+        resolve()
+      }
+    })
+    void startStoredProxyRuntime(settings, resolveProxyReady).catch((error) => {
+      resolveProxyReady?.()
       const message = error instanceof Error ? error.message : 'неизвестная ошибка'
       console.error('Proxy runtime autostart failed:', error)
       showSystemNotification({
@@ -1942,8 +1947,23 @@ app.whenReady().then(() => {
         body: `Локальный proxy не запустился после старта: ${message}`
       })
     })
+    await Promise.race([
+      proxyReadyPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 10_000))
+    ])
+    createMainWindow()
+    appUpdateService.startBackgroundCheck()
+    terminalTradeWatcher.start()
+    app.on('before-quit', () => terminalTradeWatcher.stop())
+    app.on('before-quit', () => {
+      if (vpnBypassMonitor) vpnBypassMonitor.stop()
+    })
+    app.on('before-quit', () => {
+      void windowRecorderService.stop()
+    })
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
-  })
+  }
+  void startApp()
   setInterval(() => void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error)), proxyPaymentReminderIntervalMs)
 
   app.on('activate', () => {

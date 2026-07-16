@@ -34,6 +34,7 @@ export type LocalXrayRuntimeInput = {
   entryPort: number
   entryUuid: string
   keepRunningAfterClose?: boolean
+  onReady?: () => void
   onProgress?: (progress: RuntimeProgress) => void
 }
 
@@ -114,19 +115,19 @@ const canRunXray = async (path: string): Promise<boolean> => {
   }
 }
 
-const resolveExistingXray = async (appDataDir: string): Promise<string | undefined> => {
-  const candidates = [
-    process.env.TRADETOOLS_XRAY_PATH,
-    process.env.XRAY_PATH,
+export const getXrayCoreCandidates = (appDataDir: string, configuredPath = process.env.TRADETOOLS_XRAY_PATH): string[] => {
+  return [
+    configuredPath,
     join(appDataDir, 'xray-core', xrayExecutableName),
     join(appDataDir, 'xray', xrayExecutableName)
   ].filter((path): path is string => Boolean(path))
+}
 
-  for (const candidate of candidates) {
+const resolveExistingXray = async (appDataDir: string): Promise<string | undefined> => {
+  for (const candidate of getXrayCoreCandidates(appDataDir)) {
     if (await fileExists(candidate) && await canRunXray(candidate)) return candidate
   }
 
-  if (await canRunXray(xrayExecutableName)) return xrayExecutableName
   return undefined
 }
 
@@ -553,6 +554,7 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
       findAvailableLocalPort(input.localPort + 1)
     ])
     if (isReusableLocalXrayOwner(owner) && await storedLocalXrayConfigMatches(configPath, nextConfig)) {
+      input.onReady?.()
       return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy уже запущен: 127.0.0.1:${input.localPort}`)
     }
     throw new Error(createLocalPortBusyMessage(input.localPort, owner, suggestedPort))
@@ -595,5 +597,6 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
   if (keepRunningAfterClose) child.unref()
 
   await waitForTcpPort(input.localPort, 8_000, () => exited ? processLogs.trim() || 'Локальный Xray завершился' : undefined)
+  input.onReady?.()
   return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy готов: 127.0.0.1:${input.localPort}`)
 }

@@ -614,12 +614,12 @@ describe('Dashboard layout', () => {
     expect(releaseWorkflowSource).not.toContain('AppImage')
   })
 
-  it('uses a connection-first proxy flow with collapsed diagnostics', async () => {
+  it('keeps proxy connection status and checks in one details block', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/ProxyVaultPanel.tsx'), 'utf8')
 
     expect(source).toContain('Подключить прокси')
     expect(source).toContain('Проверить подключение')
-    expect(source).toContain('Диагностика')
-    expect(source).toContain('<details')
+    expect(source).toContain('Состояние и проверки')
+    expect(source.match(/<details/g)).toHaveLength(1)
   })
 })
