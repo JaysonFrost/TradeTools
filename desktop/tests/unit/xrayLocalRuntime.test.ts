@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import * as xrayLocalRuntime from '../../src/main/services/proxies/xrayLocalRuntime'
 
 type LocalXrayOwnerPredicate = (owner: {
@@ -34,13 +35,14 @@ describe('isManagedLocalXrayOwner', () => {
 
 describe('getXrayCoreCandidates', () => {
   it('uses only an explicit TradeTools override or a TradeTools-owned Xray core', () => {
+    const appDataDir = 'C:\\Users\\Igor\\AppData\\Roaming\\tradetools'
     expect(xrayLocalRuntime.getXrayCoreCandidates(
-      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools',
+      appDataDir,
       'D:\\tools\\tradetools-xray.exe'
     )).toEqual([
       'D:\\tools\\tradetools-xray.exe',
-      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools\\xray-core\\xray.exe',
-      'C:\\Users\\Igor\\AppData\\Roaming\\tradetools\\xray\\xray.exe'
+      join(appDataDir, 'xray-core', process.platform === 'win32' ? 'xray.exe' : 'xray'),
+      join(appDataDir, 'xray', process.platform === 'win32' ? 'xray.exe' : 'xray')
     ])
   })
 })
