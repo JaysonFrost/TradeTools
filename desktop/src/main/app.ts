@@ -15,7 +15,7 @@ import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxie
 import { localXrayConfigPath } from './services/proxies/xrayBypassTargets'
 import { isLocalXrayRuntimeRunning, setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
-import { type AppSettings, type CaptureTargetRef, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
+import { type AppSettings, type CaptureTargetRef, type LocalProxyType, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
@@ -84,6 +84,7 @@ type ProxyChainInstructionResult = {
 
 type ProxyChainSetupRequest = {
   proxyId?: string
+  localProxyType?: LocalProxyType
 }
 
 type ProxyVpnBypassRequest = {
@@ -225,6 +226,7 @@ const assertPreviewVideoPath = async (videoPath: string): Promise<void> => {
 }
 
 const asString = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+const asLocalProxyType = (value: unknown, fallback: LocalProxyType): LocalProxyType => value === 'HTTP' || value === 'SOCKS5' ? value : fallback
 
 const assertHttpUrl = (url: string): string => {
   try {
@@ -621,6 +623,7 @@ const emptyProxyRuntime = () => ({
   entryHost: '',
   entryPort: 443,
   localPort: defaultLocalProxyPort,
+  localProxyType: 'SOCKS5' as const,
   entryUuidConfigured: false,
   configuredAtMs: 0
 })
@@ -673,11 +676,11 @@ const buildProxyChainInstructions = (
     network,
     route,
     terminal: [
-      'TradeTools поднимает локальный HTTP proxy для торгового терминала.',
+      'TradeTools поднимает локальный proxy для торгового терминала.',
       'В терминале включите proxy для торгового подключения.',
       'Host: 127.0.0.1',
       `Port: ${localPort}`,
-      'Type: HTTP. Логин и пароль оставьте пустыми.',
+      'Выберите SOCKS5 или HTTP при запуске цепочки. Логин и пароль оставьте пустыми.',
       ...network.advice
     ]
   }
@@ -775,6 +778,7 @@ app.whenReady().then(() => {
         entryHost: config.entryHost,
         entryPort: config.entryPort,
         localPort: config.localPort,
+        localProxyType: config.localProxyType,
         entryUuidConfigured: true,
         configuredAtMs: config.configuredAtMs
       }
@@ -828,6 +832,7 @@ app.whenReady().then(() => {
       entryHost: runtime.entryHost,
       entryPort: runtime.entryPort,
       entryUuid: uuid,
+      localProxyType: runtime.localProxyType,
       keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
       onReady,
       onProgress: (progress) => console.log(`[proxy-autostart] ${progress.status} ${progress.step}: ${progress.message}`)
@@ -1805,10 +1810,12 @@ app.whenReady().then(() => {
 
     const settings = await settingsStore.load()
     const chain = resolveProxyChain(settings, id)
+    const localProxyType = asLocalProxyType(input?.localProxyType, settings.proxyRuntime.localProxyType)
 
     const result = await setupProxyChainOnServers({
       chain,
       appDataDir: app.getPath('userData'),
+      localProxyType,
       keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
       getSshPassword: (proxyId) => secretStore.getProxyPassword(proxyId),
       onRuntimeConfigured: saveProxyRuntimeConfig,
@@ -1838,6 +1845,7 @@ app.whenReady().then(() => {
       : await setupProxyChainOnServers({
           chain: resolveProxyChain(settings, id),
           appDataDir: app.getPath('userData'),
+          localProxyType: asLocalProxyType(input?.localProxyType, settings.proxyRuntime.localProxyType),
           keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
           getSshPassword: (proxyId) => secretStore.getProxyPassword(proxyId),
           onRuntimeConfigured: saveProxyRuntimeConfig,

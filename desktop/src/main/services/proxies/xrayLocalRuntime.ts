@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createServer, connect as netConnect } from 'node:net'
 import { localXrayConfigPath } from './xrayBypassTargets'
+import type { LocalProxyType } from '../settings/settings'
 
 type RuntimeProgress = {
   step: string
@@ -33,6 +34,7 @@ export type LocalXrayRuntimeInput = {
   entryHost: string
   entryPort: number
   entryUuid: string
+  localProxyType?: LocalProxyType
   keepRunningAfterClose?: boolean
   onReady?: () => void
   onProgress?: (progress: RuntimeProgress) => void
@@ -41,7 +43,7 @@ export type LocalXrayRuntimeInput = {
 export type LocalXrayRuntimeResult = {
   host: '127.0.0.1'
   port: number
-  type: 'HTTP'
+  type: LocalProxyType
   username: ''
   password: ''
   authRequired: false
@@ -240,49 +242,69 @@ export const createLocalXrayConfig = (input: {
   entryHost: string
   entryPort: number
   entryUuid: string
-}): Record<string, unknown> => ({
-  log: {
-    loglevel: 'warning'
-  },
-  inbounds: [
-    {
-      tag: 'terminal-http',
-      listen: '127.0.0.1',
-      port: input.localPort,
-      protocol: 'http',
-      settings: {
-        timeout: 300
-      },
-      sniffing: {
-        enabled: true,
-        destOverride: ['http', 'tls']
-      }
-    }
-  ],
-  outbounds: [
-    {
-      tag: 'trade-chain',
-      protocol: 'vless',
-      settings: {
-        vnext: [
-          {
-            address: input.entryHost,
-            port: input.entryPort,
-            users: [
-              {
-                id: input.entryUuid,
-                encryption: 'none'
-              }
-            ]
+  localProxyType?: LocalProxyType
+}): Record<string, unknown> => {
+  const localProxyType = input.localProxyType ?? 'SOCKS5'
+
+  return {
+    log: {
+      loglevel: 'warning'
+    },
+    inbounds: [
+      localProxyType === 'HTTP'
+        ? {
+            tag: 'terminal-http',
+            listen: '127.0.0.1',
+            port: input.localPort,
+            protocol: 'http',
+            settings: {
+              timeout: 300
+            },
+            sniffing: {
+              enabled: true,
+              destOverride: ['http', 'tls']
+            }
           }
-        ]
-      },
-      streamSettings: {
-        network: 'tcp'
+        : {
+            tag: 'terminal-socks',
+            listen: '127.0.0.1',
+            port: input.localPort,
+            protocol: 'socks',
+            settings: {
+              auth: 'noauth',
+              udp: true
+            },
+            sniffing: {
+              enabled: true,
+              destOverride: ['http', 'tls']
+            }
+          }
+    ],
+    outbounds: [
+      {
+        tag: 'trade-chain',
+        protocol: 'vless',
+        settings: {
+          vnext: [
+            {
+              address: input.entryHost,
+              port: input.entryPort,
+              users: [
+                {
+                  id: input.entryUuid,
+                  encryption: 'none'
+                }
+              ]
+            }
+          ]
+        },
+        streamSettings: {
+          network: 'tcp'
+        }
       }
-    }
-  ]
-})
+    ]
+  }
+}
 
 export const stopLocalXrayRuntime = async (localPort?: number, appDataDir?: string): Promise<void> => {
   if (localXrayProcess) {
@@ -511,6 +533,7 @@ export const storedLocalXrayConfigMatches = async (configPath: string, config: R
 
 const finishLocalXrayRuntime = async (
   localPort: number,
+  localProxyType: LocalProxyType,
   progress: (progress: RuntimeProgress) => void,
   readyMessage: string
 ): Promise<LocalXrayRuntimeResult> => {
@@ -529,7 +552,7 @@ const finishLocalXrayRuntime = async (
   return {
     host: '127.0.0.1',
     port: localPort,
-    type: 'HTTP',
+    type: localProxyType,
     username: '',
     password: '',
     authRequired: false,
@@ -540,10 +563,11 @@ const finishLocalXrayRuntime = async (
 export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promise<LocalXrayRuntimeResult> => {
   const progress = input.onProgress ?? (() => undefined)
   const keepRunningAfterClose = input.keepRunningAfterClose === true
+  const localProxyType = input.localProxyType ?? 'SOCKS5'
   const binaryPath = await ensureXrayCore(input.appDataDir, progress)
   const configDir = join(input.appDataDir, 'xray-runtime')
   const configPath = localXrayConfigPath(input.appDataDir)
-  const nextConfig = createLocalXrayConfig(input)
+  const nextConfig = createLocalXrayConfig({ ...input, localProxyType })
   await mkdir(configDir, { recursive: true })
 
   if (localXrayProcess) {
@@ -555,9 +579,14 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
     ])
     if (isReusableLocalXrayOwner(owner) && await storedLocalXrayConfigMatches(configPath, nextConfig)) {
       input.onReady?.()
-      return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy уже запущен: 127.0.0.1:${input.localPort}`)
+      return finishLocalXrayRuntime(input.localPort, localProxyType, progress, `Локальный proxy уже запущен: 127.0.0.1:${input.localPort}`)
     }
-    throw new Error(createLocalPortBusyMessage(input.localPort, owner, suggestedPort))
+    if (isManagedLocalXrayOwner(owner, configPath)) {
+      progress({ step: 'local-xray', status: 'info', message: 'Обновляем конфигурацию локального proxy' })
+      await stopLocalXrayRuntime(input.localPort, input.appDataDir)
+    } else {
+      throw new Error(createLocalPortBusyMessage(input.localPort, owner, suggestedPort))
+    }
   }
 
   await writeFile(configPath, JSON.stringify(nextConfig, null, 2), 'utf8')
@@ -569,7 +598,8 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
     throw new Error(createLocalPortBusyMessage(input.localPort, owner, suggestedPort))
   }
 
-  progress({ step: 'local-xray', status: 'running', message: `Запускаем локальный HTTP proxy 127.0.0.1:${input.localPort}` })
+  const typeLabel = localProxyType === 'HTTP' ? 'HTTP proxy' : 'SOCKS5 proxy (совместим с HTTP)'
+  progress({ step: 'local-xray', status: 'running', message: `Запускаем локальный ${typeLabel} 127.0.0.1:${input.localPort}` })
   const child = spawn(binaryPath, ['run', '-config', configPath], {
     detached: keepRunningAfterClose,
     windowsHide: true,
@@ -598,5 +628,5 @@ export const setupLocalXrayRuntime = async (input: LocalXrayRuntimeInput): Promi
 
   await waitForTcpPort(input.localPort, 8_000, () => exited ? processLogs.trim() || 'Локальный Xray завершился' : undefined)
   input.onReady?.()
-  return finishLocalXrayRuntime(input.localPort, progress, `Локальный proxy готов: 127.0.0.1:${input.localPort}`)
+  return finishLocalXrayRuntime(input.localPort, localProxyType, progress, `Локальный proxy готов: 127.0.0.1:${input.localPort}`)
 }

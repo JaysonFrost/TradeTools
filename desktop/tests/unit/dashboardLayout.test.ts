@@ -426,7 +426,8 @@ describe('Dashboard layout', () => {
     expect(source).toContain('secondProxyServer')
     expect(source).toContain('Сохранить два сервера и связку')
     expect(source).toContain('setSavedWizardProxyIds([firstProxy.id, secondProxy.id])')
-    expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId })')
+    expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId, localProxyType })')
+    expect(source).toContain('Тип локального proxy')
     expect(source).toContain('Настроить и запустить связку')
   })
 

@@ -27,26 +27,47 @@ describe('proxyChainSetup', () => {
     ])).toBe('Хабаровск (khabarovsk.example) -> Токио (tokyo.example)')
   })
 
-  it('builds a local Xray config with an HTTP terminal proxy', () => {
+  it('builds a local SOCKS5 proxy that remains compatible with HTTP clients', () => {
     const config = createLocalXrayConfig({
       localPort: defaultLocalProxyPort,
       entryHost: 'khabarovsk.example',
       entryPort: 443,
       entryUuid: '11111111-1111-4111-8111-111111111111'
     }) as {
-      inbounds: Array<{ listen: string, port: number, protocol: string }>
+      inbounds: Array<{ listen: string, port: number, protocol: string, settings: { auth: string, udp: boolean } }>
       outbounds: Array<{ protocol: string, settings: { vnext: Array<{ address: string, port: number }> } }>
     }
 
     expect(config.inbounds[0]).toMatchObject({
       listen: '127.0.0.1',
       port: defaultLocalProxyPort,
-      protocol: 'http'
+      protocol: 'socks',
+      settings: {
+        auth: 'noauth',
+        udp: true
+      }
     })
     expect(config.outbounds[0].protocol).toBe('vless')
     expect(config.outbounds[0].settings.vnext[0]).toMatchObject({
       address: 'khabarovsk.example',
       port: 443
+    })
+  })
+
+  it('builds an HTTP proxy when that type is selected', () => {
+    const config = createLocalXrayConfig({
+      localPort: defaultLocalProxyPort,
+      entryHost: 'khabarovsk.example',
+      entryPort: 443,
+      entryUuid: '11111111-1111-4111-8111-111111111111',
+      localProxyType: 'HTTP'
+    }) as {
+      inbounds: Array<{ protocol: string, settings: { timeout: number } }>
+    }
+
+    expect(config.inbounds[0]).toMatchObject({
+      protocol: 'http',
+      settings: { timeout: 300 }
     })
   })
 

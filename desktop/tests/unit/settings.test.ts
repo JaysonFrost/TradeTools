@@ -50,6 +50,7 @@ describe('settings', () => {
       entryHost: '',
       entryPort: 443,
       localPort: defaultLocalProxyPort,
+      localProxyType: 'SOCKS5',
       entryUuidConfigured: false,
       configuredAtMs: 0
     })
@@ -335,6 +336,7 @@ describe('settings', () => {
         entryHost: ' 92.38.129.126 ',
         entryPort: 443,
         localPort: 1083,
+        localProxyType: 'HTTP',
         entryUuidConfigured: true,
         configuredAtMs: 123
       }
@@ -344,12 +346,17 @@ describe('settings', () => {
       activeStartProxyId: 'proxy-1',
       route: 'Edgecenter -> Vultr',
       entryHost: '92.38.129.126',
-      entryPort: 443,
-      localPort: 1083,
-      entryUuidConfigured: true,
+        entryPort: 443,
+        localPort: 1083,
+        localProxyType: 'HTTP',
+        entryUuidConfigured: true,
       configuredAtMs: 123
     })
     expect(settings.proxyRuntime).not.toHaveProperty('entryUuid')
+  })
+
+  it('uses SOCKS5 for a proxy runtime saved without a selected type', () => {
+    expect(normalizeSettings({}, '/app-data').proxyRuntime.localProxyType).toBe('SOCKS5')
   })
 
   it('drops legacy external publishing settings from stored settings', () => {

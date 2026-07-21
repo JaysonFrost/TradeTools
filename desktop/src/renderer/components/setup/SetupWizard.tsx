@@ -92,6 +92,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [proxyDashboardUrl, setProxyDashboardUrl] = useState('')
   const [proxyPaymentDueDay, setProxyPaymentDueDay] = useState(currentPaymentDueDay())
   const [proxyLocalPort, setProxyLocalPort] = useState(String(defaultLocalProxyPort))
+  const [localProxyType, setLocalProxyType] = useState<AppSettings['proxyRuntime']['localProxyType']>('SOCKS5')
   const [proxyNotes, setProxyNotes] = useState('')
   const [secondProxyTitle, setSecondProxyTitle] = useState(defaultProxyTitle(undefined, 1))
   const [secondProxyServer, setSecondProxyServer] = useState('')
@@ -119,6 +120,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setProxyDashboardUrl('')
     setProxyPaymentDueDay(currentPaymentDueDay())
     setProxyLocalPort(String(defaultLocalProxyPort))
+    setLocalProxyType(nextSettings?.proxyRuntime.localProxyType ?? 'SOCKS5')
     setProxyNotes('')
     setSecondProxyTitle(defaultProxyTitle(nextSettings, 1))
     setSecondProxyServer('')
@@ -158,6 +160,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
     setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
+    setLocalProxyType(settings.proxyRuntime.localProxyType)
   }, [settings])
 
   const refreshWindowSources = async () => {
@@ -422,7 +425,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setChainSetupResult(undefined)
     setChainSetupProgress([])
     try {
-      const result = await getTradeToolsApi().proxies.setupChain({ proxyId: selectedProxyId })
+      const result = await getTradeToolsApi().proxies.setupChain({ proxyId: selectedProxyId, localProxyType })
       setChainSetupResult(result)
       setLocalMessage('Связка настроена, локальный proxy запущен')
     } catch (error) {
@@ -586,9 +589,9 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       case 'proxy-chain':
         return 'Маршрут будет сохранён внутри мастера: первый сервер -> второй сервер. Больше узлов можно переставить на странице прокси.'
       case 'proxy-check':
-        return 'TradeTools проверит SSH, установит Xray/VLESS на серверах и поднимет локальный HTTP proxy.'
+        return 'TradeTools проверит SSH, установит Xray/VLESS на серверах и поднимет выбранный локальный SOCKS5 или HTTP proxy.'
       case 'proxy-done':
-        return 'В торговом терминале останется указать HTTP proxy 127.0.0.1 и локальный порт.'
+        return 'В торговом терминале останется указать выбранный SOCKS5 или HTTP proxy 127.0.0.1 и локальный порт.'
       default:
         return 'Можно закрыть мастер и пользоваться основным экраном.'
     }
@@ -820,7 +823,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                       <>
                         <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={16} />Связка сохранена</div>
                         <div>{proxyName(settings, savedWizardProxyIds[0])} {'->'} {proxyName(settings, savedWizardProxyIds[1])}</div>
-                        <div className="mt-2 text-xs text-zinc-500">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается только локальный HTTP proxy.</div>
+                        <div className="mt-2 text-xs text-zinc-500">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается выбранный локальный SOCKS5 или HTTP proxy.</div>
                       </>
                     ) : (
                       <>
@@ -832,12 +835,18 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                 )}
                 {step.id === 'proxy-check' && (
                   <div className="mt-5 space-y-4">
-                    <label className="block text-xs font-medium text-zinc-500">Первый сервер маршрута
-                      <select className={`${inputClass} appearance-none`} value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
-                        <option value="">Сервер не выбран</option>
-                        {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
-                      </select>
-                    </label>
+                     <label className="block text-xs font-medium text-zinc-500">Первый сервер маршрута
+                       <select className={`${inputClass} appearance-none`} value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
+                         <option value="">Сервер не выбран</option>
+                         {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
+                       </select>
+                     </label>
+                     <label className="block text-xs font-medium text-zinc-500">Тип локального proxy
+                       <select className={`${inputClass} appearance-none`} value={localProxyType} onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}>
+                         <option value="SOCKS5">SOCKS5 (рекомендуется)</option>
+                         <option value="HTTP">HTTP</option>
+                       </select>
+                     </label>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="ghost" onClick={() => void checkProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Работаем...' : 'Проверить SSH'}</Button>
                       <Button onClick={() => void setupProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Настраиваем...' : 'Настроить и запустить связку'}</Button>
@@ -875,7 +884,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                     {chainSetupResult && (
                       <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm leading-6 text-zinc-200">
                         <div className="font-semibold text-emerald-100">Связка настроена и локальный proxy запущен</div>
-                        <div className="mt-2">Терминал: HTTP proxy, host <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.host}</span>, port <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.port}</span>. Логин и пароль пустые.</div>
+                        <div className="mt-2">Терминал: {chainSetupResult.entryProxy.type} proxy, host <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.host}</span>, port <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.port}</span>. Логин и пароль пустые.</div>
                       </div>
                     )}
                   </div>

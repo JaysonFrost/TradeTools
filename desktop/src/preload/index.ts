@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
 import type { VpnBypassRouteResult, VpnBypassStatus } from '../main/services/proxies/vpnBypassRoutes'
-import type { AppSettings, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
+import type { AppSettings, LocalProxyType, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
 import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
@@ -56,7 +56,7 @@ export type ProxyChainSetupResult = {
   entryProxy: {
     host: '127.0.0.1'
     port: number
-    type: 'HTTP'
+    type: LocalProxyType
     username: ''
     password: ''
     authRequired: false
@@ -121,7 +121,7 @@ const api = {
     connectChain: (input: { proxyId: string }): Promise<ProxyChainConnectionResult> => ipcRenderer.invoke('proxies:connect-chain', input),
     disconnect: (): Promise<AppSettings> => ipcRenderer.invoke('proxies:disconnect'),
     getLocalRuntimeStatus: (): Promise<boolean> => ipcRenderer.invoke('proxies:get-local-runtime-status'),
-    setupChain: (input: { proxyId: string }): Promise<ProxyChainSetupResult> => ipcRenderer.invoke('proxies:setup-chain', input),
+    setupChain: (input: { proxyId: string, localProxyType: LocalProxyType }): Promise<ProxyChainSetupResult> => ipcRenderer.invoke('proxies:setup-chain', input),
     configureVpnBypass: (input: { proxyId: string }): Promise<VpnBypassRouteResult> => ipcRenderer.invoke('proxies:configure-vpn-bypass', input),
     getVpnBypassStatus: (): Promise<VpnBypassStatus> => ipcRenderer.invoke('proxies:get-vpn-bypass-status'),
     refreshVpnBypass: (): Promise<VpnBypassStatus> => ipcRenderer.invoke('proxies:refresh-vpn-bypass'),

@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Client, type ConnectConfig } from 'ssh2'
-import type { AppSettings, ProxyRecord } from '../settings/settings'
+import type { AppSettings, LocalProxyType, ProxyRecord } from '../settings/settings'
 import { inspectProxyNetworkEnvironment, type NetworkEnvironmentSnapshot, type NetworkDiagnosticStatus } from './networkEnvironment'
 import { parseSshEndpoint } from './sshConnectionCheck'
 import { setupLocalXrayRuntime, type LocalProxyDiagnostic } from './xrayLocalRuntime'
@@ -22,7 +22,7 @@ export type ProxyChainSetupResult = {
   entryProxy: {
     host: '127.0.0.1'
     port: number
-    type: 'HTTP'
+    type: LocalProxyType
     username: ''
     password: ''
     authRequired: false
@@ -43,6 +43,7 @@ export type ProxyChainRuntimeConfig = {
   entryPort: number
   entryUuid: string
   localPort: number
+  localProxyType: LocalProxyType
   configuredAtMs: number
 }
 
@@ -50,6 +51,7 @@ export type ProxyChainSetupInput = {
   chain: ProxyRecord[]
   getSshPassword: (proxyId: string) => Promise<string | undefined>
   appDataDir: string
+  localProxyType?: LocalProxyType
   keepRunningAfterClose?: boolean
   onRuntimeConfigured?: (config: ProxyChainRuntimeConfig) => Promise<void> | void
   onProgress?: (progress: ProxyChainSetupProgress) => void
@@ -234,6 +236,7 @@ export const reconnectStoredProxyRuntime = async (input: {
     entryHost: input.runtime.entryHost,
     entryPort: input.runtime.entryPort,
     entryUuid: input.entryUuid,
+    localProxyType: input.runtime.localProxyType,
     keepRunningAfterClose: input.keepRunningAfterClose
   })
   const network = await inspectProxyNetworkEnvironment({
@@ -282,6 +285,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
   const firstNode = nodes[0]
   if (!firstNode) throw new Error('Связка пустая')
   const localPort = input.chain[0]?.localProxyPort || defaultLocalProxyPort
+  const localProxyType = input.localProxyType ?? 'SOCKS5'
 
   progress({
     proxyId: firstNode.proxy.id,
@@ -372,6 +376,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
       entryHost: firstNode.host,
       entryPort: firstNode.listenPort,
       entryUuid: firstNode.uuid,
+      localProxyType,
       keepRunningAfterClose: input.keepRunningAfterClose,
       onProgress: (localProgress) => progress(localProgress)
     })
@@ -391,7 +396,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
     proxyName: proxyDisplayName(firstNode.proxy),
     step: 'done',
     status: 'success',
-    message: 'Связка настроена. В терминале укажите HTTP 127.0.0.1 и локальный порт без логина и пароля.'
+    message: `Связка настроена. В терминале укажите ${localProxyType} 127.0.0.1 и локальный порт без логина и пароля.`
   })
 
   const configuredAtMs = Date.now()
@@ -402,6 +407,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
     entryPort: firstNode.listenPort,
     entryUuid: firstNode.uuid,
     localPort,
+    localProxyType,
     configuredAtMs
   })
 

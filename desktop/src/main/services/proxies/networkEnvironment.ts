@@ -139,7 +139,7 @@ export const createProxyNetworkAdvice = (input: {
     advice.push('Если включён системный proxy/PAC, добавьте 127.0.0.1 в bypass и не проксируйте локальный порт TradeTools.')
   }
 
-  advice.push(`В торговом терминале укажите только HTTP proxy 127.0.0.1:${input.localPort ?? 1083}; внутри терминала не включайте второй VPN/proxy для этого же подключения.`)
+  advice.push(`В торговом терминале укажите выбранный локальный proxy 127.0.0.1:${input.localPort ?? 1083}; внутри терминала не включайте второй VPN/proxy для этого же подключения.`)
 
   return advice
 }

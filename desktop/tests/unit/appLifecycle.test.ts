@@ -274,6 +274,8 @@ describe('main app lifecycle', () => {
     expect(xraySource).toContain('isReusableLocalXrayOwner')
     expect(xraySource).toContain('storedLocalXrayConfigMatches')
     expect(xraySource).toContain('Локальный proxy уже запущен')
+    expect(xraySource).toContain('isManagedLocalXrayOwner(owner, configPath)')
+    expect(xraySource).toContain('await stopLocalXrayRuntime(input.localPort, input.appDataDir)')
   })
 
   it('starts the saved local proxy before opening the TradeTools window', async () => {
@@ -282,6 +284,7 @@ describe('main app lifecycle', () => {
     expect(source).toContain('void startStoredProxyRuntime(settings, resolveProxyReady)')
     expect(source).toContain('await Promise.race([')
     expect(source.indexOf('void startStoredProxyRuntime(settings, resolveProxyReady)')).toBeLessThan(source.lastIndexOf('createMainWindow()'))
+    expect(source).toContain('localProxyType: runtime.localProxyType')
   })
 
   it('exposes a proxy disconnect action that stops Xray and disables background running', async () => {

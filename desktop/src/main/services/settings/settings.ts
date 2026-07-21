@@ -6,6 +6,7 @@ export type RecordingSourceType = 'window' | 'screen'
 export type RecordingSaveTargetMode = 'all' | 'selected'
 export type RecordingVideoEncoder = 'gpu' | 'nvidia' | 'amd' | 'intel' | `gpu:${'nvidia' | 'amd' | 'intel'}:${number}` | 'cpu'
 export type RecordingResolutionPreset = 'native' | '1440p' | '1080p'
+export type LocalProxyType = 'HTTP' | 'SOCKS5'
 
 export type CaptureTargetRef = {
   id: string
@@ -76,6 +77,7 @@ export type AppSettings = {
     entryHost: string
     entryPort: number
     localPort: number
+    localProxyType: LocalProxyType
     entryUuidConfigured: boolean
     configuredAtMs: number
   }
@@ -107,6 +109,7 @@ const clamp = (value: number, min: number, max: number): number => Number.isFini
 const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/
 
 const normalizeString = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+const normalizeLocalProxyType = (value: unknown): LocalProxyType => value === 'HTTP' ? 'HTTP' : 'SOCKS5'
 
 const normalizePort = (value: unknown, fallback = 0): number => {
   const port = Number(value)
@@ -261,6 +264,7 @@ const normalizeProxyRuntime = (value: unknown): AppSettings['proxyRuntime'] => {
     entryHost: normalizeString(input.entryHost),
     entryPort: normalizePort(input.entryPort, 443),
     localPort: normalizePort(input.localPort, defaultLocalProxyPort),
+    localProxyType: normalizeLocalProxyType(input.localProxyType),
     entryUuidConfigured: input.entryUuidConfigured === true,
     configuredAtMs: Number.isFinite(configuredAtMs) && configuredAtMs > 0 ? configuredAtMs : 0
   }
@@ -313,6 +317,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     entryHost: '',
     entryPort: 443,
     localPort: defaultLocalProxyPort,
+    localProxyType: 'SOCKS5',
     entryUuidConfigured: false,
     configuredAtMs: 0
   },
