@@ -235,12 +235,6 @@ const getErrorCode = (error: unknown): string => (
   typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
 )
 
-const distanceToReplayWindow = (segment: ReplayWindowSegment, replayStartMs: number, replayEndMs: number): number => {
-  if (segment.endedAtMs < replayStartMs) return replayStartMs - segment.endedAtMs
-  if (segment.startedAtMs > replayEndMs) return segment.startedAtMs - replayEndMs
-  return 0
-}
-
 export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
   sourceSegments: T[],
   replayStartMs: number,
@@ -249,33 +243,23 @@ export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
   const overlapping = sourceSegments.filter((segment) => (
     segment.endedAtMs >= replayStartMs - exportToleranceMs &&
     segment.startedAtMs <= replayEndMs + exportToleranceMs
-  ))
-  const first = overlapping[0]
-  const last = overlapping.at(-1)
-  if (first && last) {
-    const clippedStartMs = Math.max(replayStartMs, first.startedAtMs)
-    const clippedEndMs = Math.min(replayEndMs, last.endedAtMs)
-    if (clippedEndMs > clippedStartMs) {
-      return {
-        segments: overlapping,
-        replayStartMs: clippedStartMs,
-        replayEndMs: clippedEndMs
-      }
-    }
+  )).sort((a, b) => a.startedAtMs - b.startedAtMs)
+  const selected: T[] = []
+  let coveredUntilMs = Number.NEGATIVE_INFINITY
+  for (const segment of overlapping) {
+    if (segment.endedAtMs <= coveredUntilMs + exportToleranceMs) continue
+    selected.push(segment)
+    coveredUntilMs = segment.endedAtMs
   }
 
-  const nearest = sourceSegments.reduce<T | undefined>((best, segment) => {
-    if (!best) return segment
-    const bestDistance = distanceToReplayWindow(best, replayStartMs, replayEndMs)
-    const segmentDistance = distanceToReplayWindow(segment, replayStartMs, replayEndMs)
-    return segmentDistance < bestDistance ? segment : best
-  }, undefined)
-  if (!nearest || nearest.endedAtMs <= nearest.startedAtMs) return undefined
+  const first = selected[0]
+  const last = selected.at(-1)
+  if (!first || !last || first.startedAtMs > replayStartMs || last.endedAtMs < replayEndMs) return undefined
 
   return {
-    segments: [nearest],
-    replayStartMs: nearest.startedAtMs,
-    replayEndMs: nearest.endedAtMs
+    segments: selected,
+    replayStartMs,
+    replayEndMs
   }
 }
 
@@ -885,7 +869,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     while (Date.now() <= deadlineMs) {
       await pruneSegments(settings)
       const sourceSegments = relevantSegments(settings, captureTarget)
-      if (sourceSegments.some((segment) => segment.endedAtMs >= targetEndMs - exportToleranceMs)) {
+      if (sourceSegments.some((segment) => segment.endedAtMs >= targetEndMs)) {
         return sourceSegments
       }
       await sleep(pollIntervalMs)
@@ -914,7 +898,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }))
   }
 
-  const browserReplayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => {
+  const replayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => {
     const audioArgs = browserAudioEnabled(settings)
       ? ['-map', '0:a?', '-c:a', 'aac', '-b:a', '160k']
       : ['-an']
@@ -936,7 +920,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     ]
   }
 
-  const trimBrowserReplayFile = async (
+  const trimReplayFile = async (
     sessionFiles: ReplaySessionFile[],
     listPath: string,
     replayPath: string,
@@ -962,7 +946,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         formatFfmpegSeconds(durationSeconds),
         '-i',
         firstSession.path,
-        ...browserReplayEncodeArgs(settings, replayPath)
+        ...replayEncodeArgs(settings, replayPath)
       ], signal)
       return
     }
@@ -985,65 +969,8 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '0',
       '-i',
       listPath,
-      ...browserReplayEncodeArgs(settings, replayPath)
+      ...replayEncodeArgs(settings, replayPath)
     ], signal)
-  }
-
-  const concatNativeReplayFile = async (neededSegments: StoredSegment[], listPath: string, replayPath: string, settings: AppSettings, signal?: AbortSignal): Promise<void> => {
-    const concatList = neededSegments
-      .map((segment) => `file '${escapeConcatPath(segment.path)}'`)
-      .join('\n')
-    await writeFile(listPath, `${concatList}\n`, 'utf8')
-
-    try {
-      await runFfmpeg([
-        '-y',
-        '-fflags',
-        '+genpts',
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        listPath,
-        '-map',
-        '0:v:0',
-        '-an',
-        '-c',
-        'copy',
-        '-avoid_negative_ts',
-        'make_zero',
-        '-movflags',
-        '+faststart',
-        replayPath
-      ], signal)
-      return
-    } catch {
-      await runFfmpeg([
-        '-y',
-        '-fflags',
-        '+genpts',
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        listPath,
-        '-map',
-        '0:v:0',
-        '-an',
-        ...buildH264VideoArgs({ platform: process.platform, purpose: 'export', encoder: settings.recording.videoEncoder }),
-        '-r',
-        String(settings.recording.frameRate),
-        '-fps_mode',
-        'cfr',
-        '-avoid_negative_ts',
-        'make_zero',
-        '-movflags',
-        '+faststart',
-        replayPath
-      ], signal)
-    }
   }
 
   const writeReplayFromSegments = async (
@@ -1056,22 +983,14 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     replayEndMs: number,
     signal?: AbortSignal
   ): Promise<ReplayWriteResult> => {
-    const allNativeSegments = neededSegments.every((segment) => segment.backend === 'ffmpeg')
-    const allBrowserSegments = neededSegments.every((segment) => segment.backend === 'browser')
-    let sessionFiles: ReplaySessionFile[] = []
-
-    if (allNativeSegments) {
-      await concatNativeReplayFile(neededSegments, listPath, replayPath, settings, signal)
-      return { sessionFiles, readyClip: true }
+    const backend = neededSegments[0]?.backend
+    if (!backend || !neededSegments.every((segment) => segment.backend === backend)) {
+      throw new Error('Во время записи переключился backend записи. Дождитесь новой записи после перезапуска рекордера.')
     }
 
-    if (allBrowserSegments) {
-      sessionFiles = await buildSessionFiles(neededSegments, replayId)
-      await trimBrowserReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs, signal)
-      return { sessionFiles, readyClip: true }
-    }
-
-    throw new Error('Во время записи переключился backend записи. Дождитесь новой записи после перезапуска рекордера.')
+    const sessionFiles = await buildSessionFiles(neededSegments, replayId)
+    await trimReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs, signal)
+    return { sessionFiles, readyClip: true }
   }
 
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade, captureTarget?: CaptureTargetRef, signal?: AbortSignal): Promise<ReplayExportResult> => {

@@ -3,6 +3,14 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('main app lifecycle', () => {
+  it('keeps one TradeTools instance so recorders cannot delete each other cache files', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('app.requestSingleInstanceLock()')
+    expect(source).toContain('if (!ownsAppInstance) app.exit(0)')
+    expect(source).toContain('if (ownsAppInstance && !keepProxyRunningAfterClose)')
+  })
+
   it('disables Windows Graphics Capture to avoid stale desktop frames', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
@@ -270,7 +278,7 @@ describe('main app lifecycle', () => {
 
     expect(appSource).toContain('keepProxyRunningAfterClose')
     expect(appSource).toContain('applyProxyQuitPreference')
-    expect(appSource).toContain('if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()')
+    expect(appSource).toContain('if (ownsAppInstance && !keepProxyRunningAfterClose) void stopLocalXrayRuntime()')
     expect(xraySource).toContain('isReusableLocalXrayOwner')
     expect(xraySource).toContain('storedLocalXrayConfigMatches')
     expect(xraySource).toContain('Локальный proxy уже запущен')

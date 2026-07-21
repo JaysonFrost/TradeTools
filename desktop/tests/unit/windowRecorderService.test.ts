@@ -290,7 +290,7 @@ describe('windowRecorderService', () => {
     }
   })
 
-  it('falls back to the nearest built-in segment when the requested trade window is not buffered', () => {
+  it('does not substitute an unrelated segment when the requested trade window is not buffered', () => {
     const requestedStartMs = Date.parse('2026-06-17T17:47:04.000Z')
     const requestedEndMs = Date.parse('2026-06-17T17:47:10.000Z')
     const nearestSegment = {
@@ -301,11 +301,25 @@ describe('windowRecorderService', () => {
 
     const selection = selectAvailableReplayWindow([nearestSegment], requestedStartMs, requestedEndMs)
 
-    expect(selection).toEqual({
-      segments: [nearestSegment],
-      replayStartMs: nearestSegment.startedAtMs,
-      replayEndMs: nearestSegment.endedAtMs
+    expect(selection).toBeUndefined()
+  })
+
+  it('deduplicates overlapping recorder segments while preserving the requested trade window', () => {
+    const first = { id: 'first', startedAtMs: 1_000, endedAtMs: 11_000 }
+    const duplicate = { id: 'duplicate', startedAtMs: 1_000, endedAtMs: 11_000 }
+    const second = { id: 'second', startedAtMs: 11_000, endedAtMs: 21_000 }
+
+    expect(selectAvailableReplayWindow([duplicate, second, first], 6_000, 16_000)).toEqual({
+      segments: [duplicate, second],
+      replayStartMs: 6_000,
+      replayEndMs: 16_000
     })
+  })
+
+  it('does not export a partial trade window that misses the exit', () => {
+    const beforeExit = { id: 'before-exit', startedAtMs: 1_000, endedAtMs: 9_000 }
+
+    expect(selectAvailableReplayWindow([beforeExit], 2_000, 10_000)).toBeUndefined()
   })
 
   it('keeps active trade segments and exports the full trade range instead of capping to the idle buffer', async () => {
@@ -322,7 +336,8 @@ describe('windowRecorderService', () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
     expect(source).toContain('readyClip: true')
-    expect(source).toContain('trimBrowserReplayFile')
+    expect(source).toContain('trimReplayFile')
+    expect(source).not.toContain('concatNativeReplayFile')
     expect(source).toContain('replayStartMs')
     expect(source).toContain('replayEndMs')
   })

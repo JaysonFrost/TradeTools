@@ -58,6 +58,17 @@ if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('enable-features', macLoopbackAudioFeatures.join(','))
 }
 
+const ownsAppInstance = app.requestSingleInstanceLock()
+if (!ownsAppInstance) app.exit(0)
+
+app.on('second-instance', () => {
+  const mainWindow = BrowserWindow.getAllWindows()[0]
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
+
 const getErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'неизвестная ошибка'
 
 type ProxySaveInput = {
@@ -744,6 +755,8 @@ const createMainWindow = (): BrowserWindow => {
 }
 
 app.whenReady().then(() => {
+  if (!ownsAppInstance) return
+
   ensureWindowsNotificationShortcut()
   const appLog = createAppLogService({ appDataDir: app.getPath('userData') })
   const settingsStore = createSettingsStore(app.getPath('userData'))
@@ -1992,5 +2005,5 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  if (!keepProxyRunningAfterClose) void stopLocalXrayRuntime()
+  if (ownsAppInstance && !keepProxyRunningAfterClose) void stopLocalXrayRuntime()
 })
