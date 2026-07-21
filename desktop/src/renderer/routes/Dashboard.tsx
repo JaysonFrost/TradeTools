@@ -15,6 +15,7 @@ import { WindowRecorderController } from '../components/recording/WindowRecorder
 import { SystemSettingsPanel } from '../components/settings/SystemSettingsPanel'
 import { SupportDeveloperPage } from '../components/support/SupportDeveloperPage'
 import { ClipCard } from '../components/trade/ClipCard'
+import { getClipDayGroups, getClipsForDate, getClipsForPeriod, type ClipSortDirection, type ClipSortKey } from '../lib/clipList'
 import type { AppPage } from '../lib/navigation'
 import { getTradeToolsApi } from '../lib/tradeToolsApi'
 import type { ProxyChainSetupProgress } from '../../preload'
@@ -50,6 +51,7 @@ type VideoPageProps = {
   onOpenClipFolder: () => void
   onClipDeleted: (clip: ClipQueueItem) => void
   onClipRenamed: (clip: ClipQueueItem) => void
+  onClipMessage: (message: string) => void
   onFreeRecordingStart: () => void
   onFreeRecordingPause: () => void
   onFreeRecordingResume: () => void
@@ -134,6 +136,11 @@ const RecordingStatusPanel = ({
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
   const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
   const hasActiveTrade = terminalTrade.active
+  const detectedTerminalNames = terminalTrade.availableSources.map((source) => ({
+    tigertrade: 'TigerTrade',
+    vataga: 'Vataga',
+    metascalp: 'MetaScalp'
+  })[source])
   const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
   const activeTradeSummary = `${terminalTrade.activeTradeCount} поз.`
   const showStatusBadge = !isWindowMode || !backgroundRecordingEnabled || hasActiveTrade
@@ -166,6 +173,9 @@ const RecordingStatusPanel = ({
             )}
           </div>
           {message && <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>}
+          {isWindowMode && backgroundRecordingEnabled && detectedTerminalNames.length > 0 && (
+            <p className="mt-2 text-xs leading-5 text-zinc-500">Журналы терминалов: <span className="text-zinc-300">{detectedTerminalNames.join(', ')}</span></p>
+          )}
           {isWindowMode && hasActiveTrade && (
             <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
               <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
@@ -312,7 +322,149 @@ const DiagnosticsLogPanel = ({
   </details>
 )
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
+type ClipQueueSectionProps = Pick<VideoPageProps,
+  'clipMessage' | 'clipProcessing' | 'clips' | 'onCancelClipRender' | 'onClearQueue' | 'onClipDeleted' | 'onClipRenamed' | 'onDeleteQueueFiles' | 'onOpenClipFolder' | 'onClipMessage'
+>
+
+const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage }: ClipQueueSectionProps) => {
+  const [selectedClipPaths, setSelectedClipPaths] = useState<Set<string>>(new Set())
+  const [customDate, setCustomDate] = useState('')
+  const [sort, setSort] = useState<ClipSortKey>('date')
+  const [sortDirection, setSortDirection] = useState<ClipSortDirection>('desc')
+  const [deletingSelected, setDeletingSelected] = useState(false)
+  const groups = useMemo(() => getClipDayGroups(clips, sort, sortDirection), [clips, sort, sortDirection])
+  const selectedClips = useMemo(() => clips.filter((clip) => selectedClipPaths.has(clip.metadataPath)), [clips, selectedClipPaths])
+  const allSelected = clips.length > 0 && selectedClips.length === clips.length
+
+  useEffect(() => {
+    const availablePaths = new Set(clips.map((clip) => clip.metadataPath))
+    setSelectedClipPaths((current) => {
+      const next = new Set([...current].filter((path) => availablePaths.has(path)))
+      return next.size === current.size ? current : next
+    })
+  }, [clips])
+
+  const selectClips = (nextClips: ClipQueueItem[]) => setSelectedClipPaths(new Set(nextClips.map((clip) => clip.metadataPath)))
+  const toggleClip = (clip: ClipQueueItem, selected: boolean) => {
+    setSelectedClipPaths((current) => {
+      const next = new Set(current)
+      if (selected) next.add(clip.metadataPath)
+      else next.delete(clip.metadataPath)
+      return next
+    })
+  }
+
+  const deleteSelected = async () => {
+    if (selectedClips.length === 0 || !window.confirm(`Удалить ${selectedClips.length} выбранных видео с диска? Это действие нельзя отменить.`)) return
+
+    setDeletingSelected(true)
+    try {
+      const results = await Promise.allSettled(selectedClips.map(async (clip) => getTradeToolsApi().clips.deleteFile(clip.metadataPath)))
+      const failedPaths = new Set<string>()
+      let deletedCount = 0
+      results.forEach((result, index) => {
+        const clip = selectedClips[index]
+        if (!clip) return
+        if (result.status === 'fulfilled') {
+          deletedCount += 1
+          onClipDeleted(clip)
+        } else {
+          failedPaths.add(clip.metadataPath)
+        }
+      })
+      setSelectedClipPaths(failedPaths)
+      onClipMessage(failedPaths.size > 0
+        ? `Удалено видео: ${deletedCount}. Не удалось удалить: ${failedPaths.size}`
+        : `Удалено выбранных видео: ${deletedCount}`)
+    } finally {
+      setDeletingSelected(false)
+    }
+  }
+
+  const selectionButtonClass = 'inline-flex min-h-9 cursor-pointer items-center rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50'
+
+  return (
+    <section className="col-span-12">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
+          <p className="mt-1 text-xs text-zinc-500">Выберите нужные видео, чтобы удалить только их. Очистить — убрать из списка, удалить — стереть с диска.</p>
+          {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
+        </div>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08]" onClick={onOpenClipFolder} type="button">
+            <FolderOpen size={16} className="mr-2" />Открыть папку с видео
+          </button>
+          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
+            <ListX size={16} className="mr-2" />Очистить очередь
+          </button>
+          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
+            <Trash2 size={16} className="mr-2" />Удалить все файлы
+          </button>
+        </div>
+      </div>
+      <div className="mb-3 rounded-3xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <button className={selectionButtonClass} onClick={() => selectClips(allSelected ? [] : clips)} disabled={clips.length === 0} type="button">
+              {allSelected ? 'Снять выбор' : 'Выбрать все'}
+            </button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'day'))} disabled={clips.length === 0} type="button">Выбрать сегодня</button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'week'))} disabled={clips.length === 0} type="button">Выбрать неделю</button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'month'))} disabled={clips.length === 0} type="button">Выбрать месяц</button>
+            <label className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-2 text-xs text-zinc-400">
+              <span className="sr-only">Отдельная дата</span>
+              <input className="bg-transparent text-xs text-zinc-100 outline-none [color-scheme:dark]" value={customDate} onChange={(event) => setCustomDate(event.target.value)} type="date" />
+              <button className="font-semibold text-violet-200 disabled:opacity-50" onClick={() => selectClips(getClipsForDate(clips, customDate))} disabled={!customDate} type="button">Выбрать дату</button>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-zinc-500">Сортировка</span>
+            <select className="min-h-9 rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-100 outline-none" value={sort} onChange={(event) => setSort(event.target.value as ClipSortKey)} aria-label="Сортировка видео">
+              <option value="date">Дата</option>
+              <option value="name">Имя</option>
+              <option value="duration">Длительность</option>
+            </select>
+            <button className={selectionButtonClass} onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')} type="button">
+              {sortDirection === 'asc' ? 'По возрастанию' : 'По убыванию'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+          <span className="text-xs text-zinc-400">Выбрано: <span className="font-semibold text-zinc-100">{selectedClips.length}</span> из {clips.length}</span>
+          <button className="inline-flex min-h-9 cursor-pointer items-center rounded-xl border border-red-500/30 bg-red-500/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteSelected()} disabled={selectedClips.length === 0 || deletingSelected} type="button">
+            <Trash2 size={14} className="mr-2" />{deletingSelected ? 'Удаляем...' : 'Удалить выбранные'}
+          </button>
+        </div>
+      </div>
+      {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
+      <div className="max-h-[560px] space-y-5 overflow-y-auto pr-1">
+        {groups.length > 0 ? groups.map((group) => (
+          <section key={group.key} aria-label={`Видео за ${group.label}`}>
+            <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-[#111216]/95 py-1 backdrop-blur">
+              <h3 className="m-0 capitalize text-sm font-semibold text-zinc-300">{group.label}</h3>
+              <span className="text-xs text-zinc-500">{group.clips.length}</span>
+            </div>
+            <div className="space-y-3">
+              {group.clips.map((clip) => (
+                <ClipCard
+                  key={clip.id}
+                  clip={clip}
+                  selected={selectedClipPaths.has(clip.metadataPath)}
+                  onSelectedChange={(selected) => toggleClip(clip, selected)}
+                  onDeleted={onClipDeleted}
+                  onRenamed={onClipRenamed}
+                />
+              ))}
+            </div>
+          </section>
+        )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет клипов в очереди.</div>}
+      </div>
+    </section>
+  )
+}
+
+const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
     <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
       <RecordingStatusPanel
         settings={settings}
@@ -334,32 +486,18 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         backgroundRecordingEnabled={backgroundRecordingEnabled}
       />
       <DiagnosticsLogPanel logs={logs} onRefresh={onRefreshLogs} onCopy={onCopyLogs} onShowFile={onShowLogFile} />
-      <section className="col-span-12">
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
-            <p className="mt-1 text-xs text-zinc-500">Очистить - убрать из списка. Удалить файлы - стереть видео с диска.</p>
-            {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
-          </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08]" onClick={onOpenClipFolder} type="button">
-              <FolderOpen size={16} className="mr-2" />Открыть папку с видео
-            </button>
-            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
-              <ListX size={16} className="mr-2" />Очистить очередь
-            </button>
-            <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
-              <Trash2 size={16} className="mr-2" />Удалить все файлы
-            </button>
-          </div>
-        </div>
-        {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
-        <div className="max-h-[560px] space-y-3 overflow-y-auto pr-1">
-          {clips.length > 0 ? clips.map((clip) => (
-            <ClipCard key={clip.id} clip={clip} onDeleted={onClipDeleted} onRenamed={onClipRenamed} />
-          )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет клипов в очереди.</div>}
-        </div>
-      </section>
+      <ClipQueueSection
+        clips={clips}
+        clipMessage={clipMessage}
+        clipProcessing={clipProcessing}
+        onCancelClipRender={onCancelClipRender}
+        onClearQueue={onClearQueue}
+        onDeleteQueueFiles={onDeleteQueueFiles}
+        onOpenClipFolder={onOpenClipFolder}
+        onClipDeleted={onClipDeleted}
+        onClipRenamed={onClipRenamed}
+        onClipMessage={onClipMessage}
+      />
       <section className="col-span-12 space-y-4">
         <ObsSettingsPanel settings={settings} onSaved={onSettingsSaved} />
       </section>
@@ -430,6 +568,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     startedAtMs: 0,
     message: 'Автоматически ждём сделки Vataga, TigerTrade или MetaScalp',
     source: 'multi-terminal',
+    availableSources: [],
     activeTradeCount: 0
   })
   const [appLogs, setAppLogs] = useState<AppLogSnapshot>({
@@ -875,6 +1014,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           onOpenClipFolder={() => void openClipFolder()}
           onClipDeleted={(deletedClip) => setClips((current) => current.filter((item) => item.metadataPath !== deletedClip.metadataPath))}
           onClipRenamed={(renamedClip) => setClips((current) => current.map((item) => item.metadataPath === renamedClip.metadataPath ? renamedClip : item))}
+          onClipMessage={setClipMessage}
           onFreeRecordingStart={() => void startFreeRecording()}
           onFreeRecordingPause={() => void pauseFreeRecording()}
           onFreeRecordingResume={() => void resumeFreeRecording()}

@@ -260,6 +260,7 @@ describe('terminalTradeRecorder', () => {
       watcher.start()
       await waitForAssertion(() => {
         expect(watcher.getStatus().message).toContain('TigerTrade')
+        expect(watcher.getStatus().availableSources).toEqual(['tigertrade'])
       })
       await sleep(50)
       await appendFile(logPath, [
@@ -404,6 +405,69 @@ describe('terminalTradeRecorder', () => {
       })
       expect(watcher.getStatus().message).toContain('SKYAIUSDT')
       expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records a TigerTrade position that was already open when recording starts', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-started-mid-trade-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_15.06.2026.log')
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const recordingStartedAtMs = new Date(2026, 5, 15, 10, 5, 0).getTime()
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, [
+      '15.06.2026 10:00:00.000 Binance via TIGER.COM Broker Futures: EnqueueExecution: ExecutionID=1;OrderID=1;Symbol=OLDUSDT;Account=BINANCE FUTURES;Time=15.06.2026 07:00:00;Price=1;Quantity=1;Side=Buy',
+      '15.06.2026 10:00:00.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=OLDUSDT;Account=BINANCE FUTURES;Price=1;Size=1;Comission=0;Executions=1',
+      '15.06.2026 10:00:10.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=OLDUSDT;Account=BINANCE FUTURES;Price=0;Size=0;Comission=0;Executions=0',
+      '15.06.2026 10:01:00.000 Binance via TIGER.COM Broker Futures: EnqueueExecution: ExecutionID=2;OrderID=2;Symbol=LIVEUSDT;Account=BINANCE FUTURES;Time=15.06.2026 07:01:00;Price=1;Quantity=1;Side=Buy',
+      '15.06.2026 10:01:00.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=LIVEUSDT;Account=BINANCE FUTURES;Price=1;Size=1;Comission=0;Executions=1'
+    ].join('\n') + '\n', 'utf8')
+
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+        expect(watcher.getStatus().message).toContain('LIVEUSDT')
+      })
+
+      await appendFile(logPath, '15.06.2026 10:06:00.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=LIVEUSDT;Account=BINANCE FUTURES;Price=0;Size=0;Comission=0;Executions=0\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'LIVEUSDT',
+        entryTimeMs: recordingStartedAtMs,
+        exitTimeMs: new Date(2026, 5, 15, 10, 6, 0).getTime()
+      })
     } finally {
       watcher.stop()
       vi.unstubAllGlobals()

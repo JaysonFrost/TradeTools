@@ -266,6 +266,23 @@ describe('Dashboard layout', () => {
     expect(pipelineSource).toContain('deleteQueueFiles')
   })
 
+  it('supports selecting, grouping, sorting and deleting only the needed video files', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const clipCardSource = await readFile(resolve('src/renderer/components/trade/ClipCard.tsx'), 'utf8')
+
+    expect(dashboardSource).toContain('Выбрать сегодня')
+    expect(dashboardSource).toContain('Выбрать неделю')
+    expect(dashboardSource).toContain('Выбрать месяц')
+    expect(dashboardSource).toContain('Выбрать дату')
+    expect(dashboardSource).toContain('Удалить выбранные')
+    expect(dashboardSource).toContain('getClipDayGroups')
+    expect(dashboardSource).toContain('Сортировка')
+    expect(dashboardSource).toContain('Имя')
+    expect(dashboardSource).toContain('Длительность')
+    expect(dashboardSource).toContain('Дата')
+    expect(clipCardSource).toContain('Выбрать клип')
+  })
+
   it('lets users save the latest buffer manually and cancel clip rendering', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

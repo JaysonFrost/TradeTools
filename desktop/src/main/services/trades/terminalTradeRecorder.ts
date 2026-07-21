@@ -12,6 +12,7 @@ export type TerminalTradeRecordingStatus = {
   startedAtMs: number
   message: string
   source: TerminalTradeSource | 'multi-terminal' | 'manual'
+  availableSources: TerminalTradeSource[]
   activeTradeCount: number
   lastEventAtMs?: number
   lastError?: string
@@ -454,6 +455,7 @@ export const createIdleTerminalTradeStatus = (): TerminalTradeRecordingStatus =>
   startedAtMs: 0,
   message: 'Автоматически ждём сделки Vataga, TigerTrade или MetaScalp',
   source: 'multi-terminal',
+  availableSources: [],
   activeTradeCount: 0
 })
 
@@ -582,25 +584,14 @@ export const createTerminalTradeWatcher = ({
   const vatagaLogsDir = getVatagaLogsDir(env)
   const tigerTradeRootDir = getTigerTradeRootDir(env)
   const tigerTradeExecutionTimes = new Map<string, number>()
-  const parseTigerTradeLogLine = (
-    line: string,
-    options?: { initialReplay?: boolean }
-  ): TerminalPositionEvent | undefined => {
+  const parseTigerTradeLogLine = (line: string): TerminalPositionEvent | undefined => {
     const execution = parseTigerTradeExecutionEvent(line)
     if (execution) {
       tigerTradeExecutionTimes.set(execution.positionId, execution.eventTimeMs)
       return undefined
     }
 
-    const event = parseTigerTradePositionEvent(line)
-    if (!event) return undefined
-    if (!options?.initialReplay || event.isClosed) return event
-
-    const executionTimeMs = tigerTradeExecutionTimes.get(event.positionId)
-    if (!executionTimeMs) return undefined
-    return Math.abs(event.eventTimeMs - executionTimeMs) <= tigerTradeReplayExecutionToleranceMs
-      ? event
-      : undefined
+    return parseTigerTradePositionEvent(line)
   }
   const providers: LogProviderState[] = [
     {
@@ -676,19 +667,29 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
-  const providerNames = () => {
-    const names = providers.filter((provider) => provider.available).map((provider) => provider.displayName)
-    if (metaScalpAvailable) names.push('MetaScalp')
-    return [...new Set(names)]
-  }
+  const availableSources = (): TerminalTradeSource[] => [
+    ...providers.filter((provider) => provider.available).map((provider) => provider.source),
+    ...(metaScalpAvailable ? ['metascalp' as const] : [])
+  ]
+
+  const hasSameAvailableSources = (sources: TerminalTradeSource[]): boolean => (
+    status.availableSources.length === sources.length && status.availableSources.every((source, index) => source === sources[index])
+  )
 
   const emitAvailabilityStatus = () => {
-    if (activeTrades.size > 0) return
-    const names = providerNames()
+    const sources = availableSources()
+    if (activeTrades.size > 0) {
+      if (!hasSameAvailableSources(sources)) emit({ availableSources: sources })
+      return
+    }
+
+    const names = sources.map((source) => sourceDisplayNames[source])
     const message = names.length
       ? `Автозапись терминалов включена: ${names.join(', ')}`
       : 'Откройте Vataga, TigerTrade или MetaScalp, TradeTools сам поймает сделки'
-    if (status.message !== message) emit({ message, source: 'multi-terminal', lastError: undefined })
+    if (status.message !== message || !hasSameAvailableSources(sources)) {
+      emit({ message, source: 'multi-terminal', availableSources: sources, lastError: undefined })
+    }
   }
 
   const protectActiveTrades = async () => {
@@ -926,6 +927,7 @@ export const createTerminalTradeWatcher = ({
       if (!readExistingLines) return true
     }
 
+    const initialReplayEvents = new Map<string, TerminalPositionEvent>()
     for (const filePath of recentFiles) {
       let cursor = provider.cursors.get(filePath)
       if (!cursor) {
@@ -934,9 +936,29 @@ export const createTerminalTradeWatcher = ({
       }
       await readNewLines(filePath, cursor, (line) => {
         const event = provider.parseLine(line, { initialReplay: initialReplayFiles.has(filePath) })
-        if (event) enqueueEvent(event)
+        if (!event) return
+
+        if (initialReplayFiles.has(filePath)) {
+          initialReplayEvents.set(getPositionKey(event), event)
+          return
+        }
+
+        enqueueEvent(event)
       })
     }
+
+    if (provider.source === 'tigertrade' && initialReplayEvents.size > 0) {
+      const recordingStartedAtMs = getRecordingStartedAtMs?.()
+      if (recordingStartedAtMs) {
+        for (const event of initialReplayEvents.values()) {
+          if (event.isClosed || isNearlyZero(event.size ?? Number.NaN)) continue
+          const executionTimeMs = tigerTradeExecutionTimes.get(event.positionId)
+          if (!executionTimeMs || Math.abs(event.eventTimeMs - executionTimeMs) > tigerTradeReplayExecutionToleranceMs) continue
+          enqueueEvent({ ...event, eventTimeMs: recordingStartedAtMs })
+        }
+      }
+    }
+
     return true
   }
 
@@ -1050,7 +1072,7 @@ export const createTerminalTradeWatcher = ({
       clearActiveTrades()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
-      emit({ active: false, startedAtMs: 0, source: 'multi-terminal', message: 'Автозапись терминалов остановлена' })
+      emit({ active: false, startedAtMs: 0, source: 'multi-terminal', availableSources: [], message: 'Автозапись терминалов остановлена' })
     },
     getStatus() {
       return status

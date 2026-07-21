@@ -207,14 +207,14 @@ describe('windowRecorderService', () => {
     }
   })
 
-  it('treats gdigrab missing-window exits as a closed terminal window instead of raw ffmpeg spam', async () => {
+  it('keeps native recorder errors distinct from the browser window-capture fallback', async () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
     expect(source).toContain('isMissingNativeWindowError')
     expect(source).toContain("Can't find window")
     expect(source).toContain('markNativeMissingSource')
     expect(source).toContain('nativeLastError = \'\'')
-    expect(source).not.toContain('ffmpeg-рекордер остановился: [gdigrab')
+    expect(source).toContain('Окна терминалов пишутся через Chromium без захвата курсора')
   })
 
   it('reports buffered and required seconds when replay export is requested too early', async () => {
@@ -354,12 +354,24 @@ describe('windowRecorderService', () => {
     expect(serviceSource).not.toContain('appendFile(sessionPath')
   })
 
+  it('keeps a browser segment on disk while another recorder is still registering it', async () => {
+    const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(serviceSource).toContain('const pendingSegmentPaths = new Set<string>()')
+    expect(serviceSource).toContain('pendingSegmentPaths.add(path)')
+    expect(serviceSource).toContain('pendingSegmentPaths.delete(path)')
+    expect(serviceSource).toContain('new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths])')
+  })
+
   it('keeps the Chromium fallback lightweight by recording the desktop stream directly', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(controllerSource).toContain('createBrowserVideoStream')
     expect(controllerSource).toContain('sampleFrameTimer')
-    expect(controllerSource).toContain('browserCaptureMaxFrameRate')
+    expect(controllerSource).toContain('Math.min(60, Math.trunc(frameRate))')
+    expect(controllerSource.indexOf("'video/webm;codecs=vp9,opus'")).toBeLessThan(controllerSource.indexOf("'video/webm;codecs=vp8,opus'"))
+    expect(controllerSource).toContain("const browserVideoBitrate = (preset: AppSettings['recording']['resolutionPreset']): number =>")
+    expect(controllerSource).toContain("preset === '1080p' ? 12_000_000 : preset === 'native' ? 32_000_000 : 24_000_000")
     expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
     expect(controllerSource).not.toContain('canvas.captureStream')
     expect(controllerSource).not.toContain('window.setInterval(drawFrame')
@@ -419,20 +431,19 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain('Math.min(settings.recording.frameRate, nativeScreenFrameRateCap)')
   })
 
-  it('keeps the ffmpeg gdigrab recorder behind an explicit opt-in before falling back to browser capture', async () => {
+  it('uses high-bitrate Chromium capture for terminal windows without cursor interference', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(serviceSource).toContain("'-f',")
-    expect(serviceSource).toContain("'gdigrab'")
-    expect(serviceSource).toMatch(/'-draw_mouse',\s*'0'/)
-    expect(serviceSource).toContain("'-segment_list'")
-    expect(serviceSource).toContain("backend: 'ffmpeg'")
-    expect(serviceSource).toContain("buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder })")
-    expect(serviceSource).toContain('TRADETOOLS_ENABLE_GDIGRAB')
-    expect(serviceSource).toContain('Фоновый GDI-захват отключён')
+    expect(serviceSource).toContain('Окна терминалов пишутся через Chromium без захвата курсора')
+    expect(serviceSource).not.toContain("'gdigrab'")
+    expect(serviceSource).not.toContain('TRADETOOLS_ENABLE_GDIGRAB')
+    expect(controllerSource).toContain("'video/webm;codecs=vp9'")
+    expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
+    expect(controllerSource).toContain('maxWidth: 2560')
+    expect(controllerSource).toContain('maxHeight: 1440')
     expect(serviceSource).toContain('fallbackRequired')
     expect(controllerSource).toContain('recording.start()')
     expect(controllerSource).toContain('recording.stop()')
@@ -462,7 +473,7 @@ describe('windowRecorderService', () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const settingsKeySource = serviceSource.slice(
       serviceSource.indexOf('const nativeSettingsKey'),
-      serviceSource.indexOf('const nativeSourceName')
+      serviceSource.indexOf('const nativeRecordingVideoFilter')
     )
 
     expect(serviceSource).toContain('expectedNativeRecorderSettingsKeys')

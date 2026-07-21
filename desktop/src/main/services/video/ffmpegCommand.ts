@@ -24,8 +24,8 @@ const buildCpuH264VideoArgs = (purpose: H264VideoPurpose): string[] => [
   '-c:v',
   'libx264',
   '-preset',
-  purpose === 'recording' ? 'ultrafast' : 'veryfast',
-  ...(purpose === 'recording' ? ['-tune', 'zerolatency', '-crf', '24'] : ['-crf', '18']),
+  'veryfast',
+  ...(purpose === 'recording' ? ['-tune', 'zerolatency', '-crf', '20'] : ['-crf', '18']),
   '-pix_fmt',
   'yuv420p'
 ]
@@ -41,7 +41,7 @@ const parseGpuH264VideoEncoder = (encoder: H264VideoEncoder): { vendor: 'nvidia'
 }
 
 export const buildH264VideoArgs = ({ platform = process.platform, purpose, encoder = 'gpu' }: H264VideoArgsInput): string[] => {
-  const bitrate = purpose === 'recording' ? '5M' : '10M'
+  const bitrate = '20M'
   const gpuEncoder = parseGpuH264VideoEncoder(encoder)
 
   if (encoder === 'cpu') return buildCpuH264VideoArgs(purpose)
@@ -53,11 +53,19 @@ export const buildH264VideoArgs = ({ platform = process.platform, purpose, encod
         'h264_nvenc',
         ...(gpuEncoder.index === undefined ? [] : ['-gpu', String(gpuEncoder.index)]),
         '-preset',
-        purpose === 'recording' ? 'p1' : 'p4',
+        purpose === 'recording' ? 'p5' : 'p4',
         '-tune',
-        purpose === 'recording' ? 'ull' : 'hq',
+        'hq',
+        '-rc',
+        'vbr',
+        '-cq',
+        '18',
         '-b:v',
         bitrate,
+        '-maxrate',
+        '30M',
+        '-bufsize',
+        '40M',
         '-pix_fmt',
         'yuv420p'
       ]
@@ -68,7 +76,7 @@ export const buildH264VideoArgs = ({ platform = process.platform, purpose, encod
         '-c:v',
         'h264_amf',
         '-usage',
-        purpose === 'recording' ? 'ultralowlatency' : 'high_quality',
+        'high_quality',
         '-b:v',
         bitrate,
         '-pix_fmt',
@@ -81,7 +89,7 @@ export const buildH264VideoArgs = ({ platform = process.platform, purpose, encod
         '-c:v',
         'h264_qsv',
         '-preset',
-        purpose === 'recording' ? 'veryfast' : 'medium',
+        'medium',
         '-b:v',
         bitrate,
         '-pix_fmt',

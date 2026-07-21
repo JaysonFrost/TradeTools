@@ -75,7 +75,7 @@ describe('buildFfmpegTrimArgs', () => {
       '-hw_encoding',
       '1',
       '-b:v',
-      '10M',
+      '20M',
       '-pix_fmt',
       'nv12'
     ])
@@ -85,7 +85,7 @@ describe('buildFfmpegTrimArgs', () => {
       '-hw_encoding',
       '1',
       '-b:v',
-      '5M',
+      '20M',
       '-pix_fmt',
       'nv12'
     ])
@@ -95,7 +95,7 @@ describe('buildFfmpegTrimArgs', () => {
       '-realtime',
       '1',
       '-b:v',
-      '5M',
+      '20M',
       '-pix_fmt',
       'yuv420p'
     ])
@@ -118,11 +118,19 @@ describe('buildFfmpegTrimArgs', () => {
       '-gpu',
       '1',
       '-preset',
-      'p1',
+      'p5',
       '-tune',
-      'ull',
+      'hq',
+      '-rc',
+      'vbr',
+      '-cq',
+      '18',
       '-b:v',
-      '5M',
+      '20M',
+      '-maxrate',
+      '30M',
+      '-bufsize',
+      '40M',
       '-pix_fmt',
       'yuv420p'
     ])
@@ -132,7 +140,7 @@ describe('buildFfmpegTrimArgs', () => {
       '-usage',
       'high_quality',
       '-b:v',
-      '10M',
+      '20M',
       '-pix_fmt',
       'nv12'
     ])
@@ -140,9 +148,9 @@ describe('buildFfmpegTrimArgs', () => {
       '-c:v',
       'h264_qsv',
       '-preset',
-      'veryfast',
+      'medium',
       '-b:v',
-      '5M',
+      '20M',
       '-pix_fmt',
       'nv12'
     ])
@@ -153,11 +161,11 @@ describe('buildFfmpegTrimArgs', () => {
       '-c:v',
       'libx264',
       '-preset',
-      'ultrafast',
+      'veryfast',
       '-tune',
       'zerolatency',
       '-crf',
-      '24',
+      '20',
       '-pix_fmt',
       'yuv420p'
     ])

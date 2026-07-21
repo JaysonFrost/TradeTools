@@ -32,8 +32,8 @@ type BrowserRecorderSession = {
   recordingStream?: RecordingStream
 }
 
-const browserCaptureMaxFrameRate = 24
-const browserVideoBitrate = 2_500_000
+const browserVideoBitrate = (preset: AppSettings['recording']['resolutionPreset']): number =>
+  preset === '1080p' ? 12_000_000 : preset === 'native' ? 32_000_000 : 24_000_000
 const browserAudioBitrate = 128_000
 const sourceRetryDelayMs = 15_000
 const nativeStatusPollMs = 5_000
@@ -41,13 +41,13 @@ const nativeStatusPollMs = 5_000
 const chooseMimeType = (hasAudio: boolean): string => {
   const candidates = hasAudio
     ? [
-        'video/webm;codecs=vp8,opus',
         'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
         'video/webm'
       ]
     : [
-        'video/webm;codecs=vp8',
         'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
         'video/webm'
       ]
 
@@ -91,7 +91,7 @@ const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCapture
   !source
 )
 
-const browserCaptureFrameRate = (frameRate: number): number => Math.max(10, Math.min(browserCaptureMaxFrameRate, Math.trunc(frameRate)))
+const browserCaptureFrameRate = (frameRate: number): number => Math.max(10, Math.min(60, Math.trunc(frameRate)))
 const browserCaptureResolution = (preset: AppSettings['recording']['resolutionPreset']): Partial<Record<'maxWidth' | 'maxHeight', number>> => {
   if (preset === 'native') return {}
   if (preset === '1080p') return { maxWidth: 1920, maxHeight: 1080 }
@@ -379,7 +379,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         const chunkStartedAtMs = Date.now()
         const recorder = new MediaRecorder(session.recordingStream.stream, {
           ...(mimeType ? { mimeType } : {}),
-          videoBitsPerSecond: browserVideoBitrate,
+          videoBitsPerSecond: browserVideoBitrate(settings.recording.resolutionPreset),
           audioBitsPerSecond: browserAudioBitrate
         })
         session.recorder = recorder

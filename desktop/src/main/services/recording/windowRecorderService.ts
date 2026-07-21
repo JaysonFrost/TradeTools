@@ -182,7 +182,7 @@ type NativeRecorderState = {
 type NativeRecorderTarget = {
   sourceId: string
   sourceName: string
-  inputBackend: 'ddagrab' | 'gdigrab'
+  inputBackend: 'ddagrab'
   inputName: string
   outputIndex?: number
   bounds?: ScreenCaptureBounds
@@ -222,7 +222,6 @@ const formatFilePeriodTimestamp = (timeMs: number): string => {
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
-const isGdigrabRecorderEnabled = (): boolean => process.env.TRADETOOLS_ENABLE_GDIGRAB === '1'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const isMissingNativeWindowError = (value: string): boolean => /Can't find window|Error opening input file title=/i.test(value)
 const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
@@ -324,6 +323,7 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
 export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable, getDisplayBounds }: WindowRecorderServiceInput): WindowRecorderService => {
   const legacyCacheRoot = resolve(join(appDataDir, 'window-recording'))
   const segments: StoredSegment[] = []
+  const pendingSegmentPaths = new Set<string>()
   let protectedSinceMs = 0
   let freeRecording: FreeRecordingState | undefined
   let freeRecordingExportProtectedSinceMs = 0
@@ -367,22 +367,14 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     target?.bounds ? `${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}` : ''
   ].join('|')
 
-  const nativeSourceName = (settings: AppSettings): string => (
-    settings.recording.windowSourceName ||
-    (settings.recording.sourceType === 'screen' ? 'Экран' : '')
-  )
+  const nativeRecordingVideoFilter = (settings: AppSettings): string[] => {
+    if (settings.recording.resolutionPreset === 'native') return []
+    if (settings.recording.resolutionPreset === '1080p') {
+      return ['-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
+    }
 
-  const evenCaptureSize = (value: number): number => {
-    const size = Math.max(2, Math.trunc(value))
-    return size % 2 === 0 ? size : size - 1
+    return ['-vf', 'scale=2560:1440:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
   }
-
-  const nativeWindowTarget = (settings: AppSettings): NativeRecorderTarget => ({
-    sourceId: settings.recording.windowSourceId || 'window',
-    sourceName: nativeSourceName(settings),
-    inputBackend: 'gdigrab',
-    inputName: `title=${settings.recording.windowSourceName}`
-  })
 
   const screenOutputIndex = (sourceId: string): number | undefined => {
     const match = /^screen:(\d+):/.exec(sourceId)
@@ -476,36 +468,11 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
   }
 
   const buildNativeRecorderInputArgs = (frameRate: string, target: NativeRecorderTarget): string[] => {
-    if (target.inputBackend === 'ddagrab') {
-      return [
-        '-f',
-        'lavfi',
-        '-i',
-        `ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0,hwdownload,format=bgra`
-      ]
-    }
-
-    const boundsArgs = target.bounds
-      ? [
-          '-offset_x',
-          String(Math.trunc(target.bounds.x)),
-          '-offset_y',
-          String(Math.trunc(target.bounds.y)),
-          '-video_size',
-          `${evenCaptureSize(target.bounds.width)}x${evenCaptureSize(target.bounds.height)}`
-        ]
-      : []
-
     return [
       '-f',
-      'gdigrab',
-      '-framerate',
-      frameRate,
-      '-draw_mouse',
-      '0',
-      ...boundsArgs,
+      'lavfi',
       '-i',
-      target.inputName
+      `ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0,hwdownload,format=bgra`
     ]
   }
 
@@ -523,6 +490,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       '-map',
       '0:v:0',
       '-an',
+      ...nativeRecordingVideoFilter(settings),
       ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder }),
       '-r',
       frameRate,
@@ -766,16 +734,12 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       })
     }
 
-    if (!isGdigrabRecorderEnabled()) {
-      await stopNativeRecorder()
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: 'Фоновый GDI-захват отключён: он может мигать курсором Windows. Пишем через встроенный Chromium-рекордер без курсора.'
-      })
-    }
-
-    return startNativeRecorders(settings, [nativeWindowTarget(settings)], 'Оптимизированная ffmpeg-запись запущена, ждём первые сегменты')
+    await stopNativeRecorder()
+    return buildStatus(settings, {
+      backend: 'browser',
+      fallbackRequired: true,
+      message: 'Окна терминалов пишутся через Chromium без захвата курсора. Качество сохраняется в разрешении выбранного пресета.'
+    })
   }
 
   const pruneDiskFiles = async (segmentsDir: string, keepPaths: Set<string>) => {
@@ -825,7 +789,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       await rm(segment.path, { force: true }).catch(() => undefined)
     }
 
-    const keepPaths = new Set(segments.map((segment) => segment.path))
+    const keepPaths = new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths])
     await pruneDiskFiles(segmentsDir, keepPaths)
     await pruneReplayFiles(replaysDir, replayCutoffMs)
   }
@@ -1338,21 +1302,26 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       const id = randomUUID()
       const sessionId = typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : id
       const path = join(segmentsDir, `${toFileTimestamp(startedAtMs)}-${toFileTimestamp(endedAtMs)}__${id}.webm`)
-      await writeFile(path, data)
-      const fileStat = await stat(path)
+      pendingSegmentPaths.add(path)
+      try {
+        await writeFile(path, data)
+        const fileStat = await stat(path)
 
-      segments.push({
-        id,
-        backend: 'browser',
-        sourceId: input.sourceId,
-        sourceName: input.sourceName,
-        sessionId,
-        sequence: Number.isFinite(sequence) && sequence >= 0 ? Math.trunc(sequence) : 0,
-        startedAtMs,
-        endedAtMs,
-        path,
-        sizeBytes: fileStat.size
-      })
+        segments.push({
+          id,
+          backend: 'browser',
+          sourceId: input.sourceId,
+          sourceName: input.sourceName,
+          sessionId,
+          sequence: Number.isFinite(sequence) && sequence >= 0 ? Math.trunc(sequence) : 0,
+          startedAtMs,
+          endedAtMs,
+          path,
+          sizeBytes: fileStat.size
+        })
+      } finally {
+        pendingSegmentPaths.delete(path)
+      }
       clearNativeMissingSource()
       await pruneSegments(settings, endedAtMs)
       return buildStatus(settings)

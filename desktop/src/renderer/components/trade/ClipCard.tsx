@@ -7,6 +7,8 @@ import { Card } from '../ui/Card'
 
 export type ClipCardProps = {
   clip: ClipQueueItem
+  selected?: boolean
+  onSelectedChange?: (selected: boolean) => void
   onDeleted?: (clip: ClipQueueItem) => void
   onRenamed?: (clip: ClipQueueItem) => void
 }
@@ -17,7 +19,7 @@ const formatDuration = (seconds: number): string => {
   return minutes > 0 ? `${minutes}м ${rest}с` : `${rest}с`
 }
 
-export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
+export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, onRenamed }: ClipCardProps) => {
   const [previewing, setPreviewing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deletingFile, setDeletingFile] = useState(false)
@@ -122,6 +124,17 @@ export const ClipCard = ({ clip, onDeleted, onRenamed }: ClipCardProps) => {
   return (
     <Card>
       <div className="flex gap-4">
+        {onSelectedChange && (
+          <label className="flex h-24 shrink-0 cursor-pointer items-center px-1" title="Выбрать клип">
+            <input
+              className="h-4 w-4 cursor-pointer accent-violet-500"
+              checked={selected}
+              onChange={(event) => onSelectedChange(event.target.checked)}
+              aria-label="Выбрать клип"
+              type="checkbox"
+            />
+          </label>
+        )}
         <button
           type="button"
           className="flex h-24 w-36 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br from-violet-600/40 to-black transition hover:border-violet-300/40 hover:bg-violet-500/10"
