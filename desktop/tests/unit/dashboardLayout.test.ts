@@ -422,12 +422,13 @@ describe('Dashboard layout', () => {
 
   it('lets the proxy setup wizard save two servers and run the setup chain', async () => {
     const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
+    const panelSource = await readFile(resolve('src/renderer/components/settings/ProxyVaultPanel.tsx'), 'utf8')
 
     expect(source).toContain('secondProxyServer')
     expect(source).toContain('Сохранить два сервера и связку')
     expect(source).toContain('setSavedWizardProxyIds([firstProxy.id, secondProxy.id])')
     expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId, localProxyType })')
-    expect(source).toContain('Тип локального proxy')
+    expect(panelSource).toContain('Тип подключения')
     expect(source).toContain('Настроить и запустить связку')
   })
 
