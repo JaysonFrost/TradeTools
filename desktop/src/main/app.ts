@@ -1832,6 +1832,7 @@ app.whenReady().then(() => {
 
     const settings = await settingsStore.load()
     const runtime = settings.proxyRuntime
+    const localProxyType = asLocalProxyType(input?.localProxyType, runtime.localProxyType)
     const entryUuid = runtime.activeStartProxyId === id && runtime.entryUuidConfigured
       ? await secretStore.getProxyRuntimeEntryUuid()
       : undefined
@@ -1840,17 +1841,21 @@ app.whenReady().then(() => {
           appDataDir: app.getPath('userData'),
           runtime,
           entryUuid,
+          localProxyType,
           keepRunningAfterClose: settings.system.keepProxyRunningAfterClose
         })
       : await setupProxyChainOnServers({
           chain: resolveProxyChain(settings, id),
           appDataDir: app.getPath('userData'),
-          localProxyType: asLocalProxyType(input?.localProxyType, settings.proxyRuntime.localProxyType),
+          localProxyType,
           keepRunningAfterClose: settings.system.keepProxyRunningAfterClose,
           getSshPassword: (proxyId) => secretStore.getProxyPassword(proxyId),
           onRuntimeConfigured: saveProxyRuntimeConfig,
           onProgress: (progress) => event.sender.send('proxies:setup-chain-progress', progress)
         })
+    if (entryUuid && runtime.localProxyType !== localProxyType) {
+      await settingsStore.update({ proxyRuntime: { localProxyType } })
+    }
     await startVpnBypassMonitor()
     return result
   })

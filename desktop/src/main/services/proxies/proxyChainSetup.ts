@@ -228,6 +228,7 @@ export const reconnectStoredProxyRuntime = async (input: {
   appDataDir: string
   runtime: AppSettings['proxyRuntime']
   entryUuid: string
+  localProxyType: LocalProxyType
   keepRunningAfterClose: boolean
 }): Promise<ProxyChainConnectionResult> => {
   const entryProxy = await setupLocalXrayRuntime({
@@ -236,7 +237,7 @@ export const reconnectStoredProxyRuntime = async (input: {
     entryHost: input.runtime.entryHost,
     entryPort: input.runtime.entryPort,
     entryUuid: input.entryUuid,
-    localProxyType: input.runtime.localProxyType,
+    localProxyType: input.localProxyType,
     keepRunningAfterClose: input.keepRunningAfterClose
   })
   const network = await inspectProxyNetworkEnvironment({

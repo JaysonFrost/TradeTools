@@ -270,6 +270,7 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [localProxyRunning, setLocalProxyRunning] = useState(false)
+  const [localProxyType, setLocalProxyType] = useState<AppSettings['proxyRuntime']['localProxyType']>(settings?.proxyRuntime.localProxyType ?? 'SOCKS5')
   const localProxyStatusRefresh = useRef<Promise<void>>(Promise.resolve())
   const localProxyStatusMounted = useRef(true)
   const [chainOrderIds, setChainOrderIds] = useState<string[]>(() => buildChainOrderIds(settings?.proxies ?? []))
@@ -320,6 +321,10 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
   useEffect(() => {
     setChainOrderIds(buildChainOrderIds(settings?.proxies ?? []))
   }, [settings?.proxies])
+
+  useEffect(() => {
+    if (settings?.proxyRuntime.localProxyType) setLocalProxyType(settings.proxyRuntime.localProxyType)
+  }, [settings?.proxyRuntime.localProxyType])
 
   useEffect(() => {
     const api = getTradeToolsApi()
@@ -542,7 +547,8 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
 
       const latestFirstProxy = settingsForSetup?.proxies.find((proxy) => proxy.id === firstProxy.id) ?? firstProxy
       const result = await getTradeToolsApi().proxies.connectChain({
-        proxyId: latestFirstProxy.id
+        proxyId: latestFirstProxy.id,
+        localProxyType
       })
       await refreshLocalProxyRuntimeStatus()
       updateRuntimeState({ chainSetupResult: result, connectionResult: result })
@@ -633,9 +639,21 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             </div>
             <div className="mt-2 text-xs text-zinc-300">{connectionSummary.bypassLabel}</div>
             <div className="mt-2 text-xs text-zinc-400">Маршрут: {connectionResult?.route || orderedChainProxies.map(proxyName).join(' -> ') || 'добавьте серверы'}</div>
-            <div className="mt-1 text-xs text-zinc-400">Терминал: HTTP 127.0.0.1:{connectionResult?.entryProxy.port || orderedChainProxies[0]?.localProxyPort || defaultLocalProxyPort}</div>
+            <div className="mt-1 text-xs text-zinc-400">Терминал: {connectionResult?.entryProxy.type ?? localProxyType} 127.0.0.1:{connectionResult?.entryProxy.port || orderedChainProxies[0]?.localProxyPort || defaultLocalProxyPort}</div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <label className="min-w-40 text-xs font-medium text-zinc-300">
+              Тип подключения
+              <select
+                className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60"
+                value={localProxyType}
+                onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}
+                disabled={busy}
+              >
+                <option value="SOCKS5">SOCKS5 (рекомендуется)</option>
+                <option value="HTTP">HTTP</option>
+              </select>
+            </label>
             <Button onClick={() => void connectProxy()} disabled={busy || orderedChainProxies.length === 0}>
               <Server size={16} className="mr-2" />
               {runtimeState.activeOperation === 'connect' ? 'Подключаем...' : 'Подключить прокси'}

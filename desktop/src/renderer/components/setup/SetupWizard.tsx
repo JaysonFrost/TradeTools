@@ -92,7 +92,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [proxyDashboardUrl, setProxyDashboardUrl] = useState('')
   const [proxyPaymentDueDay, setProxyPaymentDueDay] = useState(currentPaymentDueDay())
   const [proxyLocalPort, setProxyLocalPort] = useState(String(defaultLocalProxyPort))
-  const [localProxyType, setLocalProxyType] = useState<AppSettings['proxyRuntime']['localProxyType']>('SOCKS5')
   const [proxyNotes, setProxyNotes] = useState('')
   const [secondProxyTitle, setSecondProxyTitle] = useState(defaultProxyTitle(undefined, 1))
   const [secondProxyServer, setSecondProxyServer] = useState('')
@@ -120,7 +119,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setProxyDashboardUrl('')
     setProxyPaymentDueDay(currentPaymentDueDay())
     setProxyLocalPort(String(defaultLocalProxyPort))
-    setLocalProxyType(nextSettings?.proxyRuntime.localProxyType ?? 'SOCKS5')
     setProxyNotes('')
     setSecondProxyTitle(defaultProxyTitle(nextSettings, 1))
     setSecondProxyServer('')
@@ -160,7 +158,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
     setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
-    setLocalProxyType(settings.proxyRuntime.localProxyType)
   }, [settings])
 
   const refreshWindowSources = async () => {
@@ -425,6 +422,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setChainSetupResult(undefined)
     setChainSetupProgress([])
     try {
+      const localProxyType = settings?.proxyRuntime.localProxyType ?? 'SOCKS5'
       const result = await getTradeToolsApi().proxies.setupChain({ proxyId: selectedProxyId, localProxyType })
       setChainSetupResult(result)
       setLocalMessage('Связка настроена, локальный proxy запущен')
@@ -839,12 +837,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                        <select className={`${inputClass} appearance-none`} value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
                          <option value="">Сервер не выбран</option>
                          {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
-                       </select>
-                     </label>
-                     <label className="block text-xs font-medium text-zinc-500">Тип локального proxy
-                       <select className={`${inputClass} appearance-none`} value={localProxyType} onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}>
-                         <option value="SOCKS5">SOCKS5 (рекомендуется)</option>
-                         <option value="HTTP">HTTP</option>
                        </select>
                      </label>
                     <div className="flex flex-wrap gap-2">
