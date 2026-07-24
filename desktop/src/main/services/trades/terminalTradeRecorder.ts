@@ -251,7 +251,7 @@ export const parseVatagaPositionEvent = (line: string): VatagaPositionEvent | un
   const positionId = normalizeText(payload.PositionID)
   if (!positionId) return undefined
 
-  const eventTimeMs = parseVatagaTime(payload.TradeTime) || parseVatagaTime(payload['@t'])
+  const eventTimeMs = parseVatagaTime(payload['@t']) || parseVatagaTime(payload.TradeTime)
   if (!eventTimeMs) return undefined
   const size = parseNumericValue(payload.PositionQuantity)
   const processId = normalizeProcessId(payload.ProcessId)

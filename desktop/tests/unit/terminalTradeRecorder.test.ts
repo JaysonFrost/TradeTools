@@ -33,7 +33,7 @@ const waitForAssertion = async (assertion: () => void, timeoutMs = 1_500) => {
 }
 
 describe('terminalTradeRecorder', () => {
-  it('parses Vataga position changed events from clef logs', () => {
+  it('uses the Vataga terminal update timestamp for recording boundaries', () => {
     const event = parseVatagaPositionEvent(JSON.stringify({
       '@t': '2026-06-10T21:02:37.4634451Z',
       '@mt': 'Position changed.\r\nConnectionID: {@ConnectionID};',
@@ -55,7 +55,7 @@ describe('terminalTradeRecorder', () => {
       symbol: 'SUIUSDT',
       side: 'SHORT',
       isClosed: false,
-      eventTimeMs: Date.parse('2026-06-10T21:02:36.467Z'),
+      eventTimeMs: Date.parse('2026-06-10T21:02:37.4634451Z'),
       size: -13.7,
       processId: 39336
     })
