@@ -260,6 +260,10 @@ describe('main app lifecycle', () => {
     expect(source).toContain('path: process.execPath')
     expect(source).toContain('args: getWindowsLaunchArgs()')
     expect(source).toContain("name: 'TradeTools'")
+    expect(source).toContain("const windowsProxyRuntimeRunValueName = 'TradeTools Proxy Runtime'")
+    expect(source).toContain('run -config')
+    expect(source).toContain('applyWindowsProxyRuntimeAutostart(settings)')
+    expect(source).toContain('applyLaunchAtLogin(updatedSettings)')
   })
 
   it('applies the always-on-top system preference to app windows', async () => {

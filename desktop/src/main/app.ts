@@ -39,6 +39,8 @@ const obsReplayEnsureIntervalMs = 30_000
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const windowsAppUserModelId = 'com.tradetools.desktop'
+const windowsProxyRuntimeRunValueName = 'TradeTools Proxy Runtime'
+const windowsRunKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcWindowCapturer',
   'AllowWgcWindowZeroHz',
@@ -167,6 +169,24 @@ const quoteWindowsShortcutArg = (value: string): string => `"${value.replace(/"/
 const getWindowsLaunchArgs = (): string[] => process.defaultApp ? [app.getAppPath()] : []
 
 const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]
+
+const applyWindowsProxyRuntimeAutostart = (settings: AppSettings): void => {
+  if (process.platform !== 'win32') return
+
+  const runtime = settings.proxyRuntime
+  const xrayPath = process.env.TRADETOOLS_XRAY_PATH || join(app.getPath('userData'), 'xray-core', 'xray.exe')
+  const configPath = localXrayConfigPath(app.getPath('userData'))
+  const enabled = settings.system.launchAtLogin && runtime.entryUuidConfigured && Boolean(runtime.activeStartProxyId) && Boolean(runtime.entryHost) && existsSync(xrayPath) && existsSync(configPath)
+
+  try {
+    const result = enabled
+      ? spawnSync('reg', ['add', windowsRunKey, '/v', windowsProxyRuntimeRunValueName, '/t', 'REG_SZ', '/d', `"${xrayPath}" run -config "${configPath}"`, '/f'], { encoding: 'utf8', windowsHide: true })
+      : spawnSync('reg', ['delete', windowsRunKey, '/v', windowsProxyRuntimeRunValueName, '/f'], { encoding: 'utf8', windowsHide: true })
+    if (enabled && result.status !== 0) console.warn(`Windows proxy autostart registration failed: ${result.stderr || result.stdout}`)
+  } catch (error) {
+    console.warn('Windows proxy autostart registration failed:', error)
+  }
+}
 
 const getWindowsNotificationShortcutPath = (): string => join(
   app.getPath('appData'),
@@ -712,6 +732,7 @@ const applyLaunchAtLogin = (settings: AppSettings): void => {
       : {}),
     ...(process.platform === 'darwin' ? { openAsHidden: true } : {})
   })
+  applyWindowsProxyRuntimeAutostart(settings)
 }
 
 const applyAlwaysOnTop = (settings: AppSettings): void => {
@@ -786,7 +807,7 @@ app.whenReady().then(() => {
   })
   const saveProxyRuntimeConfig = async (config: ProxyChainRuntimeConfig): Promise<void> => {
     await secretStore.setProxyRuntimeEntryUuid(config.entryUuid)
-    await settingsStore.update({
+    const updatedSettings = await settingsStore.update({
       proxyRuntime: {
         activeStartProxyId: config.activeStartProxyId,
         route: config.route,
@@ -798,11 +819,14 @@ app.whenReady().then(() => {
         configuredAtMs: config.configuredAtMs
       }
     })
+    applyLaunchAtLogin(updatedSettings)
   }
 
   const clearProxyRuntimeConfig = async () => {
     await secretStore.clearProxyRuntimeEntryUuid()
-    return settingsStore.update({ proxyRuntime: emptyProxyRuntime() })
+    const updatedSettings = await settingsStore.update({ proxyRuntime: emptyProxyRuntime() })
+    applyLaunchAtLogin(updatedSettings)
+    return updatedSettings
   }
 
   let vpnBypassMonitor: VpnBypassMonitor | undefined
