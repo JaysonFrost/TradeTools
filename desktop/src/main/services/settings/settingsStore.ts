@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDefaultSettings, normalizeSettings, type AppSettings, type PartialSettings } from './settings'
 
@@ -40,8 +40,10 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
 
 export const createSettingsStore = (appDataDir: string): SettingsStore => {
   const filePath = join(appDataDir, settingsFileName)
+  const temporaryPath = `${filePath}.tmp`
+  let queue = Promise.resolve()
 
-  const load = async (): Promise<AppSettings> => {
+  const loadUnsafe = async (): Promise<AppSettings> => {
     try {
       const content = await readFile(filePath, 'utf8')
       const parsed = JSON.parse(content) as PartialSettings
@@ -56,15 +58,22 @@ export const createSettingsStore = (appDataDir: string): SettingsStore => {
 
   const save = async (settings: AppSettings): Promise<AppSettings> => {
     await mkdir(appDataDir, { recursive: true })
-    await writeFile(filePath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+    await rename(temporaryPath, filePath)
     return settings
   }
 
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = queue.then(operation, operation)
+    queue = result.then(() => undefined, () => undefined)
+    return result
+  }
+
   return {
-    load,
-    async update(patch) {
-      const current = await load()
+    load: () => enqueue(loadUnsafe),
+    update: (patch) => enqueue(async () => {
+      const current = await loadUnsafe()
       return save(normalizeSettings(mergeSettings(current, patch), appDataDir))
-    }
+    })
   }
 }

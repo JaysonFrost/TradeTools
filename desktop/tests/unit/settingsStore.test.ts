@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -154,6 +154,37 @@ describe('settingsStore', () => {
       activeStartProxyId: 'proxy-1',
       entryHost: '92.38.129.126',
       localPort: 1083,
+      entryUuidConfigured: true
+    })
+  })
+
+  it('serializes concurrent saves without corrupting or dropping settings', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-concurrent-'))
+    const store = createSettingsStore(tempDir)
+
+    await Promise.all([
+      store.update({ system: { launchAtLogin: true } }),
+      store.update({ system: { keepProxyRunningAfterClose: true } }),
+      store.update({
+        proxyRuntime: {
+          activeStartProxyId: 'proxy-1',
+          entryHost: '92.38.129.126',
+          entryPort: 443,
+          localPort: 1083,
+          entryUuidConfigured: true,
+          configuredAtMs: 123
+        }
+      })
+    ])
+
+    const text = await readFile(join(tempDir, 'settings.json'), 'utf8')
+    expect(() => JSON.parse(text)).not.toThrow()
+
+    const settings = await store.load()
+    expect(settings.system).toMatchObject({ launchAtLogin: true, keepProxyRunningAfterClose: true })
+    expect(settings.proxyRuntime).toMatchObject({
+      activeStartProxyId: 'proxy-1',
+      entryHost: '92.38.129.126',
       entryUuidConfigured: true
     })
   })

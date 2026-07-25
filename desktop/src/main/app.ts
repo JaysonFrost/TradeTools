@@ -166,6 +166,8 @@ const quoteWindowsShortcutArg = (value: string): string => `"${value.replace(/"/
 
 const getWindowsLaunchArgs = (): string[] => process.defaultApp ? [app.getAppPath()] : []
 
+const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]
+
 const getWindowsNotificationShortcutPath = (): string => join(
   app.getPath('appData'),
   'Microsoft',
@@ -834,9 +836,7 @@ app.whenReady().then(() => {
 
     const uuid = await secretStore.getProxyRuntimeEntryUuid()
     if (!uuid) {
-      await clearProxyRuntimeConfig()
-      onReady?.()
-      return
+      throw new Error('Не удалось прочитать сохранённый ключ proxy. Повторяем запуск после входа в Windows.')
     }
 
     await setupLocalXrayRuntime({
@@ -851,6 +851,27 @@ app.whenReady().then(() => {
       onProgress: (progress) => console.log(`[proxy-autostart] ${progress.status} ${progress.step}: ${progress.message}`)
     })
     await startVpnBypassMonitor()
+  }
+
+  const startStoredProxyRuntimeWithRetries = async (settings: AppSettings, onReady?: () => void): Promise<void> => {
+    let lastError: unknown
+
+    for (const delayMs of proxyAutostartRetryDelaysMs) {
+      if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
+
+      try {
+        await startStoredProxyRuntime(settings, onReady)
+        return
+      } catch (error) {
+        lastError = error
+        void appLog.error('proxy-autostart', 'Автозапуск proxy не удался, будет повтор', error, {
+          attempt: proxyAutostartRetryDelaysMs.indexOf(delayMs) + 1,
+          localPort: settings.proxyRuntime.localPort
+        })
+      }
+    }
+
+    throw lastError
   }
 
   const focusMainWindow = () => {
@@ -1964,7 +1985,7 @@ app.whenReady().then(() => {
         resolve()
       }
     })
-    void startStoredProxyRuntime(settings, resolveProxyReady).catch((error) => {
+    void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady).catch((error) => {
       resolveProxyReady?.()
       const message = error instanceof Error ? error.message : 'неизвестная ошибка'
       console.error('Proxy runtime autostart failed:', error)

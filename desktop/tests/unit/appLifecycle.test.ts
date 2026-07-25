@@ -289,9 +289,14 @@ describe('main app lifecycle', () => {
   it('starts the saved local proxy before opening the TradeTools window', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('void startStoredProxyRuntime(settings, resolveProxyReady)')
+    expect(source).toContain('const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]')
+    expect(source).toContain('for (const delayMs of proxyAutostartRetryDelaysMs)')
+    expect(source).toContain("appLog.error('proxy-autostart', 'Автозапуск proxy не удался, будет повтор'")
+    expect(source).toContain('void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady)')
+    const autostartSource = source.slice(source.indexOf('const startStoredProxyRuntime ='), source.indexOf('const focusMainWindow ='))
+    expect(autostartSource).not.toContain('clearProxyRuntimeConfig')
     expect(source).toContain('await Promise.race([')
-    expect(source.indexOf('void startStoredProxyRuntime(settings, resolveProxyReady)')).toBeLessThan(source.lastIndexOf('createMainWindow()'))
+    expect(source.indexOf('void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady)')).toBeLessThan(source.lastIndexOf('createMainWindow()'))
     expect(source).toContain('localProxyType: runtime.localProxyType')
   })
 
