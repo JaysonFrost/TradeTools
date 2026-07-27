@@ -41,6 +41,8 @@ const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const windowsAppUserModelId = 'com.tradetools.desktop'
 const windowsProxyRuntimeRunValueName = 'TradeTools Proxy Runtime'
 const windowsRunKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
+const windowsLoginLaunchArg = '--windows-login'
+const windowsProxyRuntimeStartupGraceMs = 8_000
 const windowsDesktopCaptureFallbackFeatures = [
   'AllowWgcWindowCapturer',
   'AllowWgcWindowZeroHz',
@@ -166,7 +168,12 @@ let windowsNotificationShortcutReady = process.platform !== 'win32'
 
 const quoteWindowsShortcutArg = (value: string): string => `"${value.replace(/"/g, '\\"')}"`
 
-const getWindowsLaunchArgs = (): string[] => process.defaultApp ? [app.getAppPath()] : []
+const getWindowsLaunchArgs = (): string[] => [
+  ...(process.defaultApp ? [app.getAppPath()] : []),
+  windowsLoginLaunchArg
+]
+
+const isWindowsLoginLaunch = (): boolean => process.platform === 'win32' && process.argv.includes(windowsLoginLaunchArg)
 
 const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]
 
@@ -877,8 +884,14 @@ app.whenReady().then(() => {
     await startVpnBypassMonitor()
   }
 
-  const startStoredProxyRuntimeWithRetries = async (settings: AppSettings, onReady?: () => void): Promise<void> => {
+  const startStoredProxyRuntimeWithRetries = async (
+    settings: AppSettings,
+    onReady?: () => void,
+    initialDelayMs = 0
+  ): Promise<void> => {
     let lastError: unknown
+
+    if (initialDelayMs) await new Promise<void>((resolve) => setTimeout(resolve, initialDelayMs))
 
     for (const delayMs of proxyAutostartRetryDelaysMs) {
       if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
@@ -2009,15 +2022,24 @@ app.whenReady().then(() => {
         resolve()
       }
     })
-    void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady).catch((error) => {
-      resolveProxyReady?.()
-      const message = error instanceof Error ? error.message : 'неизвестная ошибка'
-      console.error('Proxy runtime autostart failed:', error)
-      showSystemNotification({
-        title: 'TradeTools',
-        body: `Локальный proxy не запустился после старта: ${message}`
+    const initialProxyDelayMs = isWindowsLoginLaunch() ? windowsProxyRuntimeStartupGraceMs : 0
+    void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady, initialProxyDelayMs)
+      .then(() => {
+        void appLog.info('proxy-autostart', 'Сохранённый proxy запущен', {
+          windowsLoginLaunch: isWindowsLoginLaunch(),
+          initialDelayMs: initialProxyDelayMs,
+          localPort: settings.proxyRuntime.localPort
+        })
       })
-    })
+      .catch((error) => {
+        resolveProxyReady?.()
+        const message = error instanceof Error ? error.message : 'неизвестная ошибка'
+        console.error('Proxy runtime autostart failed:', error)
+        showSystemNotification({
+          title: 'TradeTools',
+          body: `Локальный proxy не запустился после старта: ${message}`
+        })
+      })
     await Promise.race([
       proxyReadyPromise,
       new Promise<void>((resolve) => setTimeout(resolve, 10_000))
