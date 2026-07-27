@@ -308,6 +308,18 @@ describe('main app lifecycle', () => {
     expect(source).toContain('localProxyType: runtime.localProxyType')
   })
 
+  it('recovers the saved proxy if another Windows app kills Xray after startup', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('const proxyRuntimeWatchdogIntervalMs = 5_000')
+    expect(source).toContain('setInterval(() => void recoverStoredProxyRuntime(), proxyRuntimeWatchdogIntervalMs)')
+    expect(source).toContain("appLog.warn('proxy-watchdog', 'Локальный proxy пропал, перезапускаем'")
+    expect(source).toContain("appLog.info('proxy-watchdog', 'Локальный proxy восстановлен'")
+    expect(source).toContain('.finally(startProxyRuntimeWatchdog)')
+    expect(source).toContain('proxyRuntimeWatchdogEnabled = false')
+    expect(source).toContain("app.on('before-quit', stopProxyRuntimeWatchdog)")
+  })
+
   it('exposes a proxy disconnect action that stops Xray and disables background running', async () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

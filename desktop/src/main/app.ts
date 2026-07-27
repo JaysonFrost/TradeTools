@@ -176,6 +176,7 @@ const getWindowsLaunchArgs = (): string[] => [
 const isWindowsLoginLaunch = (): boolean => process.platform === 'win32' && process.argv.includes(windowsLoginLaunchArg)
 
 const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]
+const proxyRuntimeWatchdogIntervalMs = 5_000
 
 const applyWindowsProxyRuntimeAutostart = (settings: AppSettings): void => {
   if (process.platform !== 'win32') return
@@ -909,6 +910,41 @@ app.whenReady().then(() => {
     }
 
     throw lastError
+  }
+
+  let proxyRuntimeWatchdog: ReturnType<typeof setInterval> | undefined
+  let proxyRuntimeWatchdogEnabled = true
+  let proxyRuntimeRecoveryRunning = false
+
+  const recoverStoredProxyRuntime = async (): Promise<void> => {
+    if (!proxyRuntimeWatchdogEnabled || proxyRuntimeRecoveryRunning) return
+    proxyRuntimeRecoveryRunning = true
+
+    try {
+      const settings = await settingsStore.load()
+      const runtime = settings.proxyRuntime
+      if (!runtime.entryUuidConfigured || !runtime.activeStartProxyId || !runtime.entryHost || !runtime.localPort) return
+      if (await isLocalXrayRuntimeRunning(runtime.localPort, app.getPath('userData'))) return
+
+      void appLog.warn('proxy-watchdog', 'Локальный proxy пропал, перезапускаем', { localPort: runtime.localPort })
+      await startStoredProxyRuntimeWithRetries(settings)
+      void appLog.info('proxy-watchdog', 'Локальный proxy восстановлен', { localPort: runtime.localPort })
+    } catch (error) {
+      void appLog.error('proxy-watchdog', 'Не удалось восстановить локальный proxy', error)
+    } finally {
+      proxyRuntimeRecoveryRunning = false
+    }
+  }
+
+  const startProxyRuntimeWatchdog = (): void => {
+    if (proxyRuntimeWatchdog) return
+    proxyRuntimeWatchdog = setInterval(() => void recoverStoredProxyRuntime(), proxyRuntimeWatchdogIntervalMs)
+  }
+
+  const stopProxyRuntimeWatchdog = (): void => {
+    proxyRuntimeWatchdogEnabled = false
+    if (proxyRuntimeWatchdog) clearInterval(proxyRuntimeWatchdog)
+    proxyRuntimeWatchdog = undefined
   }
 
   const focusMainWindow = () => {
@@ -1895,6 +1931,7 @@ app.whenReady().then(() => {
       }
     })
     await startVpnBypassMonitor()
+    proxyRuntimeWatchdogEnabled = true
     return result
   })
   ipcMain.handle('proxies:connect-chain', async (event, input: ProxyChainSetupRequest) => {
@@ -1928,9 +1965,11 @@ app.whenReady().then(() => {
       await settingsStore.update({ proxyRuntime: { localProxyType } })
     }
     await startVpnBypassMonitor()
+    proxyRuntimeWatchdogEnabled = true
     return result
   })
   ipcMain.handle('proxies:disconnect', async () => {
+    proxyRuntimeWatchdogEnabled = false
     const settings = await settingsStore.load()
     await stopLocalXrayRuntime(settings.proxyRuntime.localPort, app.getPath('userData'))
     if (vpnBypassMonitor) vpnBypassMonitor.stop()
@@ -2040,6 +2079,7 @@ app.whenReady().then(() => {
           body: `Локальный proxy не запустился после старта: ${message}`
         })
       })
+      .finally(startProxyRuntimeWatchdog)
     await Promise.race([
       proxyReadyPromise,
       new Promise<void>((resolve) => setTimeout(resolve, 10_000))
@@ -2048,6 +2088,7 @@ app.whenReady().then(() => {
     appUpdateService.startBackgroundCheck()
     terminalTradeWatcher.start()
     app.on('before-quit', () => terminalTradeWatcher.stop())
+    app.on('before-quit', stopProxyRuntimeWatchdog)
     app.on('before-quit', () => {
       if (vpnBypassMonitor) vpnBypassMonitor.stop()
     })
