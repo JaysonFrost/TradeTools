@@ -9,6 +9,7 @@ describe('clip preview', () => {
 
     expect(appSource).toContain("ipcMain.handle('clips:open-preview'")
     expect(appSource).toContain('shell.openPath')
+    expect(appSource).toContain('isPathInside(resolve(outputDir), resolve(videoPath))')
     expect(preloadSource).toContain('openPreview')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:open-preview'")
   })
