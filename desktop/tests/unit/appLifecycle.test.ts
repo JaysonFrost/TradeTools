@@ -11,6 +11,17 @@ describe('main app lifecycle', () => {
     expect(source).toContain('if (ownsAppInstance && !keepProxyRunningAfterClose)')
   })
 
+  it('stops recording and clip rendering before installing an update', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('beforeInstall: () => stopBackgroundWorkForUpdate()')
+    expect(source).toContain('const stopBackgroundWorkForUpdate = async')
+    expect(source).toContain('terminalTradeWatcher.stop()')
+    expect(source).toContain('cancelClipRender()')
+    expect(source).toContain('windowRecorderService.stop()')
+    expect(source).toContain('waitForClipRenderIdle()')
+  })
+
   it('disables Windows Graphics Capture to avoid stale desktop frames', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

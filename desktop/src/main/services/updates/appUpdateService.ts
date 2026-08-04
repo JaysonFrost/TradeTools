@@ -1,6 +1,6 @@
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater'
 
-const { autoUpdater } = electronUpdater
+type ElectronAutoUpdater = typeof electronUpdater.autoUpdater
 
 export type AppUpdateStatusKind =
   | 'idle'
@@ -19,6 +19,7 @@ export type AppUpdateStatus = {
   version?: string
   releaseName?: string
   releaseDate?: string
+  manualInstall?: boolean
   percent?: number
   transferred?: number
   total?: number
@@ -30,7 +31,7 @@ export type AppUpdateService = {
   getStatus: () => AppUpdateStatus
   checkForUpdates: () => Promise<AppUpdateStatus>
   downloadUpdate: () => Promise<AppUpdateStatus>
-  installUpdate: () => AppUpdateStatus
+  installUpdate: () => Promise<AppUpdateStatus>
   startBackgroundCheck: () => void
 }
 
@@ -42,6 +43,9 @@ type AppUpdateServiceInput = {
   platform: NodeJS.Platform
   broadcast: (status: AppUpdateStatus) => void
   onUpdateAvailable?: (status: AppUpdateStatus) => void
+  beforeInstall?: () => Promise<void>
+  openManualDownload?: () => Promise<void>
+  updater?: ElectronAutoUpdater
 }
 
 const supportedPlatforms = new Set<NodeJS.Platform>(['win32', 'darwin'])
@@ -66,6 +70,12 @@ const toProgressFields = (progress: ProgressInfo): Pick<AppUpdateStatus, 'percen
 
 const toErrorMessage = (error: unknown): string => error instanceof Error ? error.message : 'Не удалось проверить обновления'
 
+const normalizeVersion = (version: string): string => version.trim().replace(/^v(?=\d)/i, '').split('+', 1)[0] ?? ''
+
+export const isSameAppVersion = (left: string, right: string): boolean => (
+  Boolean(left.trim() && right.trim()) && normalizeVersion(left) === normalizeVersion(right)
+)
+
 export const createAppUpdateService = ({
   currentVersion,
   isPackaged,
@@ -73,7 +83,10 @@ export const createAppUpdateService = ({
   hasUpdateConfig,
   platform,
   broadcast,
-  onUpdateAvailable
+  onUpdateAvailable,
+  beforeInstall,
+  openManualDownload,
+  updater = electronUpdater.autoUpdater
 }: AppUpdateServiceInput): AppUpdateService => {
   const updatesSupported = supportedPlatforms.has(platform)
   const updatesEnabled = updatesSupported && (isPackaged || isInstalledBuild || hasUpdateConfig)
@@ -109,15 +122,29 @@ export const createAppUpdateService = ({
     })
   }
 
+  const suppressCurrentVersion = (info: UpdateInfo): boolean => {
+    if (!isSameAppVersion(info.version, currentVersion)) return false
+
+    checking = false
+    downloading = false
+    lastUpdateInfo = undefined
+    setEnabledStatus({
+      status: 'not-available',
+      ...toUpdateFields(info),
+      message: 'У вас уже установлена последняя версия'
+    })
+    return true
+  }
+
   if (updatesEnabled) {
     if (forceConfigForUnpackagedBuild) {
-      autoUpdater.forceDevUpdateConfig = true
+      updater.forceDevUpdateConfig = true
     }
-    autoUpdater.setFeedURL(githubFeed)
-    autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = false
+    updater.setFeedURL(githubFeed)
+    updater.autoDownload = false
+    updater.autoInstallOnAppQuit = false
 
-    autoUpdater.on('checking-for-update', () => {
+    updater.on('checking-for-update', () => {
       checking = true
       setEnabledStatus({
         status: 'checking',
@@ -125,13 +152,19 @@ export const createAppUpdateService = ({
       })
     })
 
-    autoUpdater.on('update-available', (info) => {
+    updater.on('update-available', (info) => {
+      if (suppressCurrentVersion(info)) return
+
       checking = false
       lastUpdateInfo = info
+      const manualInstall = platform === 'darwin'
       const nextStatus: Omit<AppUpdateStatus, 'currentVersion'> = {
         status: 'available',
         ...toUpdateFields(info),
-        message: `Доступна новая версия TradeTools ${info.version}`
+        ...(manualInstall ? { manualInstall: true } : {}),
+        message: manualInstall
+          ? `Доступна новая версия TradeTools ${info.version}. Откройте страницу релиза и установите DMG вручную.`
+          : `Доступна новая версия TradeTools ${info.version}`
       }
       setEnabledStatus(nextStatus)
 
@@ -144,9 +177,9 @@ export const createAppUpdateService = ({
       }
     })
 
-    autoUpdater.on('update-not-available', (info) => {
+    updater.on('update-not-available', (info) => {
       checking = false
-      lastUpdateInfo = info
+      lastUpdateInfo = undefined
       setEnabledStatus({
         status: 'not-available',
         ...toUpdateFields(info),
@@ -154,7 +187,7 @@ export const createAppUpdateService = ({
       })
     })
 
-    autoUpdater.on('download-progress', (progress) => {
+    updater.on('download-progress', (progress) => {
       setEnabledStatus({
         status: 'downloading',
         ...toUpdateFields(lastUpdateInfo),
@@ -163,7 +196,9 @@ export const createAppUpdateService = ({
       })
     })
 
-    autoUpdater.on('update-downloaded', (info) => {
+    updater.on('update-downloaded', (info) => {
+      if (suppressCurrentVersion(info)) return
+
       downloading = false
       lastUpdateInfo = info
       setEnabledStatus({
@@ -174,7 +209,7 @@ export const createAppUpdateService = ({
       })
     })
 
-    autoUpdater.on('error', (error) => {
+    updater.on('error', (error) => {
       checking = false
       downloading = false
       setEnabledStatus({
@@ -205,7 +240,7 @@ export const createAppUpdateService = ({
     })
 
     try {
-      await autoUpdater.checkForUpdates()
+      await updater.checkForUpdates()
     } catch (error) {
       checking = false
       setEnabledStatus({
@@ -230,6 +265,20 @@ export const createAppUpdateService = ({
       return status
     }
 
+    if (status.manualInstall) {
+      try {
+        if (!openManualDownload) throw new Error('Страница релиза недоступна')
+        await openManualDownload()
+      } catch (error) {
+        setEnabledStatus({
+          status: 'error',
+          ...toUpdateFields(lastUpdateInfo),
+          message: toErrorMessage(error)
+        })
+      }
+      return status
+    }
+
     downloading = true
     setEnabledStatus({
       status: 'downloading',
@@ -239,7 +288,7 @@ export const createAppUpdateService = ({
     })
 
     try {
-      await autoUpdater.downloadUpdate()
+      await updater.downloadUpdate()
     } catch (error) {
       downloading = false
       setEnabledStatus({
@@ -252,7 +301,7 @@ export const createAppUpdateService = ({
     return status
   }
 
-  const installUpdate = (): AppUpdateStatus => {
+  const installUpdate = async (): Promise<AppUpdateStatus> => {
     if (!ensureEnabled()) return status
     if (status.status !== 'downloaded') {
       setEnabledStatus({
@@ -269,7 +318,20 @@ export const createAppUpdateService = ({
       percent: 100,
       message: 'Перезапускаем TradeTools и устанавливаем обновление...'
     })
-    setTimeout(() => autoUpdater.quitAndInstall(false, true), 250)
+
+    try {
+      await beforeInstall?.()
+    } catch (error) {
+      setEnabledStatus({
+        status: 'error',
+        ...toUpdateFields(lastUpdateInfo),
+        message: `Не удалось подготовить установку: ${toErrorMessage(error)}`
+      })
+      return status
+    }
+
+    const silentInstall = platform === 'win32'
+    setTimeout(() => updater.quitAndInstall(silentInstall, silentInstall), 250)
     return status
   }
 

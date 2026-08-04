@@ -1033,7 +1033,9 @@ app.whenReady().then(() => {
         onClick: focusMainWindow
       })
       if (!notification.ok) console.warn(`Update notification failed: ${notification.message}`)
-    }
+    },
+    beforeInstall: () => stopBackgroundWorkForUpdate(),
+    openManualDownload: () => shell.openExternal('https://github.com/JaysonFrost/TradeTools/releases/latest')
   })
 
   const notifyProxyPaymentsDue = async () => {
@@ -1426,6 +1428,14 @@ app.whenReady().then(() => {
     return { ok: true, cancelledCount }
   }
 
+  const waitForClipRenderIdle = async (timeoutMs = 5_000): Promise<void> => {
+    const deadlineMs = Date.now() + timeoutMs
+    while (activeClipRenderJob && Date.now() < deadlineMs) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    }
+    if (activeClipRenderJob) throw new Error('Не удалось остановить обработку клипа перед обновлением')
+  }
+
   const selectClipRenderTargets = (settings: AppSettings, preferredTarget?: CaptureTargetRef): Array<CaptureTargetRef | undefined> => {
     if (settings.recording.mode !== 'window') return [undefined]
     if (preferredTarget) return [preferredTarget]
@@ -1578,6 +1588,16 @@ app.whenReady().then(() => {
       }
     }
   })
+
+  const stopBackgroundWorkForUpdate = async (): Promise<void> => {
+    backgroundWindowRecordingEnabled = false
+    terminalTradeWatcher.stop()
+    cancelClipRender()
+    await Promise.all([
+      windowRecorderService.stop(),
+      waitForClipRenderIdle()
+    ])
+  }
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedCapturePermission = permission === 'media' || permission === 'display-capture'

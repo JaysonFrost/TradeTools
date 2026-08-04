@@ -40,7 +40,7 @@ export const UpdateBanner = ({ status, onCheck, onDownload, onInstall }: UpdateB
         <div className="flex flex-wrap gap-2 md:justify-end">
           {status.status === 'available' && (
             <Button className="min-h-9 px-3 py-2 text-xs" onClick={onDownload}>
-              <Download size={15} className="mr-2" />Скачать
+              <Download size={15} className="mr-2" />{status.manualInstall ? 'Открыть релиз' : 'Скачать'}
             </Button>
           )}
           {status.status === 'downloaded' && (

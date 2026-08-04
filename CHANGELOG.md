@@ -6,6 +6,18 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-08-04
+
+### Changed
+
+- macOS updates now open the GitHub release page for manual DMG installation while release signing and notarization are unavailable.
+
+### Fixed
+
+- Fixed repeated update prompts after an installation attempt leaves the previous app version in place.
+- Windows now stops recording and clip rendering before running the updater, then installs the downloaded release silently.
+- Repeated update events for the currently installed version are ignored.
+
 ## [0.4.7] - 2026-08-04
 
 ### Changed
