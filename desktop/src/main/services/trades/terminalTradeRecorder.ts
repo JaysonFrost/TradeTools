@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { open, readdir, stat } from 'node:fs/promises'
-import { join, posix } from 'node:path'
+import { basename, join, posix } from 'node:path'
 import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
@@ -502,6 +502,22 @@ const listLogFiles = async (logsDir: string | undefined, pattern: RegExp): Promi
   }
 }
 
+const getTigerTradeLogDateMs = (filePath: string): number => {
+  const match = /^WorkLog_(\d{2})\.(\d{2})\.(\d{4})\.log$/i.exec(basename(filePath))
+  if (!match) return Number.NEGATIVE_INFINITY
+
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const year = Number(match[3])
+  const dateMs = Date.UTC(year, month - 1, day)
+  const date = new Date(dateMs)
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+    ? dateMs
+    : Number.NEGATIVE_INFINITY
+}
+
 const listTigerTradeLogFiles = async (rootDir: string | undefined): Promise<string[]> => {
   if (!rootDir) return []
   let entries: Array<{ name: string, isDirectory: () => boolean }>
@@ -519,7 +535,10 @@ const listTigerTradeLogFiles = async (rootDir: string | undefined): Promise<stri
       .map((entry) => join(rootDir, entry.name, 'Data', 'Logs'))
   ]
   const files = (await Promise.all(logDirs.map((logsDir) => listLogFiles(logsDir, /^WorkLog_.+\.log$/i)))).flat()
-  return [...new Set(files)].sort()
+  return [...new Set(files)].sort((left, right) => {
+    const dateDifference = getTigerTradeLogDateMs(left) - getTigerTradeLogDateMs(right)
+    return dateDifference || left.localeCompare(right)
+  })
 }
 
 const readNewLines = async (

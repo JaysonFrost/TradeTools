@@ -12,10 +12,11 @@ TradeTools is released under the MIT License. Some bundled or downloaded third-p
 
 ## Video tools
 
-TradeTools uses `ffmpeg-static` and `ffprobe-static` to create and inspect local trade clips.
+TradeTools uses `ffmpeg-static` and `@ffprobe-installer/ffprobe` to create and inspect local trade clips.
 
 - `ffmpeg-static` package license: `GPL-3.0-or-later`.
-- `ffprobe-static` package license: MIT.
+- `@ffprobe-installer/ffprobe` package license: `LGPL-2.1`.
+- The bundled FFprobe binary package uses `LGPL-2.1` or `GPL-3.0` depending on the target platform, as recorded in its package metadata.
 - FFmpeg and FFprobe are projects of their respective authors and are not owned by TradeTools.
 
 When distributing installer builds, keep this notice with the project and respect the upstream FFmpeg/FFprobe license terms.

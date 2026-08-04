@@ -22,7 +22,7 @@ const donationWallets: DonationWallet[] = [
     id: 'usdt-trc20',
     asset: 'USDT',
     network: 'TRC20',
-    address: 'TCikP8GinVFDSkcjoPZeV76wcUkPvtdEgW',
+    address: 'TQZ8mz9op6xagjTfqSY91QMXtiBibUJ94r',
     hint: 'USDT в сети Tron',
     accent: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
   },
@@ -38,7 +38,7 @@ const donationWallets: DonationWallet[] = [
     id: 'bsc',
     asset: 'USDT',
     network: 'BSC',
-    address: '0x66E24766Bde46D15b571b78C0483d361d0931F90',
+    address: '0x83e7c66a1c3f92c4676333fc3cb9446d194a8f7b',
     hint: 'USDT в сети BNB Smart Chain (BEP20)',
     accent: 'border-amber-400/30 bg-amber-400/10 text-amber-200'
   }

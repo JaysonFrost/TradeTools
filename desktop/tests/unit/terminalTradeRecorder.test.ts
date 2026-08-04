@@ -291,6 +291,66 @@ describe('terminalTradeRecorder', () => {
     }
   })
 
+  it('keeps reading TigerTrade logs after the month changes', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-month-rollover-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const augustLogPath = join(logsDir, 'WorkLog_01.08.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await Promise.all([
+      writeFile(join(logsDir, 'WorkLog_30.07.2026.log'), '', 'utf8'),
+      writeFile(join(logsDir, 'WorkLog_31.07.2026.log'), '', 'utf8'),
+      writeFile(augustLogPath, '', 'utf8')
+    ])
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().message).toContain('TigerTrade')
+      })
+      await sleep(50)
+      await appendFile(augustLogPath, [
+        '01.08.2026 10:00:00.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=AUGUSDT;Account=BINANCE FUTURES;Price=1;Size=1;Comission=0;Executions=1',
+        '01.08.2026 10:01:00.000 Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=AUGUSDT;Account=BINANCE FUTURES;Price=1;Size=0;Comission=0;Executions=2'
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'AUGUSDT',
+        entryTimeMs: new Date(2026, 7, 1, 10, 0, 0).getTime(),
+        exitTimeMs: new Date(2026, 7, 1, 10, 1, 0).getTime()
+      })
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('tracks only terminal positions opened after recording starts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')

@@ -28,9 +28,12 @@ jobs:
           - name: windows-x64
             os: windows-latest
             script: npm run dist:win
-          - name: macos
-            os: macos-latest
-            script: npm run dist:mac
+          - name: macos-arm64
+            os: macos-15
+            script: npm run dist:mac -- --arm64
+          - name: macos-x64
+            os: macos-15-intel
+            script: npm run dist:mac -- --x64
 
     steps:
       - name: Checkout
@@ -55,6 +58,11 @@ jobs:
         run: ${{ matrix.script }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Remove per-architecture macOS update metadata
+        if: startsWith(matrix.name, 'macos-')
+        shell: bash
+        run: rm -f dist/latest-mac.yml
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -81,6 +89,48 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Prepare macOS update metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          ARM64_ZIP="release-assets/TradeTools-${VERSION}-mac-arm64.zip"
+          X64_ZIP="release-assets/TradeTools-${VERSION}-mac-x64.zip"
+          ARM64_DMG="release-assets/TradeTools-${VERSION}-mac-arm64.dmg"
+          X64_DMG="release-assets/TradeTools-${VERSION}-mac-x64.dmg"
+          MAC_FILES=("$ARM64_ZIP" "$X64_ZIP" "$ARM64_DMG" "$X64_DMG")
+
+          for FILE in "${MAC_FILES[@]}"; do
+            if [ ! -f "$FILE" ]; then
+              echo "Missing macOS release asset: $FILE" >&2
+              exit 1
+            fi
+          done
+
+          file_sha512() {
+            openssl dgst -sha512 -binary "$1" | base64 | tr -d '\n'
+          }
+
+          file_size() {
+            wc -c < "$1" | tr -d '[:space:]'
+          }
+
+          {
+            echo "version: $VERSION"
+            echo "files:"
+
+            for FILE in "${MAC_FILES[@]}"; do
+              echo "  - url: $(basename "$FILE")"
+              echo "    sha512: $(file_sha512 "$FILE")"
+              echo "    size: $(file_size "$FILE")"
+            done
+
+            echo "path: $(basename "$X64_ZIP")"
+            echo "sha512: $(file_sha512 "$X64_ZIP")"
+            echo "releaseDate: '$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')'"
+          } > release-assets/latest-mac.yml
 
       - name: Prepare checksums
         id: assets

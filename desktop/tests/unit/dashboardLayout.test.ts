@@ -36,10 +36,13 @@ describe('Dashboard layout', () => {
     expect(clipCardSource).not.toContain('На проверке')
   })
 
-  it('uses the current TRC20 donation address for text, copy and QR code', async () => {
+  it('uses the current TRC20 and BSC donation addresses for text, copy and QR code', async () => {
     const supportSource = await readFile(resolve('src/renderer/components/support/SupportDeveloperPage.tsx'), 'utf8')
 
-    expect(supportSource).toContain("address: 'TCikP8GinVFDSkcjoPZeV76wcUkPvtdEgW'")
+    expect(supportSource).toContain("address: 'TQZ8mz9op6xagjTfqSY91QMXtiBibUJ94r'")
+    expect(supportSource).toContain("address: '0x83e7c66a1c3f92c4676333fc3cb9446d194a8f7b'")
+    expect(supportSource).not.toContain('TCikP8GinVFDSkcjoPZeV76wcUkPvtdEgW')
+    expect(supportSource).not.toContain('0x66E24766Bde46D15b571b78C0483d361d0931F90')
     expect(supportSource).not.toContain('TGKPUrzVehY2J46RC4T5xEzxhYNbFYE3YV')
     expect(supportSource).toContain('value={wallet.address}')
     expect(supportSource).toContain('writeClipboard(wallet.address)')

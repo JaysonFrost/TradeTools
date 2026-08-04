@@ -23,7 +23,10 @@ describe('mediaBinaries', () => {
   it('uses the bundled ffprobe binary when available', () => {
     delete process.env.TRADETOOLS_FFPROBE_PATH
 
-    expect(basename(resolveMediaToolPath('ffprobe'))).toMatch(/^ffprobe(\.exe)?$/)
+    const ffprobePath = resolveMediaToolPath('ffprobe')
+
+    expect(basename(ffprobePath)).toMatch(/^ffprobe(\.exe)?$/)
+    expect(ffprobePath).toContain('@ffprobe-installer')
   })
 
   it('returns a user-facing missing binary error', () => {

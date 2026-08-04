@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 type MediaToolName = 'ffmpeg' | 'ffprobe'
 
-type StaticFfprobePackage = {
+type FfprobeInstallerPackage = {
   path?: unknown
 }
 
@@ -41,7 +41,7 @@ const requireOptional = (moduleName: string): unknown => {
 const staticPackagePath = (tool: MediaToolName): string | undefined => {
   if (tool === 'ffmpeg') return firstString(requireOptional('ffmpeg-static'))
 
-  const ffprobePackage = requireOptional('ffprobe-static') as StaticFfprobePackage | undefined
+  const ffprobePackage = requireOptional('@ffprobe-installer/ffprobe') as FfprobeInstallerPackage | undefined
   return firstString(ffprobePackage?.path)
 }
 

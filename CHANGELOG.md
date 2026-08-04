@@ -6,6 +6,18 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-08-04
+
+### Changed
+
+- Added separate native macOS release packages for Apple Silicon and Intel, with shared automatic update metadata.
+- Updated the developer support payment addresses for TRC20 and BSC.
+
+### Fixed
+
+- Fixed TigerTrade automatic recording after a month rollover when the WorkLog filename date belongs to the previous month.
+- Fixed Apple Silicon packages bundling an Intel-only FFprobe executable.
+
 ## [0.3.8] - 2026-06-28
 
 ### Fixed
