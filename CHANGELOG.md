@@ -6,6 +6,29 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-07
+
+### Added
+
+- Added TraderMake.Money integration with secure API-key storage, automatic nearest-trade matching by ticker and time, direct journal links, startup synchronization, and automatic local video-path updates.
+- Added clip search by local path, file name, ticker, trade details, and date.
+- Added automatic discovery and independent recording of multiple terminal windows and overlapping trades on different symbols.
+
+### Changed
+
+- Updated the video and proxy setup wizards to match current recording, audio, encoder, monitor, protocol, and proxy-chain settings.
+- Reworked the recording step layout so the source selector has its own responsive row and video fields no longer overlap in compact windows.
+- Made the review queue taller and more compact, with smaller buttons and clearer actions for opening, renaming, removing, and deleting videos.
+- Native capture now preserves the selected display or window resolution, while clip rendering uses a bounded CPU thread budget.
+
+### Fixed
+
+- Fixed long Chromium recordings losing or freezing the tail after a 60-second MediaRecorder rotation when WebM audio and video stream order changes.
+- Fixed browser-session stitching across wall-clock gaps and overlaps, mixed audio availability, late video start, internal packet gaps, missing tails, muted tracks, and non-empty final chunks.
+- Fixed cleanup of temporary or partial recording files after failed and cancelled renders.
+- Fixed recording recovery after terminal startup or window changes, including independent timing and padding for concurrent symbol trades.
+- Moved Windows window-metadata lookup off the renderer-critical path to avoid capture discovery stalls.
+
 ## [0.4.8] - 2026-08-04
 
 ### Changed

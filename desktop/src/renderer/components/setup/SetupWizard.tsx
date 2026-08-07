@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, CircleHelp, Clock3, FolderOpen, Mo
 import { useEffect, useMemo, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
+import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
 import type { ProxyChainInstructionResult, ProxyChainSetupProgress, ProxyChainSetupResult } from '../../../preload'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
@@ -27,6 +28,11 @@ const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/30 p
 const compactInputClass = inputClass.replace('mt-1 ', '')
 const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа в сделку. Это должно быть не меньше поля «Секунд до входа».'
+
+const normalizeVideoEncoderValue = (value: string): AppSettings['recording']['videoEncoder'] => {
+  if (value === 'cpu' || value === 'gpu' || value === 'nvidia' || value === 'amd' || value === 'intel') return value
+  return /^gpu:(nvidia|amd|intel):\d+$/.test(value) ? value as AppSettings['recording']['videoEncoder'] : 'gpu'
+}
 
 const FieldHint = ({ text }: { text: string }) => (
   <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
@@ -75,10 +81,15 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
+  const [captureTargets, setCaptureTargets] = useState<AppSettings['recording']['captureTargets']>([])
+  const [videoEncoder, setVideoEncoder] = useState<AppSettings['recording']['videoEncoder']>('gpu')
   const [resolutionPreset, setResolutionPreset] = useState<AppSettings['recording']['resolutionPreset']>('1440p')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
+  const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false)
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
+  const [videoEncoderOptions, setVideoEncoderOptions] = useState<VideoEncoderOption[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
@@ -93,6 +104,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [proxyPaymentDueDay, setProxyPaymentDueDay] = useState(currentPaymentDueDay())
   const [proxyLocalPort, setProxyLocalPort] = useState(String(defaultLocalProxyPort))
   const [proxyNotes, setProxyNotes] = useState('')
+  const [localProxyType, setLocalProxyType] = useState<AppSettings['proxyRuntime']['localProxyType']>('SOCKS5')
   const [secondProxyTitle, setSecondProxyTitle] = useState(defaultProxyTitle(undefined, 1))
   const [secondProxyServer, setSecondProxyServer] = useState('')
   const [secondProxyLogin, setSecondProxyLogin] = useState('root')
@@ -148,9 +160,14 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
+    setCaptureTargets(settings.recording.captureTargets)
+    setVideoEncoder(settings.recording.videoEncoder)
     setResolutionPreset(settings.recording.resolutionPreset)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
+    setSystemAudioEnabled(settings.recording.systemAudioEnabled)
+    setMicrophoneEnabled(settings.recording.microphoneEnabled)
+    setLocalProxyType(settings.proxyRuntime.localProxyType)
     setHost(settings.obs.host)
     setPort(String(settings.obs.port))
     setReplaySourceDir(settings.clip.replaySourceDir)
@@ -186,6 +203,13 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   useEffect(() => {
     if (!open || mode !== 'video' || recordingMode !== 'window') return
     void refreshWindowSources()
+  }, [mode, open, recordingMode])
+
+  useEffect(() => {
+    if (!open || mode !== 'video' || recordingMode !== 'window') return
+    void getTradeToolsApi().recording.listVideoEncoders()
+      .then((options) => setVideoEncoderOptions(options))
+      .catch(() => setVideoEncoderOptions([]))
   }, [mode, open, recordingMode])
 
   useEffect(() => {
@@ -265,6 +289,16 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
         ?? latestSources.find((source) => source.id === windowSourceId)
         ?? (recordingMode === 'window' && sourceType === 'window' ? findPreferredTerminalSource(latestSources) : undefined)
+      const selectedTarget = selectedSource ? {
+        id: selectedSource.id,
+        name: selectedSource.name,
+        type: selectedSource.type,
+        ...(selectedSource.displayId ? { displayId: selectedSource.displayId } : {})
+      } : undefined
+      const nextCaptureTargets = sourceType === 'screen'
+        ? captureTargets.filter((target) => target.type === 'screen')
+        : selectedTarget ? [selectedTarget] : captureTargets.filter((target) => target.type === 'window')
+      const firstCaptureTarget = nextCaptureTargets[0]
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
@@ -275,12 +309,18 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         obsPassword: obsPassword.trim() || undefined,
         recording: {
           mode: recordingMode,
-          sourceType: selectedSource?.type ?? sourceType,
-          windowSourceId: selectedSource?.id ?? windowSourceId,
-          windowSourceName: selectedSource?.name ?? windowSourceName,
+          sourceType,
+          windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? windowSourceId,
+          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
+          captureTargets: nextCaptureTargets,
+          saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
+          saveTargetId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? firstCaptureTarget?.id ?? '',
+          videoEncoder,
           resolutionPreset,
           frameRate: Number(frameRate),
-          segmentSeconds: Number(segmentSeconds)
+          segmentSeconds: Number(segmentSeconds),
+          systemAudioEnabled,
+          microphoneEnabled
         },
         obs: {
           host,
@@ -323,12 +363,16 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   }
 
   const saveProxyServers = async () => {
-    if (!proxyServer.trim() || !secondProxyServer.trim()) {
-      setLocalMessage('Укажите IP или домен для обоих серверов.')
+    if (!proxyServer.trim()) {
+      setLocalMessage('Укажите IP или домен первого сервера.')
       return
     }
-    if (!proxyPassword.trim() || !secondProxyPassword.trim()) {
-      setLocalMessage('Укажите SSH-пароль для обоих серверов.')
+    if (!proxyPassword.trim()) {
+      setLocalMessage('Укажите SSH-пароль первого сервера.')
+      return
+    }
+    if (secondProxyServer.trim() && !secondProxyPassword.trim()) {
+      setLocalMessage('Для второго сервера укажите SSH-пароль или очистите его поля.')
       return
     }
 
@@ -353,35 +397,39 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         notes: proxyNotes
       })
       const firstProxy = updated.proxies.find((proxy) => !initialSettings?.proxies.some((existing) => existing.id === proxy.id)) ?? updated.proxies.at(-1)
-      const beforeSecondSave = updated
-      updated = await api.proxies.save({
-        name: secondProxyTitle,
-        server: secondProxyServer,
-        login: secondProxyLogin,
-        password: secondProxyPassword || undefined,
-        dashboardUrl: secondProxyDashboardUrl,
-        paymentDueDay: Number(secondProxyPaymentDueDay) || undefined,
-        nextProxyId: '',
-        localProxyPort: Number(secondProxyLocalPort) || defaultLocalProxyPort,
-        notes: secondProxyNotes
-      })
-      const secondProxy = updated.proxies.find((proxy) => !beforeSecondSave.proxies.some((existing) => existing.id === proxy.id)) ?? updated.proxies.at(-1)
-
-      if (!firstProxy || !secondProxy) throw new Error('Серверы сохранены, но мастер не смог определить связку')
+      if (!firstProxy) throw new Error('Сервер сохранён, но мастер не смог его определить')
+      let secondProxy: typeof firstProxy | undefined
+      if (secondProxyServer.trim()) {
+        const beforeSecondSave = updated
+        updated = await api.proxies.save({
+          name: secondProxyTitle,
+          server: secondProxyServer,
+          login: secondProxyLogin,
+          password: secondProxyPassword || undefined,
+          dashboardUrl: secondProxyDashboardUrl,
+          paymentDueDay: Number(secondProxyPaymentDueDay) || undefined,
+          nextProxyId: '',
+          localProxyPort: Number(secondProxyLocalPort) || defaultLocalProxyPort,
+          notes: secondProxyNotes
+        })
+        secondProxy = updated.proxies.find((proxy) => !beforeSecondSave.proxies.some((existing) => existing.id === proxy.id)) ?? updated.proxies.at(-1)
+      }
 
       const chainedSettings = await api.settings.update({
         proxies: updated.proxies.map((proxy) => {
-          if (proxy.id === firstProxy.id) return { ...proxy, nextProxyId: secondProxy.id }
-          if (proxy.id === secondProxy.id) return { ...proxy, nextProxyId: '' }
+          if (proxy.id === firstProxy.id) return { ...proxy, nextProxyId: secondProxy?.id ?? '' }
+          if (secondProxy && proxy.id === secondProxy.id) return { ...proxy, nextProxyId: '' }
           return proxy
         })
       })
       onSaved(chainedSettings)
       setSelectedProxyId(firstProxy.id)
-      setSavedWizardProxyIds([firstProxy.id, secondProxy.id])
+      setSavedWizardProxyIds(secondProxy ? [firstProxy.id, secondProxy.id] : [firstProxy.id])
       setProxyPassword('')
       setSecondProxyPassword('')
-      setLocalMessage(`Сохранено: ${firstProxy.name || firstProxy.server} -> ${secondProxy.name || secondProxy.server}`)
+      setLocalMessage(secondProxy
+        ? `Сохранено: ${firstProxy.name || firstProxy.server} -> ${secondProxy.name || secondProxy.server}`
+        : `Сохранён сервер: ${firstProxy.name || firstProxy.server}`)
     } catch (error) {
       setLocalMessage(userFacingErrorMessage(error, 'Не удалось сохранить серверы'))
     } finally {
@@ -422,7 +470,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setChainSetupResult(undefined)
     setChainSetupProgress([])
     try {
-      const localProxyType = settings?.proxyRuntime.localProxyType ?? 'SOCKS5'
       const result = await getTradeToolsApi().proxies.setupChain({ proxyId: selectedProxyId, localProxyType })
       setChainSetupResult(result)
       setLocalMessage('Связка настроена, локальный proxy запущен')
@@ -516,12 +563,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
 
     if (step.id === 'proxy-server') {
-      setLocalMessage('Заполните оба сервера ниже и нажмите «Сохранить два сервера и связку».')
+      setLocalMessage('Заполните первый сервер. Второй можно добавить сразу для цепочки или позже на странице прокси.')
       return
     }
 
     if (step.id === 'proxy-chain') {
-      setLocalMessage(savedWizardProxyIds.length >= 2 ? 'Связка уже сохранена. Первый сервер пойдёт через второй.' : 'Сначала сохраните два сервера на предыдущем шаге.')
+      setLocalMessage(savedWizardProxyIds.length >= 2 ? 'Связка уже сохранена. Первый сервер пойдёт через второй.' : savedWizardProxyIds.length === 1 ? 'Сохранён один сервер. Он будет маршрутом без дополнительного перехода.' : 'Сначала сохраните сервер на предыдущем шаге.')
       return
     }
 
@@ -581,11 +628,11 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       case 'test-clip':
         return 'В очереди проверки появится локальный клип с metadata JSON.'
       case 'proxy-welcome':
-        return 'Вы пройдёте только прокси-настройки: два сервера, связка, SSH-проверка и запуск локального proxy.'
+        return 'Вы пройдёте прокси-настройки: один или два сервера, маршрут, SSH-проверка и запуск локального proxy.'
       case 'proxy-server':
-        return 'Оба сервера появятся в хранилище, пароли сохранятся в keychain, первый сервер будет связан со вторым.'
+        return 'Серверы появятся в хранилище, пароли сохранятся в keychain. Второй сервер, если добавлен, станет следующим узлом маршрута.'
       case 'proxy-chain':
-        return 'Маршрут будет сохранён внутри мастера: первый сервер -> второй сервер. Больше узлов можно переставить на странице прокси.'
+        return 'Маршрут будет сохранён внутри мастера. Больше узлов можно добавить и переставить на странице прокси.'
       case 'proxy-check':
         return 'TradeTools проверит SSH, установит Xray/VLESS на серверах и поднимет выбранный локальный SOCKS5 или HTTP proxy.'
       case 'proxy-done':
@@ -650,7 +697,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden bg-black/70 p-2 backdrop-blur-xl sm:p-4 lg:items-center lg:p-6">
-      <div className="flex h-full max-h-[calc(100dvh-16px)] w-full max-w-6xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0b0c10] shadow-[0_24px_90px_rgba(0,0,0,0.65)] sm:max-h-[calc(100dvh-32px)] lg:max-h-[90dvh] lg:rounded-[32px]">
+      <div className="flex h-full max-h-[calc(100dvh-16px)] w-full max-w-6xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0b0c10] shadow-[0_24px_90px_rgba(0,0,0,0.65)] sm:max-h-[calc(100dvh-32px)] lg:max-h-[calc(100dvh-48px)] lg:rounded-[32px]">
         <aside className="hidden w-72 shrink-0 border-r border-white/10 bg-white/[0.03] p-5 lg:block">
           <div className="text-sm font-semibold text-zinc-200">{mode === 'video' ? 'Настройка видео' : 'Настройка прокси'}</div>
           <div className="mt-2 h-2 rounded-full bg-white/10">
@@ -709,11 +756,11 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                       </button>
                     </div>
                     {recordingMode === 'window' ? (
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px_120px_120px]">
-                        <label className="text-xs font-medium text-zinc-500">
-                          Источник записи
-                          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-                            <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+                      <div className="space-y-4">
+                        <fieldset data-testid="wizard-recording-source" className="min-w-0">
+                          <legend className="text-xs font-medium text-zinc-500">Источник записи</legend>
+                          <div className="mt-1 flex min-w-0 flex-wrap items-stretch gap-2">
+                            <div className="flex shrink-0 rounded-2xl border border-white/10 bg-black/20 p-1">
                               <button
                                 className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
                                 onClick={() => {
@@ -722,6 +769,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                                   setWindowSourceName('')
                                 }}
                                 type="button"
+                                aria-pressed={sourceType === 'window'}
                               >
                                 Окно
                               </button>
@@ -733,28 +781,52 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                                   setWindowSourceName('')
                                 }}
                                 type="button"
+                                aria-pressed={sourceType === 'screen'}
                               >
                                 Экран
                               </button>
                             </div>
-                            <select
-                              className={`${compactInputClass} min-w-0 flex-1 appearance-none`}
-                              value={windowSourceId}
-                              onChange={(event) => {
-                                const source = windowSources.find((candidate) => candidate.id === event.target.value)
-                                setWindowSourceId(event.target.value)
-                                setWindowSourceName(source?.name ?? '')
-                              }}
-                            >
-                              <option value="">{windowSourceName || (sourceType === 'screen' ? 'Выберите экран' : 'Выберите окно')}</option>
-                              {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-                            </select>
-                            <Button variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
+                            {sourceType === 'screen' ? (
+                              <select
+                                className={`${compactInputClass} min-w-[180px] flex-[1_1_240px] appearance-none`}
+                                value={captureTargets.filter((target) => target.type === 'screen').map((target) => target.id)}
+                                onChange={(event) => {
+                                  const selected = Array.from(event.currentTarget.selectedOptions)
+                                    .map((option) => windowSources.find((source) => source.id === option.value))
+                                    .filter((source): source is WindowCaptureSource => Boolean(source))
+                                    .map((source) => ({ id: source.id, name: source.name, type: source.type, ...(source.displayId ? { displayId: source.displayId } : {}) }))
+                                  setCaptureTargets(selected)
+                                  setWindowSourceId(selected[0]?.id ?? '')
+                                  setWindowSourceName(selected[0]?.name ?? '')
+                                }}
+                                multiple
+                                size={Math.min(Math.max(filteredSources.length, 2), 4)}
+                                aria-label="Экраны для записи"
+                              >
+                                {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+                              </select>
+                            ) : (
+                              <select
+                                className={`${compactInputClass} min-w-[180px] flex-[1_1_240px] appearance-none`}
+                                value={windowSourceId}
+                                onChange={(event) => {
+                                  const source = windowSources.find((candidate) => candidate.id === event.target.value)
+                                  setWindowSourceId(event.target.value)
+                                  setWindowSourceName(source?.name ?? '')
+                                }}
+                                aria-label="Окно для записи"
+                              >
+                                <option value="">{windowSourceName || 'Выберите окно'}</option>
+                                {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
+                              </select>
+                            )}
+                            <Button className="shrink-0" variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
                               <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
                             </Button>
                           </div>
-                        </label>
-                        <label className="text-xs font-medium text-zinc-500">
+                        </fieldset>
+                        <div data-testid="wizard-recording-details" className="grid min-w-0 gap-3 sm:grid-cols-2">
+                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
                           Разрешение
                           <select
                             className={`${inputClass} appearance-none`}
@@ -765,15 +837,26 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                             }}
                           >
                             <option value="1440p">Оптимально 1440p</option>
-                            <option value="native">Нативное</option>
+                            <option value="native">Нативное 1:1, высокое качество</option>
                             <option value="1080p">Лёгкое 1080p</option>
                           </select>
                         </label>
-                        <label className="text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">
+                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
+                          Кодирование
+                          <select className={`${inputClass} appearance-none`} value={videoEncoder} onChange={(event) => setVideoEncoder(normalizeVideoEncoderValue(event.target.value))}>
+                            {(videoEncoderOptions.length > 0 ? videoEncoderOptions : [{ id: videoEncoder, label: videoEncoder === 'cpu' ? 'CPU' : 'Авто GPU' }]).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                          </select>
+                        </label>
+                        <label className="block min-w-0 text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
+                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
                           <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
                           <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
                         </label>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-zinc-400">
+                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-violet-500" checked={systemAudioEnabled} onChange={(event) => setSystemAudioEnabled(event.target.checked)} type="checkbox" />Звук с ПК</label>
+                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-violet-500" checked={microphoneEnabled} onChange={(event) => setMicrophoneEnabled(event.target.checked)} type="checkbox" />Микрофон</label>
+                        </div>
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">
@@ -801,7 +884,8 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                       </div>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="mb-3 text-sm font-semibold text-zinc-100">2. Второй сервер</div>
+                      <div className="mb-1 text-sm font-semibold text-zinc-100">2. Второй сервер</div>
+                      <div className="mb-3 text-xs text-zinc-500">Необязательно. Нужен только для цепочки из двух серверов.</div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={secondProxyTitle} onChange={(event) => setSecondProxyTitle(event.target.value)} placeholder="Vultr" /></label>
                         <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={secondProxyServer} onChange={(event) => setSecondProxyServer(event.target.value)} placeholder="5.6.7.8" /></label>
@@ -823,22 +907,36 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                         <div>{proxyName(settings, savedWizardProxyIds[0])} {'->'} {proxyName(settings, savedWizardProxyIds[1])}</div>
                         <div className="mt-2 text-xs text-zinc-500">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается выбранный локальный SOCKS5 или HTTP proxy.</div>
                       </>
+                    ) : savedWizardProxyIds.length === 1 ? (
+                      <>
+                        <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={16} />Один сервер сохранён</div>
+                        <div>{proxyName(settings, savedWizardProxyIds[0])}</div>
+                        <div className="mt-2 text-xs text-zinc-500">Этот сервер будет входом и выходом маршрута. Второй узел можно добавить позже на странице прокси.</div>
+                      </>
                     ) : (
                       <>
-                        <div className="mb-2 font-semibold text-amber-100">Два сервера ещё не сохранены</div>
-                        <div>Вернитесь на предыдущий шаг, заполните оба сервера и нажмите сохранение. После этого мастер сам задаст порядок связки.</div>
+                        <div className="mb-2 font-semibold text-amber-100">Сервер ещё не сохранён</div>
+                        <div>Вернитесь на предыдущий шаг, заполните первый сервер и нажмите сохранение.</div>
                       </>
                     )}
                   </div>
                 )}
                 {step.id === 'proxy-check' && (
                   <div className="mt-5 space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
                      <label className="block text-xs font-medium text-zinc-500">Первый сервер маршрута
                        <select className={`${inputClass} appearance-none`} value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
                          <option value="">Сервер не выбран</option>
                          {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
                        </select>
                      </label>
+                     <label className="block text-xs font-medium text-zinc-500">Тип подключения терминала
+                       <select className={`${inputClass} appearance-none`} value={localProxyType} onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}>
+                         <option value="SOCKS5">SOCKS5</option>
+                         <option value="HTTP">HTTP</option>
+                       </select>
+                     </label>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="ghost" onClick={() => void checkProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Работаем...' : 'Проверить SSH'}</Button>
                       <Button onClick={() => void setupProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Настраиваем...' : 'Настроить и запустить связку'}</Button>
@@ -883,7 +981,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                 )}
                 {step.id === 'test-clip' && <Button className="mt-5" onClick={onCreateTestClip}>Создать тестовый клип</Button>}
                 {(step.id === 'obs-websocket' || step.id === 'folders') && <Button className="mt-5" onClick={saveVideoSettings} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить этот шаг'}</Button>}
-                {step.id === 'proxy-server' && <Button className="mt-5" onClick={saveProxyServers} disabled={saving}><Server size={16} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить два сервера и связку'}</Button>}
+                {step.id === 'proxy-server' && <Button className="mt-5" onClick={saveProxyServers} disabled={saving}><Server size={16} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить серверы и маршрут'}</Button>}
               </section>
               <aside className="hidden rounded-[24px] border border-violet-400/20 bg-violet-500/10 p-4 xl:block">
                 <div className="text-sm font-semibold text-violet-100">Что получится после шага</div>

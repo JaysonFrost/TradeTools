@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { AppSettings, CaptureTargetRef } from '../settings/settings'
+import { terminalTitleMatchesTicker } from './terminalWindowSelection'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
-import { buildH264VideoArgs } from '../video/ffmpegCommand'
+import { buildH264VideoArgs, calculateFfmpegRenderThreads } from '../video/ffmpegCommand'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 
 export type WindowCaptureSource = {
@@ -33,12 +34,26 @@ export type ScreenCaptureBounds = {
 export type WindowRecordingSegmentInput = {
   sourceId: string
   sourceName: string
+  processId?: number
   sessionId?: string
   sequence?: number
   startedAtMs: number
   endedAtMs: number
   mimeType: string
   data: ArrayBuffer
+}
+
+export type WindowRecordingStartedInput = {
+  sourceId: string
+  sourceName: string
+  processId?: number
+  captureEpochId: string
+  startedAtMs: number
+}
+
+export type WindowRecordingStoppedInput = {
+  sourceId: string
+  captureEpochId: string
 }
 
 export type WindowRecorderStatus = {
@@ -123,24 +138,35 @@ type StoredSegment = {
   backend: WindowRecorderStatus['backend']
   sourceId: string
   sourceName: string
+  processId?: number
   sessionId: string
   sequence: number
   startedAtMs: number
   endedAtMs: number
   path: string
   sizeBytes: number
+  retainedForSession?: boolean
 }
 
-type ReplaySessionFile = {
+export type ReplaySessionFile = {
   path: string
   startedAtMs: number
   endedAtMs: number
+  firstVideoPacketSeconds?: number
+  videoDurationSeconds?: number
+  maxVideoPacketGapSeconds?: number
+  hasAudio?: boolean
   cleanup?: boolean
 }
 
-type ReplayWriteResult = {
-  sessionFiles: ReplaySessionFile[]
-  readyClip: boolean
+export type BrowserSessionVideoPacketMetadata = {
+  firstVideoPacketSeconds: number
+  videoDurationSeconds: number
+  maxVideoPacketGapSeconds: number
+}
+
+export type BrowserSessionMediaMetadata = BrowserSessionVideoPacketMetadata & {
+  hasAudio: boolean
 }
 
 export type ReplayWindowSegment = {
@@ -154,6 +180,12 @@ export type AvailableReplayWindow<T extends ReplayWindowSegment> = {
   replayEndMs: number
 }
 
+export type BrowserSessionChunk = {
+  backend: WindowRecorderStatus['backend']
+  sessionId: string
+  sequence: number
+}
+
 type ReplayExportResult = {
   replayPath: string
   readyClip: boolean
@@ -163,6 +195,8 @@ type WindowRecorderServiceInput = {
   appDataDir: string
   isWindowSourceAvailable?: (source: { sourceId: string, sourceName: string }) => Promise<boolean>
   getDisplayBounds?: () => ScreenCaptureBounds[]
+  probeBrowserSessionMedia?: (path: string) => Promise<BrowserSessionMediaMetadata>
+  runFfmpeg?: (args: string[], signal?: AbortSignal) => Promise<void>
 }
 
 type NativeRecorderState = {
@@ -171,6 +205,7 @@ type NativeRecorderState = {
   settingsKey: string
   sourceId: string
   sourceName: string
+  processId?: number
   startedAtMs: number
   segmentsDir: string
   listPath: string
@@ -179,9 +214,10 @@ type NativeRecorderState = {
   stopping: boolean
 }
 
-type NativeRecorderTarget = {
+export type NativeRecorderTarget = {
   sourceId: string
   sourceName: string
+  processId?: number
   inputBackend: 'ddagrab'
   inputName: string
   outputIndex?: number
@@ -200,9 +236,13 @@ type FreeRecordingState = {
 
 const pollIntervalMs = 250
 const exportToleranceMs = 1_500
-const segmentStaleAfterMs = 8_000
+export const browserSessionVideoDurationToleranceSeconds = 2
+const nativeSegmentFileFreshnessMs = 8_000
 const nativeRecorderStartupGraceMs = 900
-const nativeScreenFrameRateCap = 24
+
+const browserSegmentStaleAfterMs = (settings: AppSettings): number => (
+  Math.max(8_000, settings.recording.segmentSeconds * 2_000 + 5_000)
+)
 
 const sleep = (durationMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, durationMs))
 
@@ -210,6 +250,10 @@ const sanitizeSegmentTime = (value: unknown): number => {
   const time = Number(value)
   return Number.isFinite(time) && time > 0 ? Math.trunc(time) : 0
 }
+
+const sanitizeProcessId = (value: unknown): number | undefined => (
+  typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+)
 
 const toFileTimestamp = (timeMs: number): string => new Date(timeMs).toISOString().replace(/[:.]/g, '-')
 const formatRoundedSeconds = (seconds: number): string => `${Math.max(0, Math.ceil(seconds))}с`
@@ -221,15 +265,331 @@ const formatFilePeriodTimestamp = (timeMs: number): string => {
 }
 
 const escapeConcatPath = (path: string): string => path.replace(/\\/g, '/').replace(/'/g, "'\\''")
+
+export const buildReplayConcatManifest = (sessionFiles: ReplaySessionFile[]): string => {
+  const lines = ['ffconcat version 1.0']
+  for (const sessionFile of sessionFiles) {
+    const durationSeconds = (sessionFile.endedAtMs - sessionFile.startedAtMs) / 1000
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      throw new Error('Сессия встроенной записи имеет некорректную длительность')
+    }
+
+    lines.push(`file '${escapeConcatPath(sessionFile.path)}'`)
+    lines.push(`duration ${formatFfmpegSeconds(durationSeconds)}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export const shouldConcatBrowserAudio = (
+  sessionFiles: Array<Pick<ReplaySessionFile, 'hasAudio'>>,
+  requested: boolean
+): boolean => (
+  requested && sessionFiles.length > 0
+)
+
+export type BrowserSessionTimelineSlice = {
+  inputIndex: number
+  sourceStartSeconds: number
+  contentDurationSeconds: number
+  gapAfterSeconds: number
+  outputDurationSeconds: number
+}
+
+export type BrowserSessionTimelinePlan = {
+  timelineStartMs: number
+  timelineEndMs: number
+  durationSeconds: number
+  slices: BrowserSessionTimelineSlice[]
+}
+
+export const planBrowserSessionTimeline = (
+  sessionFiles: Array<Pick<ReplaySessionFile, 'startedAtMs' | 'endedAtMs'>>
+): BrowserSessionTimelinePlan => {
+  if (sessionFiles.length === 0) throw new Error('Нет browser-сессий для объединения')
+
+  const ordered = sessionFiles.map((sessionFile, inputIndex) => {
+    if (
+      !Number.isSafeInteger(sessionFile.startedAtMs) ||
+      !Number.isSafeInteger(sessionFile.endedAtMs) ||
+      sessionFile.endedAtMs <= sessionFile.startedAtMs
+    ) {
+      throw new Error('Сессия встроенной записи имеет некорректную длительность')
+    }
+    return { ...sessionFile, inputIndex }
+  }).sort((left, right) => (
+    left.startedAtMs - right.startedAtMs ||
+    right.endedAtMs - left.endedAtMs ||
+    left.inputIndex - right.inputIndex
+  ))
+
+  const timelineStartMs = ordered[0]!.startedAtMs
+  let coveredUntilMs = timelineStartMs
+  const slices: Array<{
+    inputIndex: number
+    sourceStartMs: number
+    contentDurationMs: number
+    gapAfterMs: number
+  }> = []
+
+  for (const sessionFile of ordered) {
+    const contributionStartMs = Math.max(sessionFile.startedAtMs, coveredUntilMs)
+    if (sessionFile.endedAtMs <= contributionStartMs) continue
+
+    const gapBeforeMs = Math.max(0, sessionFile.startedAtMs - coveredUntilMs)
+    if (gapBeforeMs > 0) {
+      const previous = slices.at(-1)
+      if (!previous) throw new Error('Некорректный gap перед первой browser-сессией')
+      previous.gapAfterMs += gapBeforeMs
+    }
+
+    slices.push({
+      inputIndex: sessionFile.inputIndex,
+      sourceStartMs: contributionStartMs - sessionFile.startedAtMs,
+      contentDurationMs: sessionFile.endedAtMs - contributionStartMs,
+      gapAfterMs: 0
+    })
+    coveredUntilMs = sessionFile.endedAtMs
+  }
+
+  const timelineDurationMs = coveredUntilMs - timelineStartMs
+  const plannedDurationMs = slices.reduce((sum, slice) => (
+    sum + slice.contentDurationMs + slice.gapAfterMs
+  ), 0)
+  if (slices.length === 0 || plannedDurationMs !== timelineDurationMs) {
+    throw new Error('Не удалось сохранить wall-clock timeline browser-сессий')
+  }
+
+  return {
+    timelineStartMs,
+    timelineEndMs: coveredUntilMs,
+    durationSeconds: timelineDurationMs / 1000,
+    slices: slices.map((slice) => ({
+      inputIndex: slice.inputIndex,
+      sourceStartSeconds: slice.sourceStartMs / 1000,
+      contentDurationSeconds: slice.contentDurationMs / 1000,
+      gapAfterSeconds: slice.gapAfterMs / 1000,
+      outputDurationSeconds: (slice.contentDurationMs + slice.gapAfterMs) / 1000
+    }))
+  }
+}
+
+export const parseBrowserSessionVideoPacketMetadata = (value: string): BrowserSessionVideoPacketMetadata | undefined => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== 'object' || !('packets' in parsed) || !Array.isArray(parsed.packets)) return undefined
+
+  const packetIntervals: Array<{ startSeconds: number, endSeconds: number }> = []
+  for (const packet of parsed.packets) {
+    if (!packet || typeof packet !== 'object') continue
+    const ptsSeconds = Number('pts_time' in packet ? packet.pts_time : Number.NaN)
+    if (!Number.isFinite(ptsSeconds)) continue
+    const rawDurationSeconds = Number('duration_time' in packet ? packet.duration_time : 0)
+    const durationSeconds = Number.isFinite(rawDurationSeconds) && rawDurationSeconds > 0 ? rawDurationSeconds : 0
+    packetIntervals.push({ startSeconds: ptsSeconds, endSeconds: ptsSeconds + durationSeconds })
+  }
+  packetIntervals.sort((left, right) => left.startSeconds - right.startSeconds || left.endSeconds - right.endSeconds)
+  const firstPacket = packetIntervals[0]
+  if (!firstPacket) return undefined
+
+  let coveredUntilSeconds = firstPacket.endSeconds
+  let maxVideoPacketGapSeconds = 0
+  for (const packet of packetIntervals.slice(1)) {
+    maxVideoPacketGapSeconds = Math.max(maxVideoPacketGapSeconds, packet.startSeconds - coveredUntilSeconds)
+    coveredUntilSeconds = Math.max(coveredUntilSeconds, packet.endSeconds)
+  }
+
+  return Number.isFinite(coveredUntilSeconds) && coveredUntilSeconds > 0
+    ? {
+        firstVideoPacketSeconds: firstPacket.startSeconds,
+        videoDurationSeconds: coveredUntilSeconds,
+        maxVideoPacketGapSeconds
+      }
+    : undefined
+}
+
+export const assertBrowserSessionVideoCoverage = (
+  sessionFiles: Array<Pick<ReplaySessionFile, 'firstVideoPacketSeconds' | 'videoDurationSeconds' | 'maxVideoPacketGapSeconds'>>,
+  timeline: BrowserSessionTimelinePlan
+): void => {
+  for (const slice of timeline.slices) {
+    const sessionFile = sessionFiles[slice.inputIndex]
+    const firstVideoPacketSeconds = sessionFile?.firstVideoPacketSeconds
+    const videoDurationSeconds = sessionFile?.videoDurationSeconds
+    const maxVideoPacketGapSeconds = sessionFile?.maxVideoPacketGapSeconds
+    const requiredSourceEndSeconds = slice.sourceStartSeconds + slice.contentDurationSeconds
+    if (
+      !Number.isFinite(firstVideoPacketSeconds) ||
+      !Number.isFinite(videoDurationSeconds) ||
+      (videoDurationSeconds ?? 0) <= 0 ||
+      !Number.isFinite(maxVideoPacketGapSeconds) ||
+      (maxVideoPacketGapSeconds ?? 0) < 0
+    ) {
+      throw new Error('Не удалось определить фактическую длительность видео browser-сессии')
+    }
+    if (firstVideoPacketSeconds! > browserSessionVideoDurationToleranceSeconds) {
+      throw new Error(
+        'Встроенный рекордер потерял начало видео browser-сессии: ' +
+        `первый кадр появился через ${formatFfmpegSeconds(firstVideoPacketSeconds!)}с`
+      )
+    }
+    if (maxVideoPacketGapSeconds! > browserSessionVideoDurationToleranceSeconds) {
+      throw new Error(
+        'Встроенный рекордер потерял часть видео внутри browser-сессии: ' +
+        `разрыв ${formatFfmpegSeconds(maxVideoPacketGapSeconds!)}с`
+      )
+    }
+    if (requiredSourceEndSeconds - videoDurationSeconds! > browserSessionVideoDurationToleranceSeconds) {
+      throw new Error(
+        'Встроенный рекордер потерял часть видео browser-сессии: ' +
+        `доступно ${formatFfmpegSeconds(videoDurationSeconds!)}с, нужно ${formatFfmpegSeconds(requiredSourceEndSeconds)}с`
+      )
+    }
+  }
+}
+
+export type BrowserSessionConcatFilterInput = {
+  sessionFiles: ReplaySessionFile[]
+  startSeconds: number
+  durationSeconds: number
+  hasAudio: boolean
+}
+
+export const buildBrowserSessionConcatFilter = ({
+  sessionFiles,
+  startSeconds,
+  durationSeconds,
+  hasAudio
+}: BrowserSessionConcatFilterInput): string => {
+  if (sessionFiles.length < 2) {
+    throw new Error('Для объединения browser-сессий нужны минимум две записи')
+  }
+  if (!Number.isFinite(startSeconds) || startSeconds < 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    throw new Error('Некорректный интервал объединения browser-сессий')
+  }
+
+  const timeline = planBrowserSessionTimeline(sessionFiles)
+  assertBrowserSessionVideoCoverage(sessionFiles, timeline)
+  const filters: string[] = []
+  const concatInputs: string[] = []
+  for (const [sliceIndex, slice] of timeline.slices.entries()) {
+    const sourceEndSeconds = slice.sourceStartSeconds + slice.contentDurationSeconds
+    const gapPadding = slice.gapAfterSeconds > 0
+      ? `tpad=stop_mode=clone:stop_duration=${formatFfmpegSeconds(slice.gapAfterSeconds)},`
+      : ''
+    filters.push(
+      `[${slice.inputIndex}:v:0]setpts=PTS-STARTPTS,` +
+      `tpad=stop_mode=clone:stop_duration=${formatFfmpegSeconds(browserSessionVideoDurationToleranceSeconds)},` +
+      `trim=start=${formatFfmpegSeconds(slice.sourceStartSeconds)}:duration=${formatFfmpegSeconds(slice.contentDurationSeconds)},` +
+      'setpts=PTS-STARTPTS,' +
+      gapPadding +
+      `trim=duration=${formatFfmpegSeconds(slice.outputDurationSeconds)},setpts=PTS-STARTPTS[v${sliceIndex}]`
+    )
+    concatInputs.push(`[v${sliceIndex}]`)
+    if (hasAudio) {
+      if (sessionFiles[slice.inputIndex]?.hasAudio === true) {
+        filters.push(
+          `[${slice.inputIndex}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,` +
+          `apad=pad_dur=${formatFfmpegSeconds(sourceEndSeconds)},` +
+          `atrim=start=${formatFfmpegSeconds(slice.sourceStartSeconds)}:duration=${formatFfmpegSeconds(slice.contentDurationSeconds)},` +
+          'asetpts=PTS-STARTPTS,' +
+          `apad=pad_dur=${formatFfmpegSeconds(slice.outputDurationSeconds)},` +
+          `atrim=duration=${formatFfmpegSeconds(slice.outputDurationSeconds)},asetpts=PTS-STARTPTS[a${sliceIndex}]`
+        )
+      } else {
+        filters.push(
+          'anullsrc=r=48000:cl=stereo,' +
+          `atrim=duration=${formatFfmpegSeconds(slice.outputDurationSeconds)},` +
+          `asetpts=PTS-STARTPTS[a${sliceIndex}]`
+        )
+      }
+      concatInputs.push(`[a${sliceIndex}]`)
+    }
+  }
+
+  filters.push(`${concatInputs.join('')}concat=n=${timeline.slices.length}:v=1:a=${hasAudio ? 1 : 0}[vcat]${hasAudio ? '[acat]' : ''}`)
+  filters.push(`[vcat]trim=start=${formatFfmpegSeconds(startSeconds)}:duration=${formatFfmpegSeconds(durationSeconds)},setpts=PTS-STARTPTS[vout]`)
+  if (hasAudio) {
+    filters.push(`[acat]atrim=start=${formatFfmpegSeconds(startSeconds)}:duration=${formatFfmpegSeconds(durationSeconds)},asetpts=PTS-STARTPTS[aout]`)
+  }
+  return filters.join(';')
+}
 const isNativeRecordingSupported = (): boolean => process.platform === 'win32'
 const normalizeFfmpegLog = (value: string): string => value.replace(/\s+/g, ' ').trim().slice(-800)
 const isMissingNativeWindowError = (value: string): boolean => /Can't find window|Error opening input file title=/i.test(value)
-const formatFrameRate = (value: number): string => String(Math.max(10, Math.min(60, Math.trunc(value))))
-const nativeRecordingFrameRate = (settings: AppSettings, targets: NativeRecorderTarget[]): string => (
-  formatFrameRate(settings.recording.sourceType === 'screen' && targets.length > 0
-    ? Math.min(settings.recording.frameRate, nativeScreenFrameRateCap)
-    : settings.recording.frameRate)
-)
+const formatFrameRate = (value: number): string => {
+  const frameRate = Math.max(10, Math.min(60, Number.isFinite(value) ? value : 10))
+  return frameRate.toFixed(3).replace(/\.?0+$/, '')
+}
+const nativeRecordingFrameRate = (settings: AppSettings): string => formatFrameRate(settings.recording.frameRate)
+
+const nativeRecordingVideoFilter = (settings: AppSettings): string[] => {
+  if (settings.recording.resolutionPreset === 'native') return []
+  if (settings.recording.resolutionPreset === '1080p') {
+    return ['-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
+  }
+
+  return ['-vf', 'scale=2560:1440:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
+}
+
+const buildNativeRecorderInputArgs = (frameRate: string, target: NativeRecorderTarget): string[] => [
+  '-f',
+  'lavfi',
+  '-i',
+  `ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0,hwdownload,format=bgra`
+]
+
+export const buildNativeRecorderArgs = (
+  settings: AppSettings,
+  outputPattern: string,
+  listPath: string,
+  target: NativeRecorderTarget,
+  platform: NodeJS.Platform = process.platform
+): string[] => {
+  const frameRate = nativeRecordingFrameRate(settings)
+  const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
+  const segmentFrameCount = String(Math.max(1, Math.trunc(Number(frameRate) * Number(segmentSeconds))))
+
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'warning',
+    '-nostdin',
+    ...buildNativeRecorderInputArgs(frameRate, target),
+    '-map',
+    '0:v:0',
+    '-an',
+    ...nativeRecordingVideoFilter(settings),
+    ...buildH264VideoArgs({
+      platform,
+      purpose: 'recording',
+      encoder: settings.recording.videoEncoder,
+      quality: settings.recording.resolutionPreset === 'native' ? 'native' : 'standard'
+    }),
+    '-r',
+    frameRate,
+    '-fps_mode',
+    'cfr',
+    '-g',
+    segmentFrameCount,
+    '-f',
+    'segment',
+    '-segment_time',
+    segmentSeconds,
+    '-reset_timestamps',
+    '1',
+    '-segment_format',
+    'mp4',
+    '-segment_list',
+    listPath,
+    '-segment_list_type',
+    'csv',
+    outputPattern
+  ]
+}
 const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
 const getErrorCode = (error: unknown): string => (
   typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : ''
@@ -248,6 +608,7 @@ export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
   let coveredUntilMs = Number.NEGATIVE_INFINITY
   for (const segment of overlapping) {
     if (segment.endedAtMs <= coveredUntilMs + exportToleranceMs) continue
+    if (selected.length > 0 && segment.startedAtMs > coveredUntilMs + exportToleranceMs) return undefined
     selected.push(segment)
     coveredUntilMs = segment.endedAtMs
   }
@@ -263,6 +624,21 @@ export const selectAvailableReplayWindow = <T extends ReplayWindowSegment>(
   }
 }
 
+export const selectBrowserSessionPrefix = <T extends BrowserSessionChunk>(
+  sourceSegments: T[],
+  sessionId: string,
+  lastSequence: number
+): T[] | undefined => {
+  if (!Number.isInteger(lastSequence) || lastSequence < 0) return undefined
+
+  const prefix = sourceSegments
+    .filter((segment) => segment.backend === 'browser' && segment.sessionId === sessionId && segment.sequence <= lastSequence)
+    .sort((left, right) => left.sequence - right.sequence)
+  if (prefix.length !== lastSequence + 1) return undefined
+  if (prefix.some((segment, index) => segment.sequence !== index)) return undefined
+  return prefix
+}
+
 const createAbortError = (): Error => new Error('Сохранение клипа отменено')
 
 const throwIfAborted = (signal?: AbortSignal): void => {
@@ -275,6 +651,7 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
     const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: ['ignore', 'ignore', 'pipe'] })
     let stderr = ''
     let settled = false
+    let aborted = false
     const settle = (callback: () => void) => {
       if (settled) return
       settled = true
@@ -282,18 +659,25 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
       callback()
     }
     const onAbort = () => {
+      aborted = true
       child.kill('SIGTERM')
-      settle(() => reject(createAbortError()))
     }
     signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
 
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)
     })
     child.on('error', (error) => {
-      settle(() => reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error))
+      settle(() => reject(aborted
+        ? createAbortError()
+        : isMissingMediaToolError(error) ? createMissingMediaToolError('ffmpeg') : error))
     })
     child.on('exit', (code) => {
+      if (aborted) {
+        settle(() => reject(createAbortError()))
+        return
+      }
       if (code === 0) {
         settle(resolve)
         return
@@ -304,10 +688,110 @@ const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> =>
   })
 }
 
-export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailable, getDisplayBounds }: WindowRecorderServiceInput): WindowRecorderService => {
+const probeBrowserSessionHasAudio = async (path: string): Promise<boolean> => (
+  new Promise<boolean>((resolveProbe) => {
+    let settled = false
+    const settle = (hasAudio: boolean) => {
+      if (settled) return
+      settled = true
+      resolveProbe(hasAudio)
+    }
+
+    try {
+      const child = spawn(resolveMediaToolPath('ffprobe'), [
+        '-v',
+        'error',
+        '-select_streams',
+        'a:0',
+        '-show_entries',
+        'stream=codec_type',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
+        path
+      ], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })
+      let stdout = ''
+      child.stdout.on('data', (chunk) => {
+        stdout += String(chunk)
+      })
+      child.on('error', () => settle(false))
+      child.on('exit', (code) => settle(code === 0 && stdout.trim().split(/\s+/).includes('audio')))
+    } catch {
+      settle(false)
+    }
+  })
+)
+
+const probeBrowserSessionVideoPackets = async (path: string): Promise<BrowserSessionVideoPacketMetadata> => (
+  new Promise<BrowserSessionVideoPacketMetadata>((resolveProbe, rejectProbe) => {
+    let settled = false
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      callback()
+    }
+
+    try {
+      const child = spawn(resolveMediaToolPath('ffprobe'), [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'packet=pts_time,duration_time',
+        '-of',
+        'json',
+        path
+      ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (chunk) => {
+        stdout += String(chunk)
+      })
+      child.stderr.on('data', (chunk) => {
+        stderr += String(chunk)
+      })
+      child.on('error', (error) => settle(() => rejectProbe(
+        isMissingMediaToolError(error) ? createMissingMediaToolError('ffprobe') : error
+      )))
+      child.on('exit', (code) => settle(() => {
+        if (code !== 0) {
+          rejectProbe(new Error(`ffprobe exited with code ${code ?? 'unknown'}: ${normalizeFfmpegLog(stderr)}`))
+          return
+        }
+        const videoPacketMetadata = parseBrowserSessionVideoPacketMetadata(stdout)
+        if (videoPacketMetadata === undefined) {
+          rejectProbe(new Error('ffprobe не смог определить фактическую длительность видео browser-сессии'))
+          return
+        }
+        resolveProbe(videoPacketMetadata)
+      }))
+    } catch (error) {
+      settle(() => rejectProbe(
+        isMissingMediaToolError(error) ? createMissingMediaToolError('ffprobe') : error
+      ))
+    }
+  })
+)
+
+const probeBrowserSessionMedia = async (path: string): Promise<BrowserSessionMediaMetadata> => {
+  const [hasAudio, videoPacketMetadata] = await Promise.all([
+    probeBrowserSessionHasAudio(path),
+    probeBrowserSessionVideoPackets(path)
+  ])
+  return { hasAudio, ...videoPacketMetadata }
+}
+
+export const createWindowRecorderService = ({
+  appDataDir,
+  isWindowSourceAvailable,
+  getDisplayBounds,
+  probeBrowserSessionMedia: inspectBrowserSessionMedia = probeBrowserSessionMedia,
+  runFfmpeg: executeFfmpeg = runFfmpeg
+}: WindowRecorderServiceInput): WindowRecorderService => {
   const legacyCacheRoot = resolve(join(appDataDir, 'window-recording'))
   const segments: StoredSegment[] = []
   const pendingSegmentPaths = new Set<string>()
+  const activeSegmentReadCounts = new Map<string, number>()
   let protectedSinceMs = 0
   let freeRecording: FreeRecordingState | undefined
   let freeRecordingExportProtectedSinceMs = 0
@@ -321,6 +805,17 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       root,
       segmentsDir: join(root, 'segments'),
       replaysDir: join(root, 'replays')
+    }
+  }
+
+  const protectSegmentReads = (paths: string[]): (() => void) => {
+    for (const path of paths) activeSegmentReadCounts.set(path, (activeSegmentReadCounts.get(path) ?? 0) + 1)
+    return () => {
+      for (const path of paths) {
+        const nextCount = (activeSegmentReadCounts.get(path) ?? 1) - 1
+        if (nextCount <= 0) activeSegmentReadCounts.delete(path)
+        else activeSegmentReadCounts.set(path, nextCount)
+      }
     }
   }
 
@@ -340,25 +835,18 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     settings.recording.windowSourceId,
     settings.recording.windowSourceName,
     settings.recording.videoEncoder,
+    settings.recording.resolutionPreset,
     settings.recording.frameRate,
     settings.recording.segmentSeconds,
     String(settings.recording.systemAudioEnabled),
     String(settings.recording.microphoneEnabled),
     target?.sourceId ?? '',
     target?.sourceName ?? '',
+    String(target?.processId ?? ''),
     target?.inputBackend ?? '',
     String(target?.outputIndex ?? ''),
     target?.bounds ? `${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}` : ''
   ].join('|')
-
-  const nativeRecordingVideoFilter = (settings: AppSettings): string[] => {
-    if (settings.recording.resolutionPreset === 'native') return []
-    if (settings.recording.resolutionPreset === '1080p') {
-      return ['-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
-    }
-
-    return ['-vf', 'scale=2560:1440:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos']
-  }
 
   const screenOutputIndex = (sourceId: string): number | undefined => {
     const match = /^screen:(\d+):/.exec(sourceId)
@@ -378,6 +866,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
           ? [{
               sourceId: target.id,
               sourceName: target.name,
+              processId: target.processId,
               inputBackend: 'ddagrab' as const,
               inputName: 'ddagrab',
               outputIndex: screenOutputIndex(target.id) ?? index,
@@ -451,53 +940,6 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     })
   }
 
-  const buildNativeRecorderInputArgs = (frameRate: string, target: NativeRecorderTarget): string[] => {
-    return [
-      '-f',
-      'lavfi',
-      '-i',
-      `ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0,hwdownload,format=bgra`
-    ]
-  }
-
-  const buildNativeRecorderArgs = (settings: AppSettings, outputPattern: string, listPath: string, target: NativeRecorderTarget, targets: NativeRecorderTarget[]): string[] => {
-    const frameRate = nativeRecordingFrameRate(settings, targets)
-    const segmentSeconds = String(Math.max(1, Math.trunc(settings.recording.segmentSeconds)))
-    const segmentFrameCount = String(Math.max(1, Math.trunc(Number(frameRate) * Number(segmentSeconds))))
-
-    return [
-      '-hide_banner',
-      '-loglevel',
-      'warning',
-      '-nostdin',
-      ...buildNativeRecorderInputArgs(frameRate, target),
-      '-map',
-      '0:v:0',
-      '-an',
-      ...nativeRecordingVideoFilter(settings),
-      ...buildH264VideoArgs({ platform: process.platform, purpose: 'recording', encoder: settings.recording.videoEncoder }),
-      '-r',
-      frameRate,
-      '-fps_mode',
-      'cfr',
-      '-g',
-      segmentFrameCount,
-      '-f',
-      'segment',
-      '-segment_time',
-      segmentSeconds,
-      '-reset_timestamps',
-      '1',
-      '-segment_format',
-      'mp4',
-      '-segment_list',
-      listPath,
-      '-segment_list_type',
-      'csv',
-      outputPattern
-    ]
-  }
-
   const stopNativeRecorder = async () => {
     clearNativeMissingSource()
     const currentRecorders = nativeRecorders
@@ -553,6 +995,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
           backend: 'ffmpeg',
           sourceId: current.sourceId,
           sourceName: current.sourceName,
+          processId: current.processId,
           sessionId: current.sessionId,
           sequence: index,
           startedAtMs: current.startedAtMs + Math.round(startSeconds * 1000),
@@ -591,7 +1034,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       const listPath = join(segmentsDir, `${sessionId}.csv`)
       const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
       const processStartedAtMs = Date.now()
-      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target, targets), {
+      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target), {
         stdio: ['ignore', 'ignore', 'pipe'],
         windowsHide: true
       })
@@ -601,6 +1044,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         settingsKey: nativeSettingsKey(settings, target),
         sourceId: target.sourceId,
         sourceName: target.sourceName,
+        processId: target.processId,
         startedAtMs: processStartedAtMs,
         segmentsDir,
         listPath,
@@ -738,7 +1182,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
 
       if (nativeRecorders.some((recorder) => entry.name.startsWith(`${recorder.sessionId}-`))) {
         const fileStat = await stat(filePath).catch(() => undefined)
-        if (fileStat && Date.now() - fileStat.mtimeMs < segmentStaleAfterMs) return
+        if (fileStat && Date.now() - fileStat.mtimeMs < nativeSegmentFileFreshnessMs) return
       }
 
       await rm(filePath, { force: true }).catch(() => undefined)
@@ -765,42 +1209,53 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0, freeRecordingExportProtectedSinceMs].filter((value) => value > 0)
     const protectedCutoffMs = protectedCutoffs.length > 0 ? Math.min(...protectedCutoffs) : 0
     const cutoffMs = protectedCutoffMs > 0 ? Math.min(replayCutoffMs, protectedCutoffMs) : replayCutoffMs
+    const activeBrowserSessionIds = new Set(segments
+      .filter((segment) => segment.backend === 'browser' && !segment.retainedForSession && segment.endedAtMs >= cutoffMs)
+      .map((segment) => segment.sessionId))
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       const segment = segments[index]
       if (!segment || segment.endedAtMs >= cutoffMs) continue
+      if (activeSegmentReadCounts.has(segment.path)) continue
+      if (segment.backend === 'browser' && activeBrowserSessionIds.has(segment.sessionId)) {
+        segment.retainedForSession = true
+        continue
+      }
 
       segments.splice(index, 1)
       await rm(segment.path, { force: true }).catch(() => undefined)
     }
 
-    const keepPaths = new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths])
+    const keepPaths = new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths, ...activeSegmentReadCounts.keys()])
     await pruneDiskFiles(segmentsDir, keepPaths)
     await pruneReplayFiles(replaysDir, replayCutoffMs)
   }
 
-  const primaryCaptureTarget = (settings: AppSettings): CaptureTargetRef | undefined => (
-    settings.recording.captureTargets.find((target) => target.id === settings.recording.saveTargetId) ??
-    settings.recording.captureTargets[0] ??
-    (settings.recording.windowSourceId ? {
-      id: settings.recording.windowSourceId,
-      name: settings.recording.windowSourceName,
-      type: settings.recording.sourceType
-    } : undefined)
-  )
+  const targetMatchesSegment = (segment: StoredSegment, captureTarget: CaptureTargetRef): boolean => {
+    if (segment.sourceId === captureTarget.id) return true
+    if (Boolean(captureTarget.name) && segment.sourceName === captureTarget.name) return true
 
-  const targetMatchesSegment = (segment: StoredSegment, captureTarget: CaptureTargetRef): boolean => (
-    segment.sourceId === captureTarget.id ||
-    (Boolean(captureTarget.name) && segment.sourceName === captureTarget.name)
-  )
+    const segmentProcessId = sanitizeProcessId(segment.processId)
+    const targetProcessId = sanitizeProcessId(captureTarget.processId)
+    return Boolean(
+      captureTarget.symbol &&
+      segmentProcessId !== undefined &&
+      segmentProcessId === targetProcessId &&
+      terminalTitleMatchesTicker(segment.sourceName, captureTarget.symbol)
+    )
+  }
 
   const relevantSegments = (settings: AppSettings, captureTarget?: CaptureTargetRef): StoredSegment[] => {
-    const target = captureTarget ?? primaryCaptureTarget(settings)
     const sourceId = settings.recording.windowSourceId
     const sourceName = settings.recording.windowSourceName
+    const configuredTargets = settings.recording.captureTargets
+    const matchesConfiguredTarget = (segment: StoredSegment): boolean => {
+      if (captureTarget) return targetMatchesSegment(segment, captureTarget)
+      if (configuredTargets.length > 0) return configuredTargets.some((target) => targetMatchesSegment(segment, target))
+      return sourceId ? segment.sourceId === sourceId || segment.sourceName === sourceName : segment.sourceName === sourceName
+    }
+
     return segments
-      .filter((segment) => target
-        ? targetMatchesSegment(segment, target)
-        : (sourceId ? segment.sourceId === sourceId || segment.sourceName === sourceName : segment.sourceName === sourceName))
+      .filter((segment) => !segment.retainedForSession && matchesConfiguredTarget(segment))
       .sort((a, b) => a.startedAtMs - b.startedAtMs)
   }
 
@@ -830,7 +1285,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
     const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
     const hasNativeRecorder = nativeRecorders.length > 0
-    const active = Boolean(hasNativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < segmentStaleAfterMs)
+    const active = Boolean(hasNativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < browserSegmentStaleAfterMs(settings))
     const backend = override.backend ?? (hasNativeRecorder ? 'ffmpeg' : 'browser')
     const bufferTargetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
     const bufferMessage = `накоплено ${Math.round(bufferedSeconds)}с из ${bufferTargetSeconds}с`
@@ -889,25 +1344,118 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     }
   }
 
-  const buildSessionFiles = async (neededSegments: StoredSegment[], _replayId: string): Promise<ReplaySessionFile[]> => {
-    await Promise.all(neededSegments.map(assertSegmentFile))
-    return neededSegments.map((segment) => ({
-      path: segment.path,
-      startedAtMs: segment.startedAtMs,
-      endedAtMs: segment.endedAtMs
-    }))
+  const buildBrowserSessionFile = async (
+    sessionId: string,
+    lastSequence: number,
+    replayId: string,
+    fileIndex: number,
+    replaysDir: string
+  ): Promise<ReplaySessionFile> => {
+    const sessionSegments = selectBrowserSessionPrefix(segments, sessionId, lastSequence)
+    if (!sessionSegments) {
+      throw new Error('Часть непрерывной сессии встроенной записи уже недоступна. Дождитесь накопления нового буфера и повторите сохранение.')
+    }
+
+    const firstSegment = sessionSegments[0]
+    const lastSegment = sessionSegments.at(-1)
+    if (!firstSegment || !lastSegment) throw new Error('Нет частей непрерывной сессии встроенной записи для сборки клипа')
+    const sessionPath = join(replaysDir, `${toFileTimestamp(lastSegment.endedAtMs)}-${replayId}-${fileIndex}.webm`)
+    const releaseSegmentReads = protectSegmentReads(sessionSegments.map((segment) => segment.path))
+    try {
+      await Promise.all(sessionSegments.map(assertSegmentFile))
+      await writeFile(sessionPath, await readFile(firstSegment.path))
+      for (const segment of sessionSegments.slice(1)) await appendFile(sessionPath, await readFile(segment.path))
+    } catch (error) {
+      await rm(sessionPath, { force: true }).catch(() => undefined)
+      throw error
+    } finally {
+      releaseSegmentReads()
+    }
+
+    let mediaMetadata: BrowserSessionMediaMetadata
+    try {
+      mediaMetadata = await inspectBrowserSessionMedia(sessionPath)
+    } catch (error) {
+      await rm(sessionPath, { force: true }).catch(() => undefined)
+      throw error
+    }
+
+    return {
+      path: sessionPath,
+      startedAtMs: firstSegment.startedAtMs,
+      endedAtMs: lastSegment.endedAtMs,
+      firstVideoPacketSeconds: mediaMetadata.firstVideoPacketSeconds,
+      videoDurationSeconds: mediaMetadata.videoDurationSeconds,
+      maxVideoPacketGapSeconds: mediaMetadata.maxVideoPacketGapSeconds,
+      hasAudio: mediaMetadata.hasAudio,
+      cleanup: true
+    }
   }
 
-  const replayEncodeArgs = (settings: AppSettings, outputPath: string): string[] => {
-    const audioArgs = browserAudioEnabled(settings)
-      ? ['-map', '0:a?', '-c:a', 'aac', '-b:a', '160k']
+  const buildSessionFiles = async (neededSegments: StoredSegment[], replayId: string, replaysDir: string): Promise<ReplaySessionFile[]> => {
+    await Promise.all(neededSegments.map(assertSegmentFile))
+    if (neededSegments.every((segment) => segment.backend !== 'browser')) {
+      return neededSegments.map((segment) => ({
+        path: segment.path,
+        startedAtMs: segment.startedAtMs,
+        endedAtMs: segment.endedAtMs
+      }))
+    }
+
+    const lastNeededSequenceBySession = new Map<string, number>()
+    const firstNeededAtBySession = new Map<string, number>()
+    for (const segment of neededSegments) {
+      lastNeededSequenceBySession.set(segment.sessionId, Math.max(lastNeededSequenceBySession.get(segment.sessionId) ?? -1, segment.sequence))
+      firstNeededAtBySession.set(segment.sessionId, Math.min(firstNeededAtBySession.get(segment.sessionId) ?? segment.startedAtMs, segment.startedAtMs))
+    }
+
+    const sessionIds = [...lastNeededSequenceBySession.keys()].sort((left, right) => (
+      (firstNeededAtBySession.get(left) ?? 0) - (firstNeededAtBySession.get(right) ?? 0)
+    ))
+    const sessionFiles: ReplaySessionFile[] = []
+    try {
+      for (const sessionId of sessionIds) {
+        sessionFiles.push(await buildBrowserSessionFile(
+          sessionId,
+          lastNeededSequenceBySession.get(sessionId) ?? -1,
+          replayId,
+          sessionFiles.length,
+          replaysDir
+        ))
+      }
+      return sessionFiles
+    } catch (error) {
+      await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+      throw error
+    }
+  }
+
+  const replayEncodeArgs = (
+    settings: AppSettings,
+    outputPath: string,
+    maps?: { video: string, audio?: string }
+  ): string[] => {
+    const resolvedMaps = maps ?? {
+      video: '0:v:0',
+      ...(browserAudioEnabled(settings) ? { audio: '0:a?' } : {})
+    }
+    const audioArgs = resolvedMaps.audio
+      ? ['-map', resolvedMaps.audio, '-c:a', 'aac', '-b:a', '160k']
       : ['-an']
+    const renderThreads = String(calculateFfmpegRenderThreads())
 
     return [
       '-map',
-      '0:v:0',
+      resolvedMaps.video,
       ...audioArgs,
-      ...buildH264VideoArgs({ platform: process.platform, purpose: 'export', encoder: settings.recording.videoEncoder }),
+      ...buildH264VideoArgs({
+        platform: process.platform,
+        purpose: 'export',
+        encoder: settings.recording.videoEncoder,
+        quality: settings.recording.resolutionPreset === 'native' ? 'native' : 'standard'
+      }),
+      '-threads',
+      renderThreads,
       '-r',
       String(settings.recording.frameRate),
       '-fps_mode',
@@ -925,6 +1473,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     listPath: string,
     replayPath: string,
     settings: AppSettings,
+    backend: StoredSegment['backend'],
     replayStartMs: number,
     replayEndMs: number,
     signal?: AbortSignal
@@ -934,10 +1483,18 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
 
     const startSeconds = Math.max(0, (replayStartMs - firstSession.startedAtMs) / 1000)
     const durationSeconds = Math.max(0.001, (replayEndMs - replayStartMs) / 1000)
+    const renderThreads = String(calculateFfmpegRenderThreads())
+    if (backend === 'browser') {
+      assertBrowserSessionVideoCoverage(sessionFiles, planBrowserSessionTimeline(sessionFiles))
+    }
 
     if (sessionFiles.length === 1) {
-      await runFfmpeg([
+      await executeFfmpeg([
         '-y',
+        '-threads',
+        renderThreads,
+        '-filter_threads',
+        '1',
         '-fflags',
         '+genpts',
         '-ss',
@@ -951,12 +1508,42 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       return
     }
 
-    const concatList = sessionFiles
-      .map((sessionFile) => `file '${escapeConcatPath(sessionFile.path)}'`)
-      .join('\n')
-    await writeFile(listPath, `${concatList}\n`, 'utf8')
-    await runFfmpeg([
+    if (backend === 'browser') {
+      const hasAudio = shouldConcatBrowserAudio(sessionFiles, browserAudioEnabled(settings))
+      const concatFilter = buildBrowserSessionConcatFilter({
+        sessionFiles,
+        startSeconds,
+        durationSeconds,
+        hasAudio
+      })
+      await executeFfmpeg([
+        '-y',
+        '-threads',
+        renderThreads,
+        '-filter_threads',
+        '1',
+        '-filter_complex_threads',
+        '1',
+        '-fflags',
+        '+genpts',
+        ...sessionFiles.flatMap((sessionFile) => ['-i', sessionFile.path]),
+        '-filter_complex',
+        concatFilter,
+        ...replayEncodeArgs(settings, replayPath, {
+          video: '[vout]',
+          ...(hasAudio ? { audio: '[aout]' } : {})
+        })
+      ], signal)
+      return
+    }
+
+    await writeFile(listPath, buildReplayConcatManifest(sessionFiles), 'utf8')
+    await executeFfmpeg([
       '-y',
+      '-threads',
+      renderThreads,
+      '-filter_threads',
+      '1',
       '-fflags',
       '+genpts',
       '-ss',
@@ -973,24 +1560,12 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     ], signal)
   }
 
-  const writeReplayFromSegments = async (
-    neededSegments: StoredSegment[],
-    replayPath: string,
-    settings: AppSettings,
-    replayId: string,
-    listPath: string,
-    replayStartMs: number,
-    replayEndMs: number,
-    signal?: AbortSignal
-  ): Promise<ReplayWriteResult> => {
+  const replayBackendForSegments = (neededSegments: StoredSegment[]): StoredSegment['backend'] => {
     const backend = neededSegments[0]?.backend
     if (!backend || !neededSegments.every((segment) => segment.backend === backend)) {
       throw new Error('Во время записи переключился backend записи. Дождитесь новой записи после перезапуска рекордера.')
     }
-
-    const sessionFiles = await buildSessionFiles(neededSegments, replayId)
-    await trimReplayFile(sessionFiles, listPath, replayPath, settings, replayStartMs, replayEndMs, signal)
-    return { sessionFiles, readyClip: true }
+    return backend
   }
 
   const exportReplay = async (settings: AppSettings, trade: ClosedTrade, captureTarget?: CaptureTargetRef, signal?: AbortSignal): Promise<ReplayExportResult> => {
@@ -1009,6 +1584,12 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const availableReplay = selectAvailableReplayWindow(sourceSegments, replayStartMs, replayEndMs)
 
     if (!availableReplay) {
+      const missingBeginningSeconds = firstSourceSegment
+        ? Math.max(0, (firstSourceSegment.startedAtMs - replayStartMs) / 1000)
+        : 0
+      if (missingBeginningSeconds > 0) {
+        throw new Error(`Встроенный рекордер не сохранил весь клип: отсутствует ${formatRoundedSeconds(missingBeginningSeconds)} в начале, поэтому начало сделки или отступ до входа не записаны. Оставьте окно терминала открытым.`)
+      }
       throw new Error(`Встроенный рекордер ещё не накопил видео для этой сделки. Накоплено ${formatRoundedSeconds(bufferedSeconds)}, нужно примерно ${formatRoundedSeconds(requiredSeconds)}. Оставьте окно терминала открытым.`)
     }
 
@@ -1023,14 +1604,18 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     let sessionFiles: ReplaySessionFile[] = []
 
     try {
-      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, exportReplayStartMs, exportReplayEndMs, signal)
-      sessionFiles = writeResult.sessionFiles
+      const backend = replayBackendForSegments(neededSegments)
+      sessionFiles = await buildSessionFiles(neededSegments, replayId, replaysDir)
+      await trimReplayFile(sessionFiles, listPath, replayPath, settings, backend, exportReplayStartMs, exportReplayEndMs, signal)
       const savedAt = new Date(exportReplayEndMs)
       await utimes(replayPath, savedAt, savedAt)
       return {
         replayPath,
-        readyClip: writeResult.readyClip
+        readyClip: true
       }
+    } catch (error) {
+      await rm(replayPath, { force: true }).catch(() => undefined)
+      throw error
     } finally {
       await rm(listPath, { force: true }).catch(() => undefined)
       await Promise.all(sessionFiles.filter((file) => file.cleanup).map((file) => rm(file.path, { force: true }).catch(() => undefined)))
@@ -1117,6 +1702,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
     const targetEndMs = Math.max(...intervals.map((interval) => interval.endMs ?? endedAtMs))
     const timeoutMs = Math.max(5_000, settings.recording.segmentSeconds * 2_000 + 2_000)
     let listPath = ''
+    let replayPath = ''
     let sessionFiles: ReplaySessionFile[] = []
 
     freeRecording = undefined
@@ -1134,10 +1720,11 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
       await mkdir(replaysDir, { recursive: true })
       const replayId = randomUUID()
       listPath = join(replaysDir, `${toFileTimestamp(Date.now())}-${replayId}.txt`)
-      const replayPath = await buildFreeRecordingPath(settings, finishedRecording.startedAtMs, endedAtMs)
+      replayPath = await buildFreeRecordingPath(settings, finishedRecording.startedAtMs, endedAtMs)
       await rm(replayPath, { force: true }).catch(() => undefined)
-      const writeResult = await writeReplayFromSegments(neededSegments, replayPath, settings, replayId, listPath, finishedRecording.startedAtMs, endedAtMs)
-      sessionFiles = writeResult.sessionFiles
+      const backend = replayBackendForSegments(neededSegments)
+      sessionFiles = await buildSessionFiles(neededSegments, replayId, replaysDir)
+      await trimReplayFile(sessionFiles, listPath, replayPath, settings, backend, finishedRecording.startedAtMs, endedAtMs)
       const savedAt = new Date(endedAtMs)
       await utimes(replayPath, savedAt, savedAt)
 
@@ -1149,6 +1736,9 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
         endedAtMs,
         durationSeconds
       }
+    } catch (error) {
+      if (replayPath) await rm(replayPath, { force: true }).catch(() => undefined)
+      throw error
     } finally {
       freeRecordingExportProtectedSinceMs = 0
       if (listPath) await rm(listPath, { force: true }).catch(() => undefined)
@@ -1210,6 +1800,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
 
       const startedAtMs = sanitizeSegmentTime(input.startedAtMs)
       const endedAtMs = sanitizeSegmentTime(input.endedAtMs)
+      const processId = sanitizeProcessId(input.processId)
       const sequence = Number(input.sequence)
       const data = Buffer.from(input.data)
       if (!input.sourceId || !input.sourceName || !startedAtMs || endedAtMs <= startedAtMs || data.length === 0) {
@@ -1231,6 +1822,7 @@ export const createWindowRecorderService = ({ appDataDir, isWindowSourceAvailabl
           backend: 'browser',
           sourceId: input.sourceId,
           sourceName: input.sourceName,
+          processId,
           sessionId,
           sequence: Number.isFinite(sequence) && sequence >= 0 ? Math.trunc(sequence) : 0,
           startedAtMs,

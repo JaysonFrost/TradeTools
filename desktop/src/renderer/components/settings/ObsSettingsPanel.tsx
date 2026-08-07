@@ -1,4 +1,4 @@
-import { CircleHelp, Clock3, Clapperboard, FolderOpen, Monitor, Pin, Power, Radio, RefreshCw, Trash2 } from 'lucide-react'
+import { CircleHelp, Clock3, Clapperboard, ExternalLink, FolderOpen, Link2, Monitor, Pin, Power, Radio, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
@@ -86,6 +86,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [obsPassword, setObsPassword] = useState('')
+  const [tmmApiKey, setTmmApiKey] = useState('')
+  const [tmmApiKeyConfigured, setTmmApiKeyConfigured] = useState(false)
+  const [savingTmmApiKey, setSavingTmmApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [clearingCache, setClearingCache] = useState(false)
   const [message, setMessage] = useState('')
@@ -209,6 +212,12 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     void getTradeToolsApi().recording.listVideoEncoders()
       .then(setVideoEncoderOptions)
       .catch(() => setVideoEncoderOptions([{ id: 'gpu', label: 'Видеокарта (авто)', kind: 'gpu' }, { id: 'cpu', label: 'Процессор', kind: 'cpu' }]))
+  }, [])
+
+  useEffect(() => {
+    void getTradeToolsApi().tmm.getStatus()
+      .then((status) => setTmmApiKeyConfigured(status.apiKeyConfigured))
+      .catch(() => setTmmApiKeyConfigured(false))
   }, [])
 
   useEffect(() => {
@@ -386,6 +395,43 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       setMessage(error instanceof Error ? error.message : 'Не удалось очистить кэш видео')
     } finally {
       setClearingCache(false)
+    }
+  }
+
+  const saveTmmApiKey = async () => {
+    const value = tmmApiKey.trim()
+    if (!value) {
+      setMessage('Укажите API-ключ TMM')
+      return
+    }
+
+    setSavingTmmApiKey(true)
+    try {
+      const status = await getTradeToolsApi().tmm.saveApiKey(value)
+      setTmmApiKeyConfigured(status.apiKeyConfigured)
+      setTmmApiKey('')
+      if (settings) onSaved(settings)
+      setMessage(status.sync
+        ? `TMM подключён. Найдено ссылок: ${status.sync.matchedCount} из ${status.sync.checkedCount}. Новые клипы будут связываться сразу.`
+        : 'TMM подключён. Перезапустите TradeTools один раз, чтобы запустить синхронизацию сохранённым ключом.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось сохранить API-ключ TMM')
+    } finally {
+      setSavingTmmApiKey(false)
+    }
+  }
+
+  const clearTmmApiKey = async () => {
+    setSavingTmmApiKey(true)
+    try {
+      const status = await getTradeToolsApi().tmm.clearApiKey()
+      setTmmApiKeyConfigured(status.apiKeyConfigured)
+      setTmmApiKey('')
+      setMessage('Подключение TMM отключено')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось отключить TMM')
+    } finally {
+      setSavingTmmApiKey(false)
     }
   }
 
@@ -576,7 +622,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 }}
               >
                 <option value="1440p">Оптимально 1440p</option>
-                <option value="native">Нативное</option>
+                <option value="native">Нативное 1:1, высокое качество</option>
                 <option value="1080p">Лёгкое 1080p</option>
               </select>
             </label>
@@ -646,6 +692,31 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               </span>
             </label>
           </div>
+        </section>
+
+        <section className={sectionClass}>
+          <div className={sectionTitleClass}>TraderMake.Money</div>
+          <p className={sectionHintClass}>TradeTools подбирает ближайшую запись дневника с тем же тикером. Время входа и выхода может отличаться до 30 минут, затем ссылка сохраняется внутри клипа.</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`}
+              value={tmmApiKey}
+              onChange={(event) => setTmmApiKey(event.target.value)}
+              type="password"
+              placeholder={tmmApiKeyConfigured ? 'API-ключ сохранён в Windows' : 'API-ключ TMM'}
+            />
+            <Button variant="ghost" onClick={() => void saveTmmApiKey()} disabled={savingTmmApiKey}>
+              <Link2 size={16} className="mr-2" />{savingTmmApiKey ? 'Сохраняем...' : tmmApiKeyConfigured ? 'Заменить ключ' : 'Подключить TMM'}
+            </Button>
+            {tmmApiKeyConfigured && <Button variant="ghost" onClick={() => void clearTmmApiKey()} disabled={savingTmmApiKey}>Отключить</Button>}
+          </div>
+          <Button
+            variant="ghost"
+            className="mt-3"
+            onClick={() => void getTradeToolsApi().links.openExternal('https://tradermake.money/app2/settings?modal=apiIntegrations')}
+          >
+            <ExternalLink size={16} className="mr-2" />Создать API-ключ TMM
+          </Button>
         </section>
 
         <section className={`${sectionClass} xl:col-span-2`}>

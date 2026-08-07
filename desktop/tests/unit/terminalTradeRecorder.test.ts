@@ -32,6 +32,140 @@ const waitForAssertion = async (assertion: () => void, timeoutMs = 1_500) => {
   throw lastError
 }
 
+const padDatePart = (value: number, length = 2): string => String(value).padStart(length, '0')
+
+const toTigerTradeTimestamp = (timeMs: number): string => {
+  const date = new Date(timeMs)
+  return `${padDatePart(date.getDate())}.${padDatePart(date.getMonth() + 1)}.${date.getFullYear()} ${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}:${padDatePart(date.getSeconds())}.${padDatePart(date.getMilliseconds(), 3)}`
+}
+
+const createTigerTradePositionLine = ({
+  timeMs,
+  symbol,
+  size,
+  executions,
+  account = 'BINANCE FUTURES'
+}: {
+  timeMs: number
+  symbol: string
+  size: number
+  executions: number
+  account?: string
+}): string => (
+  `${toTigerTradeTimestamp(timeMs)} Binance via TIGER.COM Broker Futures: EnqueueUserPosition: Symbol=${symbol};Account=${account};Price=1;Size=${size};Comission=0;Executions=${executions}`
+)
+
+const createVatagaPositionLine = ({
+  timeMs,
+  positionId,
+  symbol,
+  size
+}: {
+  timeMs: number
+  positionId: string
+  symbol: string
+  size: number
+}): string => JSON.stringify({
+  '@t': new Date(timeMs).toISOString(),
+  '@mt': 'Position changed.',
+  Type: 'Trading',
+  ExchangeType: 'Binance',
+  PositionID: positionId,
+  SymbolTitle: `Binance/${symbol}`,
+  IsClosed: size === 0,
+  PositionQuantity: size,
+  TradeTime: new Date(timeMs).toISOString(),
+  TradeSide: size < 0 ? 'Sell' : 'Buy',
+  ProcessId: 39336
+})
+
+const runCrossSourcePair = async ({
+  tigerSymbol,
+  vatagaSymbol,
+  tigerEntryTimeMs,
+  tigerExitTimeMs,
+  vatagaEntryTimeMs,
+  vatagaExitTimeMs,
+  afterTigerClip
+}: {
+  tigerSymbol: string
+  vatagaSymbol: string
+  tigerEntryTimeMs: number
+  tigerExitTimeMs: number
+  vatagaEntryTimeMs: number
+  vatagaExitTimeMs: number
+  afterTigerClip?: () => void
+}): Promise<ClosedTrade[]> => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-cross-source-'))
+  const appDataDir = join(rootDir, 'AppData')
+  const tigerLogsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+  const vatagaLogsDir = join(appDataDir, 'Vataga', 'Vataga.terminal', 'Logs')
+  const tigerLogPath = join(tigerLogsDir, 'WorkLog_18.06.2026.log')
+  const vatagaLogPath = join(vatagaLogsDir, 'log-20260618.clef')
+  await mkdir(tigerLogsDir, { recursive: true })
+  await mkdir(vatagaLogsDir, { recursive: true })
+  await writeFile(tigerLogPath, '', 'utf8')
+  await writeFile(vatagaLogPath, '', 'utf8')
+
+  const defaultSettings = createDefaultSettings(rootDir)
+  const settings = {
+    ...defaultSettings,
+    tradeSource: {
+      ...defaultSettings.tradeSource,
+      mode: 'terminal-window' as const
+    }
+  }
+  const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+  const ensureVideoRecordingReady = vi.fn(async () => true)
+  const watcher = createTerminalTradeWatcher({
+    getSettings: async () => settings,
+    ensureVideoRecordingReady,
+    protectSince: vi.fn(),
+    createClipForClosedTrade,
+    env: { APPDATA: appDataDir },
+    pollIntervalMs: 20
+  })
+
+  try {
+    watcher.start()
+    await waitForAssertion(() => {
+      expect(watcher.getStatus().availableSources).toEqual(['vataga', 'tigertrade'])
+    })
+    await appendFile(tigerLogPath, [
+      createTigerTradePositionLine({ timeMs: tigerEntryTimeMs, symbol: tigerSymbol, size: 1, executions: 1 }),
+      createTigerTradePositionLine({ timeMs: tigerExitTimeMs, symbol: tigerSymbol, size: 0, executions: 2 })
+    ].join('\n') + '\n', 'utf8')
+    await waitForAssertion(() => {
+      expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+    })
+
+    afterTigerClip?.()
+    await appendFile(vatagaLogPath, [
+      createVatagaPositionLine({
+        timeMs: vatagaEntryTimeMs,
+        positionId: 'vataga-cross-source',
+        symbol: vatagaSymbol,
+        size: 1
+      }),
+      createVatagaPositionLine({
+        timeMs: vatagaExitTimeMs,
+        positionId: 'vataga-cross-source',
+        symbol: vatagaSymbol,
+        size: 0
+      })
+    ].join('\n') + '\n', 'utf8')
+    await waitForAssertion(() => {
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(2)
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+    })
+    await sleep(40)
+    return createClipForClosedTrade.mock.calls.map((call) => call[0])
+  } finally {
+    watcher.stop()
+    await rm(rootDir, { recursive: true, force: true })
+  }
+}
+
 describe('terminalTradeRecorder', () => {
   it('uses the Vataga terminal update timestamp for recording boundaries', () => {
     const event = parseVatagaPositionEvent(JSON.stringify({
@@ -535,6 +669,236 @@ describe('terminalTradeRecorder', () => {
     }
   })
 
+  it('replays currently open TigerTrade and Vataga positions once when recording turns on', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-boundary-replay-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const tigerLogsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const vatagaLogsDir = join(appDataDir, 'Vataga', 'Vataga.terminal', 'Logs')
+    const tigerLogPath = join(tigerLogsDir, 'WorkLog_15.06.2026.log')
+    const vatagaLogPath = join(vatagaLogsDir, 'log-20260615.clef')
+    const tigerEntryTimeMs = new Date(2026, 5, 15, 10, 0, 0).getTime()
+    const vatagaEntryTimeMs = new Date(2026, 5, 15, 10, 1, 0).getTime()
+    const recordingBoundaryMs = new Date(2026, 5, 15, 10, 5, 0).getTime()
+    let recordingStartedAtMs = 0
+
+    await mkdir(tigerLogsDir, { recursive: true })
+    await mkdir(vatagaLogsDir, { recursive: true })
+    await writeFile(tigerLogPath, [
+      `${toTigerTradeTimestamp(tigerEntryTimeMs)} Binance via TIGER.COM Broker Futures: EnqueueExecution: ExecutionID=1;OrderID=1;Symbol=BEATUSDT;Account=BINANCE FUTURES;Time=${toTigerTradeTimestamp(tigerEntryTimeMs)};Price=1;Quantity=1;Side=Buy`,
+      createTigerTradePositionLine({ timeMs: tigerEntryTimeMs, symbol: 'BEATUSDT', size: 1, executions: 1 })
+    ].join('\n') + '\n', 'utf8')
+    await writeFile(vatagaLogPath, createVatagaPositionLine({
+      timeMs: vatagaEntryTimeMs,
+      positionId: 'vataga-open',
+      symbol: 'HEIUSDT',
+      size: 2
+    }) + '\n', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const ensureVideoRecordingReady = vi.fn(async () => true)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toEqual(['vataga', 'tigertrade'])
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+
+      recordingStartedAtMs = recordingBoundaryMs
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(2)
+        expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(2)
+      })
+      await sleep(80)
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(2)
+
+      const tigerExitTimeMs = new Date(2026, 5, 15, 10, 6, 0).getTime()
+      const vatagaExitTimeMs = new Date(2026, 5, 15, 10, 7, 0).getTime()
+      await appendFile(tigerLogPath, createTigerTradePositionLine({
+        timeMs: tigerExitTimeMs,
+        symbol: 'BEATUSDT',
+        size: 0,
+        executions: 2
+      }) + '\n', 'utf8')
+      await appendFile(vatagaLogPath, createVatagaPositionLine({
+        timeMs: vatagaExitTimeMs,
+        positionId: 'vataga-open',
+        symbol: 'HEIUSDT',
+        size: 0
+      }) + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(2)
+      })
+      expect(createClipForClosedTrade.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          symbol: 'BEATUSDT',
+          entryTimeMs: recordingBoundaryMs,
+          exitTimeMs: tigerExitTimeMs
+        }),
+        expect.objectContaining({
+          symbol: 'HEIUSDT',
+          entryTimeMs: recordingBoundaryMs,
+          exitTimeMs: vatagaExitTimeMs
+        })
+      ]))
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('suppresses a cold-buffer position until close and records the next ready trade', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-buffer-warming-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_15.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const settings = {
+      ...defaultSettings,
+      tradeSource: {
+        ...defaultSettings.tradeSource,
+        mode: 'terminal-window' as const
+      }
+    }
+    const target = { id: 'window:tiger-beat', name: 'Tiger.com - BEATUSDT', type: 'window' as const }
+    let videoReady = false
+    const ensureVideoRecordingReady = vi.fn(async () => videoReady)
+    const resolveRecordingTarget = vi.fn(async () => target)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const onStatusChange = vi.fn()
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      resolveRecordingTarget,
+      onStatusChange,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    const skippedEntryTimeMs = new Date(2026, 5, 15, 10, 0, 0).getTime()
+    const skippedScaleTimeMs = skippedEntryTimeMs + 5_000
+    const skippedExitTimeMs = skippedEntryTimeMs + 10_000
+    const recordedEntryTimeMs = skippedEntryTimeMs + 20_000
+    const recordedExitTimeMs = skippedEntryTimeMs + 30_000
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('tigertrade')
+      })
+
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: skippedEntryTimeMs,
+        symbol: 'BEATUSDT',
+        size: -1,
+        executions: 1
+      }) + '\n', 'utf8')
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+        expect(watcher.getStatus().message).toContain('видеобуфер')
+      })
+      expect(ensureVideoRecordingReady).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ symbol: 'BEATUSDT', eventTimeMs: skippedEntryTimeMs }),
+        target
+      )
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: skippedScaleTimeMs,
+        symbol: 'BEATUSDT',
+        size: -2,
+        executions: 2
+      }) + '\n', 'utf8')
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().lastEventAtMs).toBe(skippedScaleTimeMs)
+      })
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+      expect(resolveRecordingTarget).toHaveBeenCalledTimes(1)
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: skippedExitTimeMs,
+        symbol: 'BEATUSDT',
+        size: 0,
+        executions: 3
+      }) + '\n', 'utf8')
+      await sleep(80)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+
+      videoReady = true
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: recordedEntryTimeMs,
+        symbol: 'BEATUSDT',
+        size: 1,
+        executions: 4
+      }) + '\n', 'utf8')
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(2)
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+      expect(resolveRecordingTarget).toHaveBeenCalledTimes(2)
+
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: recordedExitTimeMs,
+        symbol: 'BEATUSDT',
+        size: 0,
+        executions: 5
+      }) + '\n', 'utf8')
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'BEATUSDT',
+        side: 'LONG',
+        entryTimeMs: recordedEntryTimeMs,
+        exitTimeMs: recordedExitTimeMs,
+        recordingTarget: target
+      })
+      expect(onStatusChange.mock.calls.some(([nextStatus]) => (
+        typeof nextStatus?.message === 'string' && nextStatus.message.includes('эту сделку пропускаем')
+      ))).toBe(true)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps an active terminal trade when background recording restarts', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('MetaScalp offline')
@@ -556,11 +920,12 @@ describe('terminalTradeRecorder', () => {
       }
     }
     let recordingStartedAtMs = new Date(2026, 5, 15, 10, 0, 0).getTime()
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
     const watcher = createTerminalTradeWatcher({
       getSettings: async () => settings,
       ensureVideoRecordingReady: async () => true,
       protectSince: vi.fn(),
-      createClipForClosedTrade: vi.fn(async (_trade: ClosedTrade) => undefined),
+      createClipForClosedTrade,
       getRecordingStartedAtMs: () => recordingStartedAtMs,
       env: { APPDATA: appDataDir },
       pollIntervalMs: 20
@@ -585,6 +950,23 @@ describe('terminalTradeRecorder', () => {
 
       expect(watcher.getStatus().activeTradeCount).toBe(1)
       expect(watcher.getStatus().message).toContain('SKYAIUSDT')
+
+      const exitTimeMs = new Date(2026, 5, 15, 10, 2, 0).getTime()
+      await appendFile(logPath, createTigerTradePositionLine({
+        timeMs: exitTimeMs,
+        symbol: 'SKYAIUSDT',
+        size: 0,
+        executions: 2
+      }) + '\n', 'utf8')
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'SKYAIUSDT',
+        entryTimeMs: new Date(2026, 5, 15, 10, 0, 10).getTime(),
+        exitTimeMs
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0].entryTimeMs).not.toBe(exitTimeMs)
     } finally {
       watcher.stop()
       vi.unstubAllGlobals()
@@ -846,6 +1228,248 @@ describe('terminalTradeRecorder', () => {
         entryTimeMs: Date.parse('2026-06-15T10:00:00.000Z'),
         exitTimeMs: Date.parse('2026-06-15T10:00:30.000Z')
       })
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('suppresses only the same recent trade reported by another terminal', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+    const entryTimeMs = new Date(2026, 5, 18, 10, 0, 0).getTime()
+    const exitTimeMs = entryTimeMs + 5_000
+
+    try {
+      const clips = await runCrossSourcePair({
+        tigerSymbol: 'BEATUSDT',
+        vatagaSymbol: 'BEATUSDT',
+        tigerEntryTimeMs: entryTimeMs,
+        tigerExitTimeMs: exitTimeMs,
+        vatagaEntryTimeMs: entryTimeMs + 500,
+        vatagaExitTimeMs: exitTimeMs + 500
+      })
+      expect(clips).toHaveLength(1)
+      expect(clips[0]).toMatchObject({ symbol: 'BEATUSDT', entryTimeMs, exitTimeMs })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not deduplicate different symbols reported by different terminals', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+    const entryTimeMs = new Date(2026, 5, 18, 10, 10, 0).getTime()
+    const exitTimeMs = entryTimeMs + 5_000
+
+    try {
+      const clips = await runCrossSourcePair({
+        tigerSymbol: 'BEATUSDT',
+        vatagaSymbol: 'HEIUSDT',
+        tigerEntryTimeMs: entryTimeMs,
+        tigerExitTimeMs: exitTimeMs,
+        vatagaEntryTimeMs: entryTimeMs,
+        vatagaExitTimeMs: exitTimeMs
+      })
+      expect(clips.map((trade) => trade.symbol)).toEqual(['BEATUSDT', 'HEIUSDT'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not deduplicate cross-source trades more than one second apart', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+    const entryTimeMs = new Date(2026, 5, 18, 10, 20, 0).getTime()
+    const exitTimeMs = entryTimeMs + 5_000
+
+    try {
+      const clips = await runCrossSourcePair({
+        tigerSymbol: 'BEATUSDT',
+        vatagaSymbol: 'BEATUSDT',
+        tigerEntryTimeMs: entryTimeMs,
+        tigerExitTimeMs: exitTimeMs,
+        vatagaEntryTimeMs: entryTimeMs + 1_001,
+        vatagaExitTimeMs: exitTimeMs + 1_001
+      })
+      expect(clips).toHaveLength(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('expires cross-source duplicate fingerprints after sixty seconds', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+    const realNow = Date.now.bind(Date)
+    let nowOffsetMs = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + nowOffsetMs)
+    const entryTimeMs = new Date(2026, 5, 18, 10, 30, 0).getTime()
+    const exitTimeMs = entryTimeMs + 5_000
+
+    try {
+      const clips = await runCrossSourcePair({
+        tigerSymbol: 'BEATUSDT',
+        vatagaSymbol: 'BEATUSDT',
+        tigerEntryTimeMs: entryTimeMs,
+        tigerExitTimeMs: exitTimeMs,
+        vatagaEntryTimeMs: entryTimeMs,
+        vatagaExitTimeMs: exitTimeMs,
+        afterTigerClip: () => {
+          nowOffsetMs = 60_001
+        }
+      })
+      expect(clips).toHaveLength(2)
+    } finally {
+      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not deduplicate nearby trades from the same source', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-same-source-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_18.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => createDefaultSettings(rootDir),
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+    const entryTimeMs = new Date(2026, 5, 18, 10, 40, 0).getTime()
+    const exitTimeMs = entryTimeMs + 5_000
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('tigertrade')
+      })
+      await appendFile(logPath, [
+        createTigerTradePositionLine({
+          timeMs: entryTimeMs,
+          symbol: 'BEATUSDT',
+          size: 1,
+          executions: 1,
+          account: 'BINANCE FUTURES'
+        }),
+        createTigerTradePositionLine({
+          timeMs: entryTimeMs + 500,
+          symbol: 'BEATUSDT',
+          size: 2,
+          executions: 1,
+          account: 'BINANCE SPOT'
+        }),
+        createTigerTradePositionLine({
+          timeMs: exitTimeMs,
+          symbol: 'BEATUSDT',
+          size: 0,
+          executions: 2,
+          account: 'BINANCE FUTURES'
+        }),
+        createTigerTradePositionLine({
+          timeMs: exitTimeMs + 500,
+          symbol: 'BEATUSDT',
+          size: 0,
+          executions: 2,
+          account: 'BINANCE SPOT'
+        })
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(2)
+      })
+      expect(createClipForClosedTrade.mock.calls.map((call) => call[0].entryTimeMs)).toEqual([
+        entryTimeMs,
+        entryTimeMs + 500
+      ])
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps overlapping symbols as independent clips with their own targets and times', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-terminal-overlapping-symbols-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const logsDir = join(appDataDir, 'TigerTrade', '4.1', 'Data', 'Logs')
+    const logPath = join(logsDir, 'WorkLog_17.06.2026.log')
+    await mkdir(logsDir, { recursive: true })
+    await writeFile(logPath, '', 'utf8')
+
+    const defaultSettings = createDefaultSettings(rootDir)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const beatTarget = { id: 'window:tiger-beat', name: 'TigerTrade BEATUSDT', type: 'window' as const }
+    const heiTarget = { id: 'window:tiger-hei', name: 'TigerTrade HEIUSDT', type: 'window' as const }
+    const resolveRecordingTarget = vi.fn(async (event: { symbol: string }) => (
+      event.symbol === 'BEATUSDT' ? beatTarget : heiTarget
+    ))
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => defaultSettings,
+      ensureVideoRecordingReady: async () => true,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      resolveRecordingTarget,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    const beatEntryTimeMs = new Date(2026, 5, 17, 10, 0, 0).getTime()
+    const heiEntryTimeMs = new Date(2026, 5, 17, 10, 0, 5).getTime()
+    const heiExitTimeMs = new Date(2026, 5, 17, 10, 0, 30).getTime()
+    const beatExitTimeMs = new Date(2026, 5, 17, 10, 0, 40).getTime()
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('tigertrade')
+      })
+      await appendFile(logPath, [
+        createTigerTradePositionLine({ timeMs: beatEntryTimeMs, symbol: 'BEATUSDT', size: 4, executions: 1 }),
+        createTigerTradePositionLine({ timeMs: heiEntryTimeMs, symbol: 'HEIUSDT', size: -8, executions: 1 }),
+        createTigerTradePositionLine({ timeMs: heiExitTimeMs, symbol: 'HEIUSDT', size: 0, executions: 2 }),
+        createTigerTradePositionLine({ timeMs: beatExitTimeMs, symbol: 'BEATUSDT', size: 0, executions: 2 })
+      ].join('\n') + '\n', 'utf8')
+
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(2)
+      })
+      expect(createClipForClosedTrade.mock.calls.map((call) => call[0])).toMatchObject([
+        {
+          symbol: 'HEIUSDT',
+          side: 'SHORT',
+          entryTimeMs: heiEntryTimeMs,
+          exitTimeMs: heiExitTimeMs,
+          recordingTarget: heiTarget
+        },
+        {
+          symbol: 'BEATUSDT',
+          side: 'LONG',
+          entryTimeMs: beatEntryTimeMs,
+          exitTimeMs: beatExitTimeMs,
+          recordingTarget: beatTarget
+        }
+      ])
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
     } finally {
       watcher.stop()
       vi.unstubAllGlobals()

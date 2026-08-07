@@ -71,6 +71,19 @@ describe('secretStore', () => {
     expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
   })
 
+  it('stores the TMM API key in keychain instead of settings', async () => {
+    const adapter = createAdapter()
+    const store = createSecretStore(adapter)
+
+    await store.setTmmApiKey('tmm-secret')
+    await expect(store.getTmmApiKey()).resolves.toBe('secret')
+    await expect(store.clearTmmApiKey()).resolves.toBe(true)
+
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key', 'tmm-secret')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key')
+    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key')
+  })
+
   it('stores proxy passwords by proxy id without exposing them through settings', async () => {
     const adapter = createAdapter()
     const store = createSecretStore(adapter)

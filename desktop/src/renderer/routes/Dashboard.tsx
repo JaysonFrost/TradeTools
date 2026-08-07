@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, FileText, FolderOpen, ListX, Pause, Play, RefreshCw, Square, Trash2, Video, XCircle } from 'lucide-react'
+import { Copy, FileText, FolderOpen, ListX, Pause, Play, RefreshCw, Search, Square, Trash2, Video, X, XCircle } from 'lucide-react'
 import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
@@ -15,7 +15,7 @@ import { WindowRecorderController } from '../components/recording/WindowRecorder
 import { SystemSettingsPanel } from '../components/settings/SystemSettingsPanel'
 import { SupportDeveloperPage } from '../components/support/SupportDeveloperPage'
 import { ClipCard } from '../components/trade/ClipCard'
-import { getClipDayGroups, getClipsForDate, getClipsForPeriod, type ClipSortDirection, type ClipSortKey } from '../lib/clipList'
+import { filterClips, getClipDayGroups, getClipsForDate, getClipsForPeriod, type ClipSortDirection, type ClipSortKey } from '../lib/clipList'
 import type { AppPage } from '../lib/navigation'
 import { getTradeToolsApi } from '../lib/tradeToolsApi'
 import type { ProxyChainSetupProgress } from '../../preload'
@@ -329,12 +329,14 @@ type ClipQueueSectionProps = Pick<VideoPageProps,
 const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage }: ClipQueueSectionProps) => {
   const [selectedClipPaths, setSelectedClipPaths] = useState<Set<string>>(new Set())
   const [customDate, setCustomDate] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [sort, setSort] = useState<ClipSortKey>('date')
   const [sortDirection, setSortDirection] = useState<ClipSortDirection>('desc')
   const [deletingSelected, setDeletingSelected] = useState(false)
-  const groups = useMemo(() => getClipDayGroups(clips, sort, sortDirection), [clips, sort, sortDirection])
+  const filteredClips = useMemo(() => filterClips(clips, searchQuery), [clips, searchQuery])
+  const groups = useMemo(() => getClipDayGroups(filteredClips, sort, sortDirection), [filteredClips, sort, sortDirection])
   const selectedClips = useMemo(() => clips.filter((clip) => selectedClipPaths.has(clip.metadataPath)), [clips, selectedClipPaths])
-  const allSelected = clips.length > 0 && selectedClips.length === clips.length
+  const allVisibleSelected = filteredClips.length > 0 && filteredClips.every((clip) => selectedClipPaths.has(clip.metadataPath))
 
   useEffect(() => {
     const availablePaths = new Set(clips.map((clip) => clip.metadataPath))
@@ -381,41 +383,68 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
     }
   }
 
-  const selectionButtonClass = 'inline-flex min-h-9 cursor-pointer items-center rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50'
+  const selectionButtonClass = 'inline-flex min-h-8 cursor-pointer items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-[11px] font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
     <section className="col-span-12">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
-          <p className="mt-1 text-xs text-zinc-500">Выберите нужные видео, чтобы удалить только их. Очистить — убрать из списка, удалить — стереть с диска.</p>
+          <p className="mt-1 text-xs text-zinc-500">Выберите нужные видео, чтобы удалить только их. «Очистить» убирает из списка, «Удалить файл» стирает с диска.</p>
           {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
-          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08]" onClick={onOpenClipFolder} type="button">
-            <FolderOpen size={16} className="mr-2" />Открыть папку с видео
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10" onClick={onOpenClipFolder} type="button">
+            <FolderOpen size={14} className="mr-1.5" />Открыть папку
           </button>
-          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
-            <ListX size={16} className="mr-2" />Очистить очередь
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
+            <ListX size={14} className="mr-1.5" />Убрать все из списка
           </button>
-          <button className="inline-flex cursor-pointer items-center whitespace-nowrap rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
-            <Trash2 size={16} className="mr-2" />Удалить все файлы
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
+            <Trash2 size={14} className="mr-1.5" />Удалить все видео
           </button>
         </div>
       </div>
       <div className="mb-3 rounded-3xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <label className="relative min-w-0 flex-1">
+            <span className="sr-only">Поиск по пути, имени, тикеру или дате</span>
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <input
+              className="min-h-10 w-full rounded-xl border border-white/10 bg-black/25 py-2 pl-9 pr-10 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-violet-400/40 focus:bg-black/35 focus:ring-2 focus:ring-violet-500/10"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Поиск по пути, имени, тикеру или дате"
+              aria-label="Поиск по пути, имени, тикеру или дате"
+              spellCheck={false}
+              type="text"
+            />
+            {searchQuery && (
+              <button
+                className="absolute right-2 top-1/2 inline-flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-zinc-500 transition hover:bg-white/[0.07] hover:text-zinc-200"
+                onClick={() => setSearchQuery('')}
+                aria-label="Очистить поиск"
+                title="Очистить поиск"
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
+          <span className="shrink-0 text-xs text-zinc-500">Найдено <span className="font-semibold text-zinc-200">{filteredClips.length}</span> из {clips.length}</span>
+        </div>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <button className={selectionButtonClass} onClick={() => selectClips(allSelected ? [] : clips)} disabled={clips.length === 0} type="button">
-              {allSelected ? 'Снять выбор' : 'Выбрать все'}
+            <button className={selectionButtonClass} onClick={() => selectClips(allVisibleSelected ? [] : filteredClips)} disabled={filteredClips.length === 0} type="button">
+              {allVisibleSelected ? 'Снять выбор' : 'Выбрать все'}
             </button>
-            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'day'))} disabled={clips.length === 0} type="button">Выбрать сегодня</button>
-            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'week'))} disabled={clips.length === 0} type="button">Выбрать неделю</button>
-            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(clips, 'month'))} disabled={clips.length === 0} type="button">Выбрать месяц</button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'day'))} disabled={filteredClips.length === 0} type="button">Выбрать сегодня</button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'week'))} disabled={filteredClips.length === 0} type="button">Выбрать неделю</button>
+            <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'month'))} disabled={filteredClips.length === 0} type="button">Выбрать месяц</button>
             <label className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-2 text-xs text-zinc-400">
               <span className="sr-only">Отдельная дата</span>
               <input className="bg-transparent text-xs text-zinc-100 outline-none [color-scheme:dark]" value={customDate} onChange={(event) => setCustomDate(event.target.value)} type="date" />
-              <button className="font-semibold text-violet-200 disabled:opacity-50" onClick={() => selectClips(getClipsForDate(clips, customDate))} disabled={!customDate} type="button">Выбрать дату</button>
+              <button className="font-semibold text-violet-200 disabled:opacity-50" onClick={() => selectClips(getClipsForDate(filteredClips, customDate))} disabled={!customDate || filteredClips.length === 0} type="button">Выбрать дату</button>
             </label>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -438,14 +467,14 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
         </div>
       </div>
       {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
-      <div className="max-h-[560px] space-y-5 overflow-y-auto pr-1">
+      <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
         {groups.length > 0 ? groups.map((group) => (
           <section key={group.key} aria-label={`Видео за ${group.label}`}>
             <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-[#111216]/95 py-1 backdrop-blur">
               <h3 className="m-0 capitalize text-sm font-semibold text-zinc-300">{group.label}</h3>
               <span className="text-xs text-zinc-500">{group.clips.length}</span>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {group.clips.map((clip) => (
                 <ClipCard
                   key={clip.id}
@@ -458,7 +487,9 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
               ))}
             </div>
           </section>
-        )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Пока нет клипов в очереди.</div>}
+        )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
+          {clips.length > 0 && searchQuery.trim() ? 'По запросу ничего не найдено.' : 'Пока нет клипов в очереди.'}
+        </div>}
       </div>
     </section>
   )
@@ -951,7 +982,13 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       unsubscribeProxyCheck = api.proxies.onConfigureChainProgress((progress) => appendProxyProgress('check', progress))
       unsubscribeProxySetup = api.proxies.onSetupChainProgress((progress) => appendProxyProgress('connect', progress))
       unsubscribeRecordingEnsure = api.recording.onEnsureWindowRecording(() => {
-        if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })
+        if (!backgroundRecordingEnabledRef.current) return
+        void api.settings.get()
+          .then((nextSettings) => {
+            setSettings(nextSettings)
+            setRecordingEnsureKey((current) => current + 1)
+          })
+          .catch(() => undefined)
       })
     } catch {
       // loadLocalState already surfaces Electron API errors.

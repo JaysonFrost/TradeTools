@@ -37,6 +37,29 @@ const ignoredWindowPatterns = [
   /devtools/i
 ]
 
+const autoRecordedTerminalNamePatterns = [
+  /vataga/i,
+  /ватага/i,
+  /tiger(?:\.trade|trade)?/i,
+  /тигр/i,
+  /metascalp/i
+]
+
+export const isAutoRecordedTerminalSource = (source: WindowCaptureSource): boolean => (
+  source.type === 'window' &&
+  !ignoredWindowPatterns.some((pattern) => pattern.test(source.name)) &&
+  autoRecordedTerminalNamePatterns.some((pattern) => pattern.test(source.name))
+)
+
+export const findAutoRecordedTerminalSources = (sources: WindowCaptureSource[]): WindowCaptureSource[] => {
+  const sourceIds = new Set<string>()
+  return sources.filter((source) => {
+    if (!isAutoRecordedTerminalSource(source) || sourceIds.has(source.id)) return false
+    sourceIds.add(source.id)
+    return true
+  })
+}
+
 const scoreTerminalSource = (source: WindowCaptureSource): number => {
   if (source.type !== 'window') return 0
   if (ignoredWindowPatterns.some((pattern) => pattern.test(source.name))) return -100

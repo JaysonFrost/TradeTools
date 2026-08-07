@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createSimulatedClosedTrade, planSimulatedClip } from '../../src/main/services/trades/simulatedTradePipeline'
+import { calculateFfmpegRenderThreads } from '../../src/main/services/video/ffmpegCommand'
 
 describe('simulatedTradePipeline', () => {
   it('creates a deterministic closed trade for local pipeline tests', () => {
@@ -22,10 +23,15 @@ describe('simulatedTradePipeline', () => {
       paddingAfterSeconds: 5,
       trade
     })
+    const renderThreads = String(calculateFfmpegRenderThreads())
 
     expect(plan.videoPath).toContain('BTCUSDT Binance 13.05.26 03-49-21.mp4')
     expect(plan.ffmpegArgs).toEqual([
       '-y',
+      '-threads',
+      renderThreads,
+      '-filter_threads',
+      '1',
       '-fflags',
       '+genpts',
       '-ss',
@@ -46,6 +52,8 @@ describe('simulatedTradePipeline', () => {
       '18',
       '-pix_fmt',
       'yuv420p',
+      '-threads',
+      renderThreads,
       '-fps_mode',
       'cfr',
       '-c:a',

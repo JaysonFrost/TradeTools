@@ -31,6 +31,35 @@ describe('main app lifecycle', () => {
     expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
   })
 
+  it('loads Windows capture metadata in one non-blocking background process', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const metadataSource = source.slice(
+      source.indexOf('type DesktopCaptureSource ='),
+      source.indexOf('const toCaptureTargetRef =')
+    )
+
+    expect(metadataSource).toContain('windowMetadataEnrichmentPromise')
+    expect(metadataSource).toContain('pendingWindowMetadataIds')
+    expect(metadataSource).toContain('windowMetadataCacheMs')
+    expect(metadataSource.match(/spawn\('powershell\.exe'/g)).toHaveLength(1)
+    expect(metadataSource.match(/Add-Type \$source/g)).toHaveLength(1)
+    expect(metadataSource).not.toContain("spawnSync('powershell.exe'")
+    expect(metadataSource).not.toContain('GetForegroundWindow')
+  })
+
+  it('returns and caches base capture sources without awaiting Windows metadata', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const listSource = source.slice(
+      source.indexOf('const listWindowCaptureSources ='),
+      source.indexOf('const toCaptureTargetRef =')
+    )
+
+    expect(listSource).toContain('scheduleWindowMetadataEnrichment(windowIds)')
+    expect(listSource).not.toContain('await listWindowMetadata')
+    expect(listSource.indexOf('windowCaptureSourcesCache =')).toBeLessThan(listSource.indexOf('scheduleWindowMetadataEnrichment(windowIds)'))
+    expect(listSource.indexOf('scheduleWindowMetadataEnrichment(windowIds)')).toBeLessThan(listSource.lastIndexOf('return mappedSources'))
+  })
+
   it('passes video readiness into the automatic terminal trade watcher', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
@@ -46,23 +75,70 @@ describe('main app lifecycle', () => {
 
     expect(source).toContain('let backgroundWindowRecordingEnabled = true')
     expect(source).toContain('let backgroundWindowRecordingStartedAtMs = 0')
+    expect(source).toContain('const browserRecordingStartedBySourceId = new Map')
     expect(source).toContain('if (!backgroundWindowRecordingEnabled) return false')
     expect(source).toContain('backgroundWindowRecordingEnabled = true')
-    expect(source).toContain('backgroundWindowRecordingStartedAtMs = Date.now()')
     expect(source).toContain('backgroundWindowRecordingEnabled = false')
     expect(source).toContain('backgroundWindowRecordingStartedAtMs = 0')
+    expect(source).toContain('browserRecordingStartedBySourceId.clear()')
     expect(source).toContain('notifyWindowRecordingNeeded')
     expect(source).toContain("webContents.send('recording:ensure-window')")
     expect(source).toContain('await windowRecorderService.start(settings)')
-    expect(source).toContain('started.fallbackRequired')
+    expect(source).toContain('if (status.fallbackRequired) return false')
   })
 
-  it('restarts built-in recording when the recorder status asks for recovery', async () => {
+  it('only reports browser recording ready when the target has the full pre-trade padding', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('if (!status.active || status.fallbackRequired)')
+    expect(source).toContain('const browserRecordingStartedAtMs = (target?: CaptureTargetRef)')
+    expect(source).toContain('recordingSourceMatchesTarget(started, target)')
+    expect(source).toContain("if (settings.recording.sourceType === 'window' && !recordingTarget)")
+    expect(source).toContain('const requiredStartMs = event.eventTimeMs - settings.clip.paddingBeforeSeconds * 1000')
+    expect(source).toContain('return browserStartedAtMs <= requiredStartMs')
     expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('if (status.fallbackRequired) return false')
     expect(source).toContain('await windowRecorderService.start(settings)')
+  })
+
+  it('does not reuse a configured window when terminal source selection is ambiguous', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const resolverSource = source.slice(
+      source.indexOf('const resolveTerminalRecordingTarget ='),
+      source.indexOf('const terminalTradeWatcher =')
+    )
+
+    expect(resolverSource).toContain('Terminal capture window not found; skipping trade until its window is available')
+    expect(resolverSource).toContain('return undefined')
+    expect(resolverSource).not.toContain('const fallback = configuredCaptureTargets')
+    expect(resolverSource).not.toContain('using configured capture target')
+  })
+
+  it('sets the logical recording boundary from an actual browser recorder start signal', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain("ipcMain.handle('recording:browser-started'")
+    expect(source).toContain('browserRecordingStartedBySourceId.set(sourceId')
+    expect(source).toContain('refreshBackgroundRecordingStartedAtMs()')
+    const recordingStartHandler = source.slice(
+      source.indexOf("ipcMain.handle('recording:start'"),
+      source.indexOf("ipcMain.handle('recording:clear-cache'")
+    )
+    expect(recordingStartHandler).toContain("started.backend === 'ffmpeg'")
+    expect(recordingStartHandler).not.toContain("started.backend === 'browser'")
+  })
+
+  it('does not invent a browser recording boundary after clearing the video cache', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const clearCacheHandler = source.slice(
+      source.indexOf("ipcMain.handle('recording:clear-cache'"),
+      source.indexOf("ipcMain.handle('recording:free-start'")
+    )
+
+    expect(clearCacheHandler).toContain('browserRecordingStartedBySourceId.clear()')
+    expect(clearCacheHandler).toContain('nativeRecordingStartedAtMs = 0')
+    expect(clearCacheHandler).toContain("started.backend === 'ffmpeg'")
+    expect(clearCacheHandler).toContain('notifyWindowRecordingNeeded()')
+    expect(clearCacheHandler).not.toContain('backgroundWindowRecordingStartedAtMs = Date.now()')
   })
 
   it('routes macOS system audio through display media loopback into the selected capture source', async () => {
@@ -156,13 +232,15 @@ describe('main app lifecycle', () => {
     expect(source).not.toContain('Terminal trade display matched screen capture target')
   })
 
-  it('updates built-in window recording targets when a terminal trade comes from another window', async () => {
+  it('reconciles a trade window without replacing the global recording target', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('resolveTerminalRecordingTarget')
-    expect(source).toContain('nextCaptureTargets')
+    expect(source).toContain('knownTerminalRecordingTargetIds')
+    expect(source).toContain('captureTargets: [...targets, target]')
     expect(source).toContain('notifyWindowRecordingNeeded()')
-    expect(source).toContain('captureTargets: nextCaptureTargets')
+    expect(source).not.toContain('nextCaptureTargets')
+    expect(source).not.toContain('captureTargets: nextCaptureTargets')
   })
 
   it('can cancel queued and active clip render jobs', async () => {
@@ -304,18 +382,23 @@ describe('main app lifecycle', () => {
     expect(xraySource).toContain('await stopLocalXrayRuntime(input.localPort, input.appDataDir)')
   })
 
-  it('starts the saved local proxy before opening the TradeTools window', async () => {
+  it('opens TradeTools and starts terminal watching without waiting for proxy recovery', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('const proxyAutostartRetryDelaysMs = [0, 5_000, 15_000]')
     expect(source).toContain('for (const delayMs of proxyAutostartRetryDelaysMs)')
     expect(source).toContain("appLog.error('proxy-autostart', 'Автозапуск proxy не удался, будет повтор'")
-    expect(source).toContain('void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady, initialProxyDelayMs)')
+    expect(source).toContain('void startStoredProxyRuntimeWithRetries(settings, undefined, initialProxyDelayMs)')
     expect(source).toContain("appLog.info('proxy-autostart', 'Сохранённый proxy запущен'")
     const autostartSource = source.slice(source.indexOf('const startStoredProxyRuntime ='), source.indexOf('const focusMainWindow ='))
     expect(autostartSource).not.toContain('clearProxyRuntimeConfig')
-    expect(source).toContain('await Promise.race([')
-    expect(source.indexOf('void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady, initialProxyDelayMs)')).toBeLessThan(source.lastIndexOf('createMainWindow()'))
+    const startAppSource = source.slice(source.indexOf('const startApp ='), source.indexOf('void startApp()'))
+    const proxyStartIndex = startAppSource.indexOf('void startStoredProxyRuntimeWithRetries(settings, undefined, initialProxyDelayMs)')
+    expect(startAppSource.indexOf('createMainWindow()')).toBeLessThan(proxyStartIndex)
+    expect(startAppSource.indexOf('terminalTradeWatcher.start()')).toBeLessThan(proxyStartIndex)
+    expect(startAppSource.indexOf('createMainWindow()')).toBeLessThan(startAppSource.indexOf('secretStore.getTmmApiKey()'))
+    expect(startAppSource).not.toContain('proxyReadyPromise')
+    expect(startAppSource).not.toContain('await Promise.race([')
     expect(source).toContain('localProxyType: runtime.localProxyType')
   })
 

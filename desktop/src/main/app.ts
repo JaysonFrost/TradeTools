@@ -8,7 +8,8 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { createObsService } from './services/obs/obsService'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
-import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput } from './services/recording/windowRecorderService'
+import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
+import { preferTerminalSourcesForSymbol, recordingSourceMatchesTarget } from './services/recording/terminalWindowSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
@@ -20,6 +21,7 @@ import { createSettingsStore } from './services/settings/settingsStore'
 import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
+import { findTmmTradeUrl, findTmmTradeUrls, updateTmmTradeVideoPath } from './services/trades/tmmTradeMatcher'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { listAvailableVideoEncoders } from './services/video/videoEncoderDevices'
 import { defaultLocalProxyPort } from '../shared/defaults'
@@ -284,6 +286,11 @@ const isTrustedRendererUrl = (url: string): boolean => url.startsWith('file://')
 
 type DesktopCaptureSource = Awaited<ReturnType<typeof desktopCapturer.getSources>>[number]
 type WindowBounds = { x: number, y: number, width: number, height: number }
+type WindowMetadata = { processId?: number, bounds?: WindowBounds }
+type CachedWindowMetadata = WindowMetadata & { loadedAtMs: number }
+type WindowMetadataResult = {
+  metadataByWindowId: Map<string, WindowMetadata>
+}
 
 const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
   types: ['window', 'screen'],
@@ -292,142 +299,113 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
 })
 
 const windowCaptureSourcesCacheMs = 5_000
+const windowMetadataCacheMs = 5 * 60_000
+const windowMetadataRetryMs = 30_000
+const windowMetadataTimeoutMs = 45_000
+const maxWindowMetadataOutputLength = 1024 * 1024
 let windowCaptureSourcesCache: { loadedAtMs: number, sources: WindowCaptureSource[] } | undefined
+const windowMetadataByWindowId = new Map<string, CachedWindowMetadata>()
+const pendingWindowMetadataIds = new Set<string>()
+let windowMetadataEnrichmentPromise: Promise<void> | undefined
+let windowMetadataLastAttemptAtMs = 0
 
 const desktopSourceWindowId = (sourceId: string): string => /^window:(\d+):/.exec(sourceId)?.[1] ?? ''
 
-const listWindowBounds = (windowIds: string[]): Map<string, WindowBounds> => {
-  if (process.platform !== 'win32') return new Map()
+const sanitizedWindowHandles = (windowIds: string[]): number[] => [...new Set(windowIds
+  .map((windowId) => Number(windowId))
+  .filter((windowId) => Number.isSafeInteger(windowId) && windowId > 0)
+)]
 
-  const handles = [...new Set(windowIds
-    .map((windowId) => Number(windowId))
-    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
-  )]
-  if (handles.length === 0) return new Map()
+const parseWindowMetadata = (stdout: string, requestedWindowIds: Set<string>): WindowMetadataResult => {
+  const metadataByWindowId = new Map<string, WindowMetadata>()
+
+  for (const line of stdout.split(/\r?\n/)) {
+    const [recordType, windowId, processIdText, xText, yText, widthText, heightText] = line.trim().split('|')
+    if (recordType !== 'W' || !requestedWindowIds.has(windowId)) continue
+
+    const processId = Number(processIdText)
+    const x = Number(xText)
+    const y = Number(yText)
+    const width = Number(widthText)
+    const height = Number(heightText)
+    const bounds = [x, y, width, height].every((value) => Number.isFinite(value)) && width > 0 && height > 0
+      ? { x, y, width, height }
+      : undefined
+    metadataByWindowId.set(windowId, {
+      ...(Number.isInteger(processId) && processId > 0 ? { processId } : {}),
+      ...(bounds ? { bounds } : {})
+    })
+  }
+
+  return { metadataByWindowId }
+}
+
+const listWindowMetadata = (windowIds: string[]): Promise<WindowMetadataResult | undefined> => {
+  if (process.platform !== 'win32') return Promise.resolve(undefined)
+
+  const handles = sanitizedWindowHandles(windowIds)
+  if (handles.length === 0) return Promise.resolve(undefined)
+  const requestedWindowIds = new Set(handles.map(String))
 
   const script = `
 $source = @"
 using System;
 using System.Runtime.InteropServices;
-public static class TradeToolsWindowBounds {
+public static class TradeToolsWindowMetadata {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  public static string Bounds(long handle) {
-    RECT rect;
-    if (!GetWindowRect(new IntPtr(handle), out rect)) return "";
-    int width = rect.Right - rect.Left;
-    int height = rect.Bottom - rect.Top;
-    if (width <= 0 || height <= 0) return "";
-    return String.Format("{0},{1},{2},{3}", rect.Left, rect.Top, width, height);
-  }
-}
-"@
-Add-Type $source
-foreach ($handle in @(${handles.join(',')})) {
-  $bounds = [TradeToolsWindowBounds]::Bounds([Int64]$handle)
-  if ($bounds) { "{0}:{1}" -f $handle, $bounds }
-}
-`
-
-  try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      windowsHide: true
-    })
-    if (result.status !== 0) return new Map()
-
-    return new Map(String(result.stdout)
-      .split(/\r?\n/)
-      .flatMap((line) => {
-        const separatorIndex = line.indexOf(':')
-        if (separatorIndex <= 0) return []
-        const windowId = line.slice(0, separatorIndex).trim()
-        const [x, y, width, height] = line.slice(separatorIndex + 1).split(',').map(Number)
-        return windowId && [x, y, width, height].every((value) => Number.isFinite(value))
-          ? [[windowId, { x, y, width, height }] as const]
-          : []
-      }))
-  } catch {
-    return new Map()
-  }
-}
-
-const listWindowProcessIds = (windowIds: string[]): Map<string, number> => {
-  if (process.platform !== 'win32') return new Map()
-
-  const handles = [...new Set(windowIds
-    .map((windowId) => Number(windowId))
-    .filter((windowId) => Number.isInteger(windowId) && windowId > 0)
-  )]
-  if (handles.length === 0) return new Map()
-
-  const script = `
-$source = @"
-using System;
-using System.Runtime.InteropServices;
-public static class TradeToolsWindowProcess {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  public static string ProcessId(long handle) {
+  public static string Describe(long handle) {
     uint processId;
     GetWindowThreadProcessId(new IntPtr(handle), out processId);
-    return processId > 0 ? processId.ToString() : "";
+    RECT rect;
+    if (!GetWindowRect(new IntPtr(handle), out rect)) return String.Format("W|{0}|{1}||||", handle, processId);
+    int width = rect.Right - rect.Left;
+    int height = rect.Bottom - rect.Top;
+    if (width <= 0 || height <= 0) return String.Format("W|{0}|{1}||||", handle, processId);
+    return String.Format("W|{0}|{1}|{2}|{3}|{4}|{5}", handle, processId, rect.Left, rect.Top, width, height);
   }
 }
 "@
 Add-Type $source
 foreach ($handle in @(${handles.join(',')})) {
-  $processId = [TradeToolsWindowProcess]::ProcessId([Int64]$handle)
-  if ($processId) { "{0}:{1}" -f $handle, $processId }
+  [TradeToolsWindowMetadata]::Describe([Int64]$handle)
 }
 `
 
-  try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      windowsHide: true
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    } catch {
+      resolve(undefined)
+      return
+    }
+
+    let stdout = ''
+    let settled = false
+    const finish = (result?: WindowMetadataResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    const timeout = setTimeout(() => {
+      child.kill()
+      finish()
+    }, windowMetadataTimeoutMs)
+
+    child.stdout?.on('data', (chunk) => {
+      if (stdout.length >= maxWindowMetadataOutputLength) return
+      stdout = `${stdout}${String(chunk)}`.slice(0, maxWindowMetadataOutputLength)
     })
-    if (result.status !== 0) return new Map()
-
-    return new Map(String(result.stdout)
-      .split(/\r?\n/)
-      .flatMap((line) => {
-        const [windowId, processIdText] = line.trim().split(':')
-        const processId = Number(processIdText)
-        return windowId && Number.isInteger(processId) && processId > 0 ? [[windowId, processId] as const] : []
-      }))
-  } catch {
-    return new Map()
-  }
-}
-
-const getForegroundWindowId = (): string => {
-  if (process.platform !== 'win32') return ''
-
-  const script = `
-$source = @"
-using System;
-using System.Runtime.InteropServices;
-public static class TradeToolsForegroundWindow {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  public static long Handle() { return GetForegroundWindow().ToInt64(); }
-}
-"@
-Add-Type $source
-[TradeToolsForegroundWindow]::Handle()
-`
-
-  try {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      windowsHide: true
-    })
-    if (result.status !== 0) return ''
-
-    const windowId = String(result.stdout).trim()
-    return /^\d+$/.test(windowId) && windowId !== '0' ? windowId : ''
-  } catch {
-    return ''
-  }
+    child.stderr?.resume()
+    child.once('error', () => finish())
+    child.once('close', (exitCode) => finish(exitCode === 0 ? parseWindowMetadata(stdout, requestedWindowIds) : undefined))
+  })
 }
 
 const resolveWindowDisplayId = (source: DesktopCaptureSource, windowBounds: Map<string, WindowBounds>): string => {
@@ -463,6 +441,89 @@ const toWindowCaptureSource = (
   }
 }
 
+const cachedWindowMetadataMaps = (windowIds: string[]): {
+  windowProcessIds: Map<string, number>
+  windowBounds: Map<string, WindowBounds>
+} => {
+  const windowProcessIds = new Map<string, number>()
+  const windowBounds = new Map<string, WindowBounds>()
+  for (const windowId of windowIds) {
+    const metadata = windowMetadataByWindowId.get(windowId)
+    if (metadata?.processId) windowProcessIds.set(windowId, metadata.processId)
+    if (metadata?.bounds) windowBounds.set(windowId, metadata.bounds)
+  }
+  return { windowProcessIds, windowBounds }
+}
+
+const mergeCachedWindowMetadataIntoCaptureCache = (): void => {
+  if (!windowCaptureSourcesCache) return
+  windowCaptureSourcesCache = {
+    ...windowCaptureSourcesCache,
+    sources: windowCaptureSourcesCache.sources.map((source) => {
+      if (source.type !== 'window') return source
+      const metadata = windowMetadataByWindowId.get(desktopSourceWindowId(source.id))
+      if (!metadata) return source
+
+      const { processId: _previousProcessId, bounds: _previousBounds, ...baseSource } = source
+      let displayId = source.displayId
+      if (metadata.bounds) {
+        try {
+          displayId = String(electronScreen.getDisplayMatching(metadata.bounds).id)
+        } catch {
+          // Keep Electron's current display id when screen metadata is temporarily unavailable.
+        }
+      }
+      return {
+        ...baseSource,
+        displayId,
+        ...(metadata.processId ? { processId: metadata.processId } : {}),
+        ...(metadata.bounds ? { bounds: metadata.bounds } : {})
+      }
+    })
+  }
+}
+
+const scheduleWindowMetadataEnrichment = (windowIds: string[]): void => {
+  if (process.platform !== 'win32') return
+
+  const now = Date.now()
+  const requestedWindowIds = sanitizedWindowHandles(windowIds).map(String)
+  for (const windowId of requestedWindowIds) {
+    const cached = windowMetadataByWindowId.get(windowId)
+    if (!cached || now - cached.loadedAtMs >= windowMetadataCacheMs) {
+      pendingWindowMetadataIds.add(windowId)
+    } else {
+      pendingWindowMetadataIds.delete(windowId)
+    }
+  }
+
+  if (windowMetadataEnrichmentPromise || pendingWindowMetadataIds.size === 0) return
+  if (now - windowMetadataLastAttemptAtMs < windowMetadataRetryMs) return
+
+  const windowIdsToLoad = [...pendingWindowMetadataIds]
+  windowIdsToLoad.forEach((windowId) => pendingWindowMetadataIds.delete(windowId))
+  windowMetadataLastAttemptAtMs = now
+  windowMetadataEnrichmentPromise = listWindowMetadata(windowIdsToLoad)
+    .then((result) => {
+      if (!result) return
+      const loadedAtMs = Date.now()
+      for (const windowId of windowIdsToLoad) {
+        windowMetadataByWindowId.set(windowId, {
+          loadedAtMs,
+          ...result.metadataByWindowId.get(windowId)
+        })
+      }
+      mergeCachedWindowMetadataIntoCaptureCache()
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      windowMetadataEnrichmentPromise = undefined
+      if (pendingWindowMetadataIds.size > 0) {
+        scheduleWindowMetadataEnrichment([...pendingWindowMetadataIds])
+      }
+    })
+}
+
 const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
   if (windowCaptureSourcesCache && Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs) {
     return windowCaptureSourcesCache.sources
@@ -470,13 +531,13 @@ const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
 
   const sources = await listDesktopCaptureSources()
   const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
-  const windowProcessIds = listWindowProcessIds(windowIds)
-  const windowBounds = listWindowBounds(windowIds)
+  const { windowProcessIds, windowBounds } = cachedWindowMetadataMaps(windowIds)
   const mappedSources = sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
   windowCaptureSourcesCache = {
     loadedAtMs: Date.now(),
     sources: mappedSources
   }
+  scheduleWindowMetadataEnrichment(windowIds)
   return mappedSources
 }
 
@@ -484,6 +545,7 @@ const toCaptureTargetRef = (source: WindowCaptureSource): CaptureTargetRef => ({
   id: source.id,
   name: source.name,
   type: source.type,
+  ...(source.processId ? { processId: source.processId } : {}),
   ...(source.displayId ? { displayId: source.displayId } : {})
 })
 
@@ -529,19 +591,21 @@ const terminalSourceLog = (source: WindowCaptureSource) => ({
 const selectTerminalSource = (
   event: TerminalPositionEvent,
   terminalSources: WindowCaptureSource[]
-): { source?: WindowCaptureSource, candidates: WindowCaptureSource[], reason: 'process' | 'foreground' | 'cursor' | 'first' | 'ambiguous' | 'none' } => {
+): { source?: WindowCaptureSource, candidates: WindowCaptureSource[], reason: 'process' | 'symbol' | 'cursor' | 'first' | 'ambiguous' | 'none' } => {
   const processCandidates = event.processId
     ? terminalSources.filter((candidate) => candidate.processId === event.processId)
     : []
-  const candidates = processCandidates.length > 0 ? processCandidates : terminalSources
+  const processScopedCandidates = processCandidates.length > 0 ? processCandidates : terminalSources
+  const candidates = preferTerminalSourcesForSymbol(event.symbol, processScopedCandidates)
   if (candidates.length === 0) return { candidates, reason: 'none' }
-  if (candidates.length === 1) return { source: candidates[0], candidates, reason: processCandidates.length > 0 ? 'process' : 'first' }
-
-  const foregroundWindowId = getForegroundWindowId()
-  const foregroundSource = foregroundWindowId
-    ? candidates.find((candidate) => desktopSourceWindowId(candidate.id) === foregroundWindowId)
-    : undefined
-  if (foregroundSource) return { source: foregroundSource, candidates, reason: 'foreground' }
+  if (candidates.length === 1) {
+    const reason = processScopedCandidates.length > candidates.length
+      ? 'symbol'
+      : processCandidates.length > 0
+        ? 'process'
+        : 'first'
+    return { source: candidates[0], candidates, reason }
+  }
 
   const cursorPoint = electronScreen.getCursorScreenPoint()
   const cursorSource = candidates.find((candidate) => windowContainsPoint(candidate, cursorPoint))
@@ -758,9 +822,9 @@ const applyProxyQuitPreference = (settings: AppSettings): void => {
 const createMainWindow = (): BrowserWindow => {
   const window = new BrowserWindow({
     width: 1440,
-    height: 960,
+    height: 1120,
     minWidth: 1180,
-    minHeight: 760,
+    minHeight: 860,
     backgroundColor: '#08090A',
     title: 'TradeTools',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
@@ -811,7 +875,19 @@ app.whenReady().then(() => {
     getSettings: () => settingsStore.load(),
     saveReplayBuffer: (input) => input.settings.recording.mode === 'window'
       ? windowRecorderService.saveReplayBuffer(input)
-      : obsService.testReplaySave()
+      : obsService.testReplaySave(),
+    findTmmTradeUrl: async (trade) => {
+      const apiKey = await secretStore.getTmmApiKey()
+      return apiKey ? findTmmTradeUrl({ apiKey, trade }) : undefined
+    },
+    findTmmTradeUrls: async (trades) => {
+      const apiKey = await secretStore.getTmmApiKey()
+      return apiKey ? findTmmTradeUrls({ apiKey, trades }) : trades.map(() => undefined)
+    },
+    updateTmmTradeVideoPath: async (tradeUrl, videoPath) => {
+      const apiKey = await secretStore.getTmmApiKey()
+      return apiKey ? updateTmmTradeVideoPath({ apiKey, tradeUrl, videoPath }) : false
+    }
   })
   const saveProxyRuntimeConfig = async (config: ProxyChainRuntimeConfig): Promise<void> => {
     await secretStore.setProxyRuntimeEntryUuid(config.entryUuid)
@@ -1465,6 +1541,9 @@ app.whenReady().then(() => {
   let obsReplayBufferReady = false
   let backgroundWindowRecordingEnabled = true
   let backgroundWindowRecordingStartedAtMs = 0
+  let nativeRecordingStartedAtMs = 0
+  const browserRecordingStartedBySourceId = new Map<string, WindowRecordingStartedInput>()
+  const knownTerminalRecordingTargetIds = new Set<string>()
 
   const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
     const checkedAtMs = Date.now()
@@ -1476,21 +1555,53 @@ app.whenReady().then(() => {
     return obsReplayBufferReady
   }
 
-  const ensureVideoRecordingReady = async (force = false): Promise<boolean> => {
+  const browserRecordingStartedAtMs = (target?: CaptureTargetRef): number => {
+    const starts = [...browserRecordingStartedBySourceId.values()]
+      .filter((started) => !target || recordingSourceMatchesTarget(started, target))
+      .map((started) => started.startedAtMs)
+    return starts.length > 0 ? Math.min(...starts) : 0
+  }
+
+  const refreshBackgroundRecordingStartedAtMs = (): void => {
+    const browserStartedAtMs = browserRecordingStartedAtMs()
+    const starts = [nativeRecordingStartedAtMs, browserStartedAtMs].filter((startedAtMs) => startedAtMs > 0)
+    backgroundWindowRecordingStartedAtMs = starts.length > 0 ? Math.min(...starts) : 0
+  }
+
+  const ensureVideoRecordingReady = async (
+    event: TerminalPositionEvent,
+    recordingTarget?: CaptureTargetRef,
+    force = false
+  ): Promise<boolean> => {
     const settings = await settingsStore.load()
     if (settings.recording.mode === 'obs') {
       return ensureObsReplayBufferActive(force)
     }
     if (!backgroundWindowRecordingEnabled) return false
-
-    const status = await windowRecorderService.getStatus(settings)
-    if (!status.active || status.fallbackRequired) {
+    if (settings.recording.sourceType === 'window' && !recordingTarget) {
       notifyWindowRecordingNeeded()
-      const started = await windowRecorderService.start(settings)
-      return started.active || started.fallbackRequired === true
+      return false
     }
 
-    return true
+    const requiredStartMs = event.eventTimeMs - settings.clip.paddingBeforeSeconds * 1000
+    const browserStartedAtMs = browserRecordingStartedAtMs(recordingTarget)
+    if (browserStartedAtMs > 0) return browserStartedAtMs <= requiredStartMs
+
+    const status = await windowRecorderService.getStatus(settings)
+    if (status.active && status.backend === 'ffmpeg' && !status.fallbackRequired) {
+      return nativeRecordingStartedAtMs > 0 && nativeRecordingStartedAtMs <= requiredStartMs
+    }
+
+    notifyWindowRecordingNeeded()
+    if (status.fallbackRequired) return false
+
+    const started = await windowRecorderService.start(settings)
+    if (!started.active || started.fallbackRequired || started.backend !== 'ffmpeg') return false
+    if (!nativeRecordingStartedAtMs) {
+      nativeRecordingStartedAtMs = Date.now()
+      refreshBackgroundRecordingStartedAtMs()
+    }
+    return nativeRecordingStartedAtMs <= requiredStartMs
   }
 
   const resolveTerminalRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
@@ -1508,7 +1619,7 @@ app.whenReady().then(() => {
     const targets = configuredCaptureTargets(settings)
 
     if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
-      void appLog.warn('recording', 'Terminal process id did not match any captured window; using first matching terminal window', {
+      void appLog.warn('recording', 'Terminal process id and ticker did not identify a capture window; trade will wait for an exact window', {
         source: event.source,
         symbol: event.symbol,
         processId: event.processId,
@@ -1526,39 +1637,31 @@ app.whenReady().then(() => {
     }
 
     if (source) {
-      const target = toCaptureTargetRef(source)
-      const nextCaptureTargets = [
-        target,
-        ...targets.filter((candidate) => candidate.type === 'window' && candidate.id !== target.id)
-      ]
-
-      if (settings.recording.windowSourceId !== target.id || !targets.some((candidate) => candidate.id === target.id)) {
-        await settingsStore.update({
-          recording: {
-            ...settings.recording,
-            sourceType: 'window',
-            windowSourceId: target.id,
-            windowSourceName: target.name,
-            captureTargets: nextCaptureTargets,
-            saveTargetMode: 'selected',
-            saveTargetId: target.id
-          }
-        })
+      const target: CaptureTargetRef = {
+        ...toCaptureTargetRef(source),
+        symbol: event.symbol
+      }
+      if (!knownTerminalRecordingTargetIds.has(target.id)) {
+        if (!targets.some((candidate) => candidate.id === target.id)) {
+          await settingsStore.update({
+            recording: {
+              ...settings.recording,
+              captureTargets: [...targets, target]
+            }
+          })
+        }
+        knownTerminalRecordingTargetIds.add(target.id)
         notifyWindowRecordingNeeded()
       }
 
       return target
     }
 
-    const fallback = configuredCaptureTargets(settings).find((target) => target.type === 'window') ?? configuredCaptureTargets(settings)[0]
-    if (fallback) {
-      void appLog.warn('recording', 'Terminal capture window not found; using configured capture target', {
-        source: event.source,
-        symbol: event.symbol,
-        captureTarget: fallback
-      })
-    }
-    return fallback
+    void appLog.warn('recording', 'Terminal capture window not found; skipping trade until its window is available', {
+      source: event.source,
+      symbol: event.symbol
+    })
+    return undefined
   }
 
   const queueClipForClosedTrade = async (trade: ClosedTrade): Promise<void> => {
@@ -1662,6 +1765,19 @@ app.whenReady().then(() => {
     return result.canceled ? undefined : result.filePaths[0]
   })
   ipcMain.handle('settings:get', () => settingsStore.load())
+  ipcMain.handle('tmm:get-status', async () => ({ apiKeyConfigured: Boolean(await secretStore.getTmmApiKey()) }))
+  ipcMain.handle('tmm:save-api-key', async (_event, apiKey: string) => {
+    const value = asString(apiKey)
+    if (!value) throw new Error('Укажите API-ключ TMM')
+    await secretStore.setTmmApiKey(value)
+    const sync = await clipPipeline.syncTmmTradeLinks()
+    void appLog.info('tmm', 'TMM links synchronized after API key update', sync)
+    return { apiKeyConfigured: true, sync }
+  })
+  ipcMain.handle('tmm:clear-api-key', async () => {
+    await secretStore.clearTmmApiKey()
+    return { apiKeyConfigured: false }
+  })
   ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
     const obsPassword = input.obsPassword?.trim()
     let patch = extractSettingsPatch(input)
@@ -1696,15 +1812,27 @@ app.whenReady().then(() => {
   ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
   ipcMain.handle('recording:start', async () => {
     backgroundWindowRecordingEnabled = true
-    backgroundWindowRecordingStartedAtMs = Date.now()
-    return windowRecorderService.start(await settingsStore.load())
+    const started = await windowRecorderService.start(await settingsStore.load())
+    if (started.active && started.backend === 'ffmpeg' && !started.fallbackRequired && !nativeRecordingStartedAtMs) {
+      nativeRecordingStartedAtMs = Date.now()
+      refreshBackgroundRecordingStartedAtMs()
+    }
+    return started
   })
   ipcMain.handle('recording:clear-cache', async () => {
     const settings = await settingsStore.load()
     const result = await windowRecorderService.clearCache(settings)
     if (backgroundWindowRecordingEnabled && settings.recording.mode === 'window') {
-      backgroundWindowRecordingStartedAtMs = Date.now()
-      await windowRecorderService.start(settings)
+      nativeRecordingStartedAtMs = 0
+      browserRecordingStartedBySourceId.clear()
+      refreshBackgroundRecordingStartedAtMs()
+      const started = await windowRecorderService.start(settings)
+      if (started.active && started.backend === 'ffmpeg' && !started.fallbackRequired) {
+        nativeRecordingStartedAtMs = Date.now()
+        refreshBackgroundRecordingStartedAtMs()
+      } else {
+        notifyWindowRecordingNeeded()
+      }
     }
     return result
   })
@@ -1718,8 +1846,42 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('recording:stop', async () => {
     backgroundWindowRecordingEnabled = false
-    backgroundWindowRecordingStartedAtMs = 0
+    nativeRecordingStartedAtMs = 0
+    browserRecordingStartedBySourceId.clear()
+    refreshBackgroundRecordingStartedAtMs()
     return windowRecorderService.stop()
+  })
+  ipcMain.handle('recording:browser-started', (_event, input: WindowRecordingStartedInput) => {
+    if (!backgroundWindowRecordingEnabled) return
+
+    const sourceId = asString(input?.sourceId)
+    const sourceName = asString(input?.sourceName)
+    const captureEpochId = asString(input?.captureEpochId)
+    const startedAtMs = Math.trunc(Number(input?.startedAtMs))
+    const processId = Math.trunc(Number(input?.processId))
+    if (!sourceId || !sourceName || !captureEpochId || !Number.isFinite(startedAtMs) || startedAtMs <= 0) {
+      throw new Error('Некорректное подтверждение старта записи окна')
+    }
+
+    const current = browserRecordingStartedBySourceId.get(sourceId)
+    if (!current || current.captureEpochId !== captureEpochId || startedAtMs < current.startedAtMs) {
+      browserRecordingStartedBySourceId.set(sourceId, {
+        sourceId,
+        sourceName,
+        ...(Number.isFinite(processId) && processId > 0 ? { processId } : {}),
+        captureEpochId,
+        startedAtMs
+      })
+    }
+    refreshBackgroundRecordingStartedAtMs()
+  })
+  ipcMain.handle('recording:browser-stopped', (_event, input: WindowRecordingStoppedInput) => {
+    const sourceId = asString(input?.sourceId)
+    const captureEpochId = asString(input?.captureEpochId)
+    const current = browserRecordingStartedBySourceId.get(sourceId)
+    if (!sourceId || !captureEpochId || current?.captureEpochId !== captureEpochId) return
+    browserRecordingStartedBySourceId.delete(sourceId)
+    refreshBackgroundRecordingStartedAtMs()
   })
   ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
     windowRecorderService.appendSegment(input, await settingsStore.load())
@@ -2072,17 +2234,15 @@ app.whenReady().then(() => {
     applyLaunchAtLogin(settings)
     applyAlwaysOnTop(settings)
     applyProxyQuitPreference(settings)
-    let proxyReady = false
-    let resolveProxyReady: (() => void) | undefined
-    const proxyReadyPromise = new Promise<void>((resolve) => {
-      resolveProxyReady = () => {
-        if (proxyReady) return
-        proxyReady = true
-        resolve()
-      }
-    })
+    createMainWindow()
+    appUpdateService.startBackgroundCheck()
+    terminalTradeWatcher.start()
+    void secretStore.getTmmApiKey()
+      .then((apiKey) => apiKey ? clipPipeline.syncTmmTradeLinks() : undefined)
+      .then((sync) => sync ? appLog.info('tmm', 'TMM links synchronized on startup', sync) : undefined)
+      .catch((error) => appLog.error('tmm', 'TMM startup synchronization failed', error))
     const initialProxyDelayMs = isWindowsLoginLaunch() ? windowsProxyRuntimeStartupGraceMs : 0
-    void startStoredProxyRuntimeWithRetries(settings, resolveProxyReady, initialProxyDelayMs)
+    void startStoredProxyRuntimeWithRetries(settings, undefined, initialProxyDelayMs)
       .then(() => {
         void appLog.info('proxy-autostart', 'Сохранённый proxy запущен', {
           windowsLoginLaunch: isWindowsLoginLaunch(),
@@ -2091,7 +2251,6 @@ app.whenReady().then(() => {
         })
       })
       .catch((error) => {
-        resolveProxyReady?.()
         const message = error instanceof Error ? error.message : 'неизвестная ошибка'
         console.error('Proxy runtime autostart failed:', error)
         showSystemNotification({
@@ -2100,13 +2259,6 @@ app.whenReady().then(() => {
         })
       })
       .finally(startProxyRuntimeWatchdog)
-    await Promise.race([
-      proxyReadyPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, 10_000))
-    ])
-    createMainWindow()
-    appUpdateService.startBackgroundCheck()
-    terminalTradeWatcher.start()
     app.on('before-quit', () => terminalTradeWatcher.stop())
     app.on('before-quit', stopProxyRuntimeWatchdog)
     app.on('before-quit', () => {

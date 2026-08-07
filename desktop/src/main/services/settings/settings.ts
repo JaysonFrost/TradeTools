@@ -13,6 +13,8 @@ export type CaptureTargetRef = {
   name: string
   type: RecordingSourceType
   displayId?: string
+  processId?: number
+  symbol?: string
 }
 
 export type ProxyRecord = {
@@ -109,6 +111,12 @@ const clamp = (value: number, min: number, max: number): number => Number.isFini
 const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/
 
 const normalizeString = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+const normalizeProcessId = (value: unknown): number | undefined => (
+  typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+)
+const normalizeCaptureSymbol = (value: unknown): string => (
+  typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : ''
+)
 const normalizeLocalProxyType = (value: unknown): LocalProxyType => value === 'HTTP' ? 'HTTP' : 'SOCKS5'
 
 const normalizePort = (value: unknown, fallback = 0): number => {
@@ -182,11 +190,15 @@ const normalizeCaptureTarget = (value: unknown, sourceType: RecordingSourceType)
   if (!id || type !== sourceType || !isCaptureTargetIdCompatible(id, type)) return undefined
 
   const displayId = normalizeString(input.displayId)
+  const processId = normalizeProcessId(input.processId)
+  const symbol = normalizeCaptureSymbol(input.symbol)
   return {
     id,
     name: name || (type === 'screen' ? 'Экран' : 'Окно'),
     type,
-    ...(displayId ? { displayId } : {})
+    ...(displayId ? { displayId } : {}),
+    ...(processId ? { processId } : {}),
+    ...(symbol ? { symbol } : {})
   }
 }
 

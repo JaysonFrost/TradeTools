@@ -6,6 +6,7 @@ import { createDefaultSettings } from '../../src/main/services/settings/settings
 import { createTradeClipPipeline } from '../../src/main/services/trades/tradeClipPipeline'
 import { createSimulatedClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import { buildClipOutputPaths } from '../../src/main/services/video/clipPaths'
+import { calculateFfmpegRenderThreads } from '../../src/main/services/video/ffmpegCommand'
 
 const legacyVideoProviderName = ['You', 'Tube'].join('')
 const legacyVideoProviderKey = ['you', 'tube'].join('')
@@ -26,9 +27,14 @@ describe('tradeClipPipeline', () => {
       await writeFile(args.at(-1) ?? '', 'trimmed video')
     })
     const getVideoDurationSeconds = vi.fn(async (path: string) => path === replayPath ? 120 : 114)
+    const updateTmmTradeVideoPath = vi.fn(async () => true)
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...createDefaultSettings(dataDir),
+        recording: {
+          ...createDefaultSettings(dataDir).recording,
+          videoEncoder: 'cpu' as const
+        },
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
@@ -44,7 +50,9 @@ describe('tradeClipPipeline', () => {
       }),
       saveReplayBuffer: vi.fn(async () => ({ ok: true, message: 'OBS Replay Buffer сохранён', requestedAtMs })),
       runFfmpeg,
-      getVideoDurationSeconds
+      getVideoDurationSeconds,
+      findTmmTradeUrl: vi.fn(async () => 'https://tradermake.money/app2/account/my-trades/42'),
+      updateTmmTradeVideoPath
     })
 
     const trade = createSimulatedClosedTrade(new Date(2026, 4, 13, 3, 51, 10).getTime())
@@ -55,8 +63,13 @@ describe('tradeClipPipeline', () => {
     expect(clip.videoPath).toBe(join(dataDir, '2026-05-13/BTCUSDT Binance 13.05.26 03-49-21.mp4'))
     expect(getVideoDurationSeconds).toHaveBeenCalledWith(replayPath)
     const ffmpegArgs = runFfmpeg.mock.calls[0][0]
+    const renderThreads = String(calculateFfmpegRenderThreads())
     expect(ffmpegArgs.slice(0, -1)).toEqual([
       '-y',
+      '-threads',
+      renderThreads,
+      '-filter_threads',
+      '1',
       '-fflags',
       '+genpts',
       '-ss',
@@ -77,6 +90,8 @@ describe('tradeClipPipeline', () => {
       '18',
       '-pix_fmt',
       'yuv420p',
+      '-threads',
+      renderThreads,
       '-fps_mode',
       'cfr',
       '-c:a',
@@ -89,6 +104,10 @@ describe('tradeClipPipeline', () => {
       '+faststart'
     ])
     expect(ffmpegArgs.at(-1)).toContain(`${clip.videoPath}.tmp-`)
+    expect(updateTmmTradeVideoPath).toHaveBeenCalledWith(
+      'https://tradermake.money/app2/account/my-trades/42',
+      clip.videoPath
+    )
 
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8')) as Record<string, unknown>
     expect(metadata).toMatchObject({
@@ -105,8 +124,19 @@ describe('tradeClipPipeline', () => {
         durationSeconds: 114
       },
       replayDurationSeconds: 120,
-      replaySavedAtMs
+      replaySavedAtMs,
+      tmmTradeUrl: 'https://tradermake.money/app2/account/my-trades/42',
+      tmmVideoPath: clip.videoPath
     })
+    await expect(pipeline.listPendingClips()).resolves.toEqual([expect.objectContaining({
+      tmmTradeUrl: 'https://tradermake.money/app2/account/my-trades/42'
+    })])
+  })
+
+  it('passes the selected recording encoder into ordinary clip rendering', async () => {
+    const source = await readFile(new URL('../../src/main/services/trades/tradeClipPipeline.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain('videoEncoder: settings.recording.videoEncoder')
   })
 
   it('uses the exact replay path returned by OBS instead of rescanning the configured folder', async () => {
@@ -442,6 +472,8 @@ describe('tradeClipPipeline', () => {
     const saveTimeMs = new Date(2026, 4, 13, 10, 30, 0).getTime()
     await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(saveTimeMs), new Date(saveTimeMs)))
 
+    const tmmTradeUrl = 'https://tradermake.money/app2/account/my-trades/73'
+    const updateTmmTradeVideoPath = vi.fn(async () => true)
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...createDefaultSettings(dataDir),
@@ -462,7 +494,9 @@ describe('tradeClipPipeline', () => {
       runFfmpeg: vi.fn(async (args: string[]) => {
         await writeFile(args.at(-1) ?? '', 'trimmed video')
       }),
-      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120)
+      getVideoDurationSeconds: vi.fn(async (path: string) => path === replayPath ? 120 : 120),
+      findTmmTradeUrl: vi.fn(async () => tmmTradeUrl),
+      updateTmmTradeVideoPath
     })
     const clip = await pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))
 
@@ -474,17 +508,68 @@ describe('tradeClipPipeline', () => {
     expect(renamed.clip.fileName).toBe('My custom- clip name.mp4')
     expect(renamed.clip.title).toBe('My custom- clip name')
     expect(renamed.clip.videoPath).toBe(join(dataDir, '2026-05-13/My custom- clip name.mp4'))
+    expect(updateTmmTradeVideoPath).toHaveBeenLastCalledWith(tmmTradeUrl, renamed.clip.videoPath)
     await expect(access(clip.videoPath)).rejects.toThrow()
     await expect(access(renamed.clip.videoPath)).resolves.toBeUndefined()
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8')) as Record<string, unknown>
     expect(metadata).toMatchObject({
       fileName: 'My custom- clip name.mp4',
       title: 'My custom- clip name',
-      videoPath: renamed.clip.videoPath
+      videoPath: renamed.clip.videoPath,
+      tmmVideoPath: renamed.clip.videoPath
     })
     await expect(pipeline.listPendingClips()).resolves.toMatchObject([{
       fileName: 'My custom- clip name.mp4'
     }])
+  })
+
+  it('retries a TMM video path update during synchronization until it succeeds', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-tmm-video-retry-'))
+    const dayDir = join(dataDir, '2026-08-06')
+    const videoPath = join(dayDir, 'BTCUSDT retry.mp4')
+    const metadataPath = join(dayDir, 'BTCUSDT retry.json')
+    const tmmTradeUrl = 'https://tradermake.money/app2/account/my-trades/91'
+    const trade = createSimulatedClosedTrade(Date.parse('2026-08-06T13:19:00.000Z'))
+    await mkdir(dayDir, { recursive: true })
+    await writeFile(videoPath, 'video')
+    await writeFile(metadataPath, JSON.stringify({
+      id: 'retry-clip',
+      status: 'pending-review',
+      title: 'BTCUSDT retry',
+      fileName: 'BTCUSDT retry.mp4',
+      videoPath,
+      metadataPath,
+      symbol: trade.symbol,
+      side: trade.side,
+      exchange: trade.exchange,
+      marketType: trade.marketType,
+      entryTimeMs: trade.entryTimeMs,
+      exitTimeMs: trade.exitTimeMs,
+      durationSeconds: 60,
+      createdAtMs: trade.exitTimeMs,
+      tmmTradeUrl,
+      trade
+    }), 'utf8')
+    const updateTmmTradeVideoPath = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...createDefaultSettings(dataDir),
+        clip: {
+          ...createDefaultSettings(dataDir).clip,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({ ok: false, message: 'not used', requestedAtMs: 0 })),
+      updateTmmTradeVideoPath
+    })
+
+    await expect(pipeline.syncTmmTradeLinks()).resolves.toEqual({ checkedCount: 0, matchedCount: 0 })
+    expect(JSON.parse(await readFile(metadataPath, 'utf8'))).not.toHaveProperty('tmmVideoPath')
+
+    await expect(pipeline.syncTmmTradeLinks()).resolves.toEqual({ checkedCount: 0, matchedCount: 0 })
+    expect(updateTmmTradeVideoPath).toHaveBeenCalledTimes(2)
+    expect(updateTmmTradeVideoPath).toHaveBeenLastCalledWith(tmmTradeUrl, videoPath)
+    expect(JSON.parse(await readFile(metadataPath, 'utf8'))).toMatchObject({ tmmVideoPath: videoPath })
   })
 
   it('still lists clips created in the old nested clips folder', async () => {
@@ -740,6 +825,56 @@ describe('tradeClipPipeline', () => {
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
     expect(metadata.replayPath).toBe(clip.videoPath)
     expect(metadata.trim).toEqual({ startSeconds: 0, endSeconds: 131, durationSeconds: 131 })
+  })
+
+  it('rejects a ready built-in clip whose video ends before the trade and padding', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-short-ready-clip-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-short-ready-replay-'))
+    const replayPath = join(replayDir, 'truncated-long-trade.mp4')
+    const entryTimeMs = 1_786_057_767_524
+    const exitTimeMs = 1_786_057_835_795
+    const trade = {
+      ...createSimulatedClosedTrade(exitTimeMs),
+      id: 'terminal-BEATUSDT-long-trade',
+      symbol: 'BEATUSDT',
+      entryTimeMs,
+      exitTimeMs
+    }
+    await writeFile(replayPath, 'truncated ready clip')
+
+    const defaultSettings = createDefaultSettings(dataDir)
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: {
+          ...defaultSettings.recording,
+          mode: 'window'
+        },
+        clip: {
+          ...defaultSettings.clip,
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 2,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs: exitTimeMs,
+        replayPath,
+        readyClip: true
+      })),
+      getVideoDetails: vi.fn(async () => ({
+        durationSeconds: 51.5,
+        averageFrameRate: 30
+      }))
+    })
+
+    await expect(pipeline.createClipForClosedTrade(trade)).rejects.toThrow(/51\.50с.*73\.27с/)
+
+    const paths = buildClipOutputPaths(dataDir, trade)
+    await expect(access(paths.videoPath)).rejects.toThrow()
+    await expect(access(paths.metadataPath)).rejects.toThrow()
   })
 
   it('passes the selected capture target to built-in replay export and records it in metadata', async () => {

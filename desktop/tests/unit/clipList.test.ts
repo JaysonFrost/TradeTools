@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ClipQueueItem } from '../../src/main/services/trades/tradeClipPipeline'
-import { getClipDayGroups, getClipsForDate, getClipsForPeriod } from '../../src/renderer/lib/clipList'
+import { filterClips, getClipDayGroups, getClipsForDate, getClipsForPeriod } from '../../src/renderer/lib/clipList'
 
 const clip = (id: string, createdAtMs: number, title: string, durationSeconds: number): ClipQueueItem => ({
   id,
@@ -53,5 +53,31 @@ describe('clip list helpers', () => {
       'monday-alpha',
       'monday-zebra'
     ])
+  })
+
+  it('filters clips by a pasted path, file name, trade fields and local date', () => {
+    const createdAtMs = new Date(2026, 7, 6, 13, 19).getTime()
+    const btcClip: ClipQueueItem = {
+      ...clip('btc', createdAtMs, 'BTC scalp', 42),
+      fileName: 'BTCUSDT Binance 06.08.26 13-19-00.mp4',
+      videoPath: 'C:\\Users\\Igor\\Trade Clips\\BTCUSDT Binance 06.08.26 13-19-00.mp4',
+      symbol: 'BTCUSDT',
+      exchange: 'Binance',
+      side: 'LONG',
+      marketType: 'Futures',
+      tmmTradeUrl: 'https://tradermake.money/app2/account/my-trades/91'
+    }
+    const ethClip: ClipQueueItem = {
+      ...clip('eth', new Date(2026, 7, 5, 8, 4).getTime(), 'ETH review', 30),
+      symbol: 'ETHUSDT'
+    }
+    const searchable = [btcClip, ethClip]
+
+    expect(filterClips(searchable, '')).toEqual(searchable)
+    expect(filterClips(searchable, 'c:\\users\\igor\\trade clips\\btcusdt')).toEqual([btcClip])
+    expect(filterClips(searchable, 'C:/USERS/IGOR/TRADE CLIPS/BTCUSDT')).toEqual([btcClip])
+    expect(filterClips(searchable, 'binance LONG 06.08.2026 13:19')).toEqual([btcClip])
+    expect(filterClips(searchable, '06.08.26')).toEqual([btcClip])
+    expect(filterClips(searchable, 'eth review')).toEqual([ethClip])
   })
 })

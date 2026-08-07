@@ -26,6 +26,7 @@ export type ClipQueueItem = {
   exitTimeMs: number
   durationSeconds: number
   createdAtMs: number
+  tmmTradeUrl?: string
   captureTarget?: CaptureTargetRef
 }
 
@@ -41,6 +42,7 @@ export type ClipProcessingStatus = {
 }
 
 export type TradeClipMetadata = ClipQueueItem & {
+  tmmVideoPath?: string
   replayPath: string
   replaySavedAtMs: number
   replayDurationSeconds: number
@@ -98,6 +100,11 @@ export type ClearClipQueueResult = {
   deletedFileCount: number
 }
 
+export type SyncTmmTradeLinksResult = {
+  checkedCount: number
+  matchedCount: number
+}
+
 export type FreeRecordingQueueInput = {
   videoPath: string
   fileName: string
@@ -121,6 +128,9 @@ export type TradeClipPipelineDeps = {
   runFfmpeg?: (args: string[], signal?: AbortSignal) => Promise<void>
   getVideoDurationSeconds?: VideoDurationProbe
   getVideoDetails?: VideoDetailsProbe
+  findTmmTradeUrl?: (trade: ClosedTrade) => Promise<string | undefined>
+  findTmmTradeUrls?: (trades: ClosedTrade[]) => Promise<Array<string | undefined>>
+  updateTmmTradeVideoPath?: (tradeUrl: string, videoPath: string) => Promise<boolean>
   now?: () => number
 }
 
@@ -129,6 +139,7 @@ export type TradeClipPipeline = {
   clearQueue: () => Promise<ClearClipQueueResult>
   createClipForClosedTrade: (trade: ClosedTrade, options?: CreateClipOptions) => Promise<ClipQueueItem>
   createManualBufferClip: (input?: ManualBufferClipInput) => Promise<ClipQueueItem>
+  syncTmmTradeLinks: () => Promise<SyncTmmTradeLinksResult>
   deleteQueueFiles: () => Promise<ClearClipQueueResult>
   listPendingClips: () => Promise<ClipQueueItem[]>
   renameClipFile: (input: { metadataPath: string, fileName: string }) => Promise<RenameClipFileResult>
@@ -164,6 +175,7 @@ const toClipQueueItem = (metadata: TradeClipMetadata): ClipQueueItem => ({
   exitTimeMs: metadata.exitTimeMs,
   durationSeconds: metadata.durationSeconds,
   createdAtMs: metadata.createdAtMs,
+  ...(metadata.tmmTradeUrl ? { tmmTradeUrl: metadata.tmmTradeUrl } : {}),
   ...(metadata.captureTarget ? { captureTarget: metadata.captureTarget } : {})
 })
 
@@ -269,6 +281,9 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     })
   })
   const now = deps.now ?? (() => Date.now())
+  const updateTmmVideoPath = async (tradeUrl: string, videoPath: string): Promise<boolean> => (
+    deps.updateTmmTradeVideoPath?.(tradeUrl, videoPath).catch(() => false) ?? Promise.resolve(false)
+  )
   let temporaryClipSequence = 0
 
   const nextTemporaryClipPath = (videoPath: string): string => {
@@ -283,6 +298,58 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     return items
       .filter((item): item is ClipQueueItem => item !== undefined)
       .sort((a, b) => b.createdAtMs - a.createdAtMs || basename(a.videoPath).localeCompare(basename(b.videoPath)))
+  }
+
+  const syncTmmTradeLinks = async (): Promise<SyncTmmTradeLinksResult> => {
+    const settings = await deps.getSettings()
+    const metadataFiles = await collectJsonFiles(resolve(settings.clip.outputDir))
+    const entries = (await Promise.all(metadataFiles.map(async (metadataPath) => ({
+      metadataPath,
+      metadata: await parseTradeClipMetadata(metadataPath)
+    }))))
+      .filter((item): item is { metadataPath: string, metadata: TradeClipMetadata } => Boolean(
+        item.metadata?.trade && item.metadata.trade.exchange !== 'TradeTools'
+      ))
+    const pending = entries.filter(({ metadata }) => !metadata.tmmTradeUrl)
+    const changedPaths = new Set<string>()
+
+    let links: Array<string | undefined> = []
+    if (pending.length > 0) {
+      try {
+        const foundLinks = deps.findTmmTradeUrls
+          ? await deps.findTmmTradeUrls(pending.map(({ metadata }) => metadata.trade))
+          : await Promise.all(pending.map(({ metadata }) => deps.findTmmTradeUrl?.(metadata.trade).catch(() => undefined)))
+        links = Array.isArray(foundLinks) ? foundLinks : []
+      } catch {
+        links = []
+      }
+    }
+
+    let matchedCount = 0
+    pending.forEach((entry, index) => {
+      const tmmTradeUrl = links[index]
+      if (!tmmTradeUrl) return
+      entry.metadata = { ...entry.metadata, tmmTradeUrl }
+      changedPaths.add(entry.metadataPath)
+      matchedCount += 1
+    })
+
+    await Promise.all(entries.map(async (entry) => {
+      const { metadata } = entry
+      if (!metadata.tmmTradeUrl || metadata.tmmVideoPath === metadata.videoPath) return
+      if (!await updateTmmVideoPath(metadata.tmmTradeUrl, metadata.videoPath)) return
+      entry.metadata = { ...metadata, tmmVideoPath: metadata.videoPath }
+      changedPaths.add(entry.metadataPath)
+    }))
+
+    await Promise.all(entries
+      .filter(({ metadataPath }) => changedPaths.has(metadataPath))
+      .map(({ metadataPath, metadata }) => writeFile(
+        metadataPath,
+        `${JSON.stringify(metadata, null, 2)}\n`,
+        'utf8'
+      )))
+    return { checkedCount: pending.length, matchedCount }
   }
 
   const clearQueue = async (deleteFiles: boolean): Promise<ClearClipQueueResult> => {
@@ -319,6 +386,10 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     const targetTrade: ClosedTrade = captureTarget
       ? { ...trade, recordingTarget: captureTarget }
       : trade
+    // ponytail: match only real terminal trades; manual recordings have no TMM counterpart.
+    const tmmTradeUrlPromise = targetTrade.exchange === 'TradeTools'
+      ? Promise.resolve(undefined)
+      : deps.findTmmTradeUrl?.(targetTrade).catch(() => undefined) ?? Promise.resolve(undefined)
 
     throwIfAborted(options.signal)
     const replaySave = await deps.saveReplayBuffer({
@@ -348,6 +419,14 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     const replayDurationSeconds = replayDetails.durationSeconds
     const paths = buildClipOutputPaths(settings.clip.outputDir, targetTrade, captureTarget)
     const readyClip = replaySave.readyClip === true && settings.recording.mode === 'window'
+    const expectedReadyClipDurationSeconds = targetTrade.exchange === 'TradeTools'
+      ? replayDurationSeconds
+      : Math.max(
+          0.001,
+          (targetTrade.exitTimeMs - targetTrade.entryTimeMs) / 1000 +
+          settings.clip.paddingBeforeSeconds +
+          settings.clip.paddingAfterSeconds
+        )
     const trim = readyClip
       ? {
           startSeconds: 0,
@@ -378,7 +457,9 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
           startSeconds: trim.startSeconds,
           endSeconds: trim.endSeconds,
           mode: 'reencode',
-          targetFrameRate: usableTargetFrameRate(replayDetails)
+          targetFrameRate: usableTargetFrameRate(replayDetails),
+          platform: process.platform,
+          videoEncoder: settings.recording.videoEncoder
         })
         await (options.signal ? runFfmpeg(ffmpegArgs, options.signal) : runFfmpeg(ffmpegArgs))
       }
@@ -386,8 +467,12 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       outputDetails = await getVideoDetails(temporaryVideoPath)
       assertUsableFrameRate(outputDetails, 'Готовый клип')
       const outputDurationSeconds = outputDetails.durationSeconds
-      if (outputDurationSeconds < minimumAcceptableOutputDuration(trim.durationSeconds)) {
-        throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${trim.durationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
+      const requiredOutputDurationSeconds = readyClip ? expectedReadyClipDurationSeconds : trim.durationSeconds
+      if (outputDurationSeconds < minimumAcceptableOutputDuration(requiredOutputDurationSeconds)) {
+        if (readyClip) {
+          throw new Error(`Встроенная запись создала неполный видеоряд: ${outputDurationSeconds.toFixed(2)}с вместо ожидаемых ${requiredOutputDurationSeconds.toFixed(2)}с. Клип не добавлен, чтобы не сохранять зависший хвост.`)
+        }
+        throw new Error(`ffmpeg создал слишком короткий клип: ${outputDurationSeconds.toFixed(2)}с вместо ${requiredOutputDurationSeconds}с. Проверьте время сделки из API и длительность буфера записи.`)
       }
       await rename(temporaryVideoPath, paths.videoPath)
       if (readyClip) metadataReplayPath = paths.videoPath
@@ -396,6 +481,10 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       throw error
     }
     const outputStat = await stat(paths.videoPath)
+    const tmmTradeUrl = await tmmTradeUrlPromise
+    const tmmVideoPathSynced = tmmTradeUrl
+      ? await updateTmmVideoPath(tmmTradeUrl, paths.videoPath)
+      : false
 
     const names = buildClipFileNames(targetTrade, captureTarget)
     const item: ClipQueueItem = {
@@ -413,10 +502,12 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       exitTimeMs: targetTrade.exitTimeMs,
       durationSeconds: trim.durationSeconds,
       createdAtMs: now(),
+      ...(tmmTradeUrl ? { tmmTradeUrl } : {}),
       ...(captureTarget ? { captureTarget } : {})
     }
     const metadata: TradeClipMetadata = {
       ...item,
+      ...(tmmVideoPathSynced ? { tmmVideoPath: paths.videoPath } : {}),
       replayPath: metadataReplayPath,
       replaySavedAtMs,
       replayDurationSeconds,
@@ -524,6 +615,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
 
       return createClipForClosedTrade(trade, input)
     },
+    syncTmmTradeLinks,
     deleteQueueFiles: () => clearQueue(true),
     listPendingClips,
     async renameClipFile(input) {
@@ -564,12 +656,16 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
       })
 
       await rename(currentVideoPath, nextVideoPath)
+      const tmmVideoPathSynced = metadata.tmmTradeUrl
+        ? await updateTmmVideoPath(metadata.tmmTradeUrl, nextVideoPath)
+        : false
       const nextMetadata: TradeClipMetadata = {
         ...metadata,
         title: nextFileName.replace(/\.mp4$/i, ''),
         fileName: nextFileName,
         videoPath: nextVideoPath,
-        metadataPath: resolvedMetadataPath
+        metadataPath: resolvedMetadataPath,
+        tmmVideoPath: tmmVideoPathSynced ? nextVideoPath : undefined
       }
       await writeFile(resolvedMetadataPath, `${JSON.stringify(nextMetadata, null, 2)}\n`, 'utf8')
 

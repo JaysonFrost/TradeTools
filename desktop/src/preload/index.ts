@@ -6,7 +6,7 @@ import type { AppSettings, LocalProxyType, ProxyRecord, SettingsUpdateInput } fr
 import type { ClearClipQueueResult, ClipProcessingStatus, ClipQueueItem, DeleteClipFileResult, DeleteClipFromQueueResult, RenameClipFileResult } from '../main/services/trades/tradeClipPipeline'
 import type { TerminalTradeRecordingStatus } from '../main/services/trades/terminalTradeRecorder'
 import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
-import type { FreeRecordingFinishResult, FreeRecordingStatus, VideoCacheClearResult, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput } from '../main/services/recording/windowRecorderService'
+import type { FreeRecordingFinishResult, FreeRecordingStatus, VideoCacheClearResult, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput, WindowRecordingStartedInput, WindowRecordingStoppedInput } from '../main/services/recording/windowRecorderService'
 import type { AppLogSnapshot } from '../main/services/logging/appLogService'
 import type { VideoEncoderOption } from '../main/services/video/videoEncoderDevices'
 
@@ -88,6 +88,11 @@ const api = {
     get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
     update: (patch: SettingsUpdateInput): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch)
   },
+  tmm: {
+    getStatus: (): Promise<{ apiKeyConfigured: boolean }> => ipcRenderer.invoke('tmm:get-status'),
+    saveApiKey: (apiKey: string): Promise<{ apiKeyConfigured: boolean, sync?: { checkedCount: number, matchedCount: number } }> => ipcRenderer.invoke('tmm:save-api-key', apiKey),
+    clearApiKey: (): Promise<{ apiKeyConfigured: boolean }> => ipcRenderer.invoke('tmm:clear-api-key')
+  },
   clipboard: {
     writeText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write-text', text)
   },
@@ -157,6 +162,8 @@ const api = {
     finishFree: (): Promise<FreeRecordingFinishResult> => ipcRenderer.invoke('recording:free-finish'),
     clearCache: (): Promise<VideoCacheClearResult> => ipcRenderer.invoke('recording:clear-cache'),
     stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
+    browserStarted: (input: WindowRecordingStartedInput): Promise<void> => ipcRenderer.invoke('recording:browser-started', input),
+    browserStopped: (input: WindowRecordingStoppedInput): Promise<void> => ipcRenderer.invoke('recording:browser-stopped', input),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input),
     onEnsureWindowRecording: (callback: () => void): (() => void) => {
       const listener = () => callback()

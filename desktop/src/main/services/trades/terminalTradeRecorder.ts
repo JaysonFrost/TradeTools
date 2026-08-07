@@ -51,7 +51,7 @@ export type TerminalTradeWatcher = {
 export type TerminalTradeWatcherInput = {
   getSettings: () => Promise<AppSettings>
   getRecordingStartedAtMs?: () => number | undefined
-  ensureVideoRecordingReady: () => Promise<boolean>
+  ensureVideoRecordingReady: (event: TerminalPositionEvent, recordingTarget?: CaptureTargetRef) => Promise<boolean>
   protectSince: (timeMs?: number) => void
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
   resolveRecordingTarget?: (event: TerminalPositionEvent) => Promise<CaptureTargetRef | undefined>
@@ -93,7 +93,19 @@ const metaScalpPorts = Array.from({ length: 11 }, (_, index) => 17_845 + index)
 const metaScalpProbeCooldownMs = 5_000
 const metaScalpRequestTimeoutMs = 900
 const tigerTradeReplayExecutionToleranceMs = 6 * 60 * 60 * 1000
+const crossSourceDuplicateToleranceMs = 1_000
+const recentClosedTradeTtlMs = 60_000
 const zeroTolerance = 1e-12
+
+type RecentClosedTerminalTrade = {
+  source: TerminalTradeSource
+  exchange: string
+  symbol: string
+  side: string
+  entryTimeMs: number
+  exitTimeMs: number
+  rememberedAtMs: number
+}
 
 const sourceDisplayNames: Record<TerminalTradeSource, string> = {
   vataga: 'Vataga',
@@ -635,7 +647,10 @@ export const createTerminalTradeWatcher = ({
 
   const activeTrades = new Map<string, OpenTerminalTrade>()
   const positionTradeKeys = new Map<string, string>()
+  const suppressedTradePositions = new Map<string, Set<string>>()
+  const suppressedPositionTradeKeys = new Map<string, string>()
   const renderedTradeIds = new Set<string>()
+  const recentClosedTrades: RecentClosedTerminalTrade[] = []
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
   let metaScalpKnownOpenPositions = new Map<string, TerminalPositionEvent>()
@@ -667,14 +682,26 @@ export const createTerminalTradeWatcher = ({
     protectSince()
   }
 
+  const resetLogProvidersForReplay = () => {
+    for (const provider of providers) {
+      provider.cursors.clear()
+      provider.initialized = false
+    }
+    tigerTradeExecutionTimes.clear()
+  }
+
   const syncRecordingBoundary = (settings: AppSettings) => {
     if (settings.recording.mode !== 'window' || !getRecordingStartedAtMs) return
 
     const nextRecordingStartedAtMs = getRecordingStartedAtMs()
     if (nextRecordingStartedAtMs === lastRecordingStartedAtMs) return
 
+    const recordingWasActive = Boolean(lastRecordingStartedAtMs)
+    const recordingIsActive = Boolean(nextRecordingStartedAtMs)
     lastRecordingStartedAtMs = nextRecordingStartedAtMs
-    if (activeTrades.size > 0 && nextRecordingStartedAtMs) return
+    if (recordingWasActive && recordingIsActive) return
+
+    if (!recordingWasActive && recordingIsActive) resetLogProvidersForReplay()
 
     clearActiveTrades()
     emit({
@@ -697,7 +724,7 @@ export const createTerminalTradeWatcher = ({
 
   const emitAvailabilityStatus = () => {
     const sources = availableSources()
-    if (activeTrades.size > 0) {
+    if (activeTrades.size > 0 || suppressedTradePositions.size > 0) {
       if (!hasSameAvailableSources(sources)) emit({ availableSources: sources })
       return
     }
@@ -761,6 +788,41 @@ export const createTerminalTradeWatcher = ({
     ...(recordingTarget ? { recordingTarget } : {})
   })
 
+  const prepareOpenTrade = async (
+    event: TerminalPositionEvent,
+    tradeKey: string,
+    positionKey: string
+  ): Promise<OpenTerminalTrade | undefined> => {
+    const recordingTarget = await resolveTradeRecordingTarget(event)
+    const ready = await ensureVideoRecordingReady(event, recordingTarget).catch(() => false)
+    return ready ? createOpenTrade(event, tradeKey, positionKey, '', recordingTarget) : undefined
+  }
+
+  const suppressOpenPosition = (tradeKey: string, positionKey: string) => {
+    const positions = suppressedTradePositions.get(tradeKey) ?? new Set<string>()
+    positions.add(positionKey)
+    suppressedTradePositions.set(tradeKey, positions)
+    suppressedPositionTradeKeys.set(positionKey, tradeKey)
+  }
+
+  const releaseSuppressedPosition = (tradeKey: string, positionKey: string) => {
+    const positions = suppressedTradePositions.get(tradeKey)
+    if (!positions) return
+
+    positions.delete(positionKey)
+    suppressedPositionTradeKeys.delete(positionKey)
+    if (positions.size === 0) suppressedTradePositions.delete(tradeKey)
+  }
+
+  const emitBufferWarming = (event: TerminalPositionEvent, sourceName: string) => {
+    emit({
+      source: event.source,
+      message: `${sourceName}: видеобуфер для ${event.symbol} ещё не набрал отступ до входа, эту сделку пропускаем`,
+      lastEventAtMs: event.eventTimeMs,
+      lastError: undefined
+    })
+  }
+
   const registerOpenPosition = (tradeKey: string, openTrade: OpenTerminalTrade, positionKey: string) => {
     openTrade.positionKeys.add(positionKey)
     positionTradeKeys.set(positionKey, tradeKey)
@@ -769,6 +831,37 @@ export const createTerminalTradeWatcher = ({
   const forgetOpenPositions = (openTrade: OpenTerminalTrade) => {
     for (const positionKey of openTrade.positionKeys) positionTradeKeys.delete(positionKey)
     openTrade.positionKeys.clear()
+  }
+
+  const normalizedClosedTradeFingerprint = (
+    source: TerminalTradeSource,
+    trade: ClosedTrade,
+    rememberedAtMs: number
+  ): RecentClosedTerminalTrade => ({
+    source,
+    exchange: normalizeExchangeName(trade.exchange, 'TERMINAL'),
+    symbol: normalizeTerminalSymbol(trade.symbol),
+    side: normalizeAnyText(trade.side).toUpperCase(),
+    entryTimeMs: trade.entryTimeMs,
+    exitTimeMs: trade.exitTimeMs,
+    rememberedAtMs
+  })
+
+  const isRecentCrossSourceDuplicate = (source: TerminalTradeSource, trade: ClosedTrade): boolean => {
+    const nowMs = Date.now()
+    while (recentClosedTrades.length > 0 && nowMs - recentClosedTrades[0].rememberedAtMs > recentClosedTradeTtlMs) {
+      recentClosedTrades.shift()
+    }
+
+    const candidate = normalizedClosedTradeFingerprint(source, trade, nowMs)
+    return recentClosedTrades.some((recent) => (
+      recent.source !== candidate.source
+      && recent.exchange === candidate.exchange
+      && recent.symbol === candidate.symbol
+      && recent.side === candidate.side
+      && Math.abs(recent.entryTimeMs - candidate.entryTimeMs) <= crossSourceDuplicateToleranceMs
+      && Math.abs(recent.exitTimeMs - candidate.exitTimeMs) <= crossSourceDuplicateToleranceMs
+    ))
   }
 
   const createClosedTradeClip = async (
@@ -788,6 +881,7 @@ export const createTerminalTradeWatcher = ({
       ...(openTrade.recordingTarget ? { recordingTarget: openTrade.recordingTarget } : {})
     }
 
+    if (isRecentCrossSourceDuplicate(event.source, closedTrade)) return undefined
     if (renderedTradeIds.has(closedTrade.id)) return undefined
     renderedTradeIds.add(closedTrade.id)
     emit({
@@ -798,6 +892,7 @@ export const createTerminalTradeWatcher = ({
     })
     await protectActiveTrades()
     await createClipForClosedTrade(closedTrade)
+    recentClosedTrades.push(normalizedClosedTradeFingerprint(event.source, closedTrade, Date.now()))
     return closedTrade
   }
 
@@ -840,8 +935,18 @@ export const createTerminalTradeWatcher = ({
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
     const sourceName = sourceDisplayNames[event.source]
     const positionKey = getPositionKey(event)
-    const tradeKey = positionTradeKeys.get(positionKey) ?? getTradeKey(event)
+    const tradeKey = suppressedPositionTradeKeys.get(positionKey) ?? positionTradeKeys.get(positionKey) ?? getTradeKey(event)
     const eventClosesPosition = event.isClosed || (typeof event.size === 'number' && isNearlyZero(event.size))
+    const suppressedPositions = suppressedTradePositions.get(tradeKey)
+
+    if (suppressedPositions) {
+      if (eventClosesPosition) releaseSuppressedPosition(tradeKey, positionKey)
+      else {
+        suppressOpenPosition(tradeKey, positionKey)
+        emitBufferWarming(event, sourceName)
+      }
+      return
+    }
 
     if (!eventClosesPosition) {
       if (await isBeforeActiveRecording(event)) return
@@ -852,10 +957,20 @@ export const createTerminalTradeWatcher = ({
           try {
             const closedTrade = await closePositionTrade(openTrade, event, sourceName)
             forgetOpenPositions(openTrade)
-            const nextTrade = createOpenTrade(event, tradeKey, positionKey, '', await resolveTradeRecordingTarget(event))
-            activeTrades.set(tradeKey, nextTrade)
-            positionTradeKeys.set(positionKey, tradeKey)
+            activeTrades.delete(tradeKey)
+            const nextTrade = await prepareOpenTrade(event, tradeKey, positionKey)
+            if (nextTrade) {
+              activeTrades.set(tradeKey, nextTrade)
+              positionTradeKeys.set(positionKey, tradeKey)
+            } else {
+              suppressOpenPosition(tradeKey, positionKey)
+            }
             if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
+            if (!nextTrade) {
+              await protectActiveTrades()
+              emitBufferWarming(event, sourceName)
+              return
+            }
           } catch (error) {
             forgetOpenPositions(openTrade)
             activeTrades.delete(tradeKey)
@@ -868,12 +983,17 @@ export const createTerminalTradeWatcher = ({
           if (typeof event.size === 'number' && Number.isFinite(event.size)) openTrade.size = event.size
         }
       } else {
-        const nextTrade = createOpenTrade(event, tradeKey, positionKey, '', await resolveTradeRecordingTarget(event))
+        const nextTrade = await prepareOpenTrade(event, tradeKey, positionKey)
+        if (!nextTrade) {
+          suppressOpenPosition(tradeKey, positionKey)
+          await protectActiveTrades()
+          emitBufferWarming(event, sourceName)
+          return
+        }
         activeTrades.set(tradeKey, nextTrade)
         positionTradeKeys.set(positionKey, tradeKey)
       }
 
-      await ensureVideoRecordingReady().catch(() => false)
       await protectActiveTrades()
       emit({
         source: event.source,
@@ -966,14 +1086,16 @@ export const createTerminalTradeWatcher = ({
       })
     }
 
-    if (provider.source === 'tigertrade' && initialReplayEvents.size > 0) {
+    if (initialReplayEvents.size > 0) {
       const recordingStartedAtMs = getRecordingStartedAtMs?.()
       if (recordingStartedAtMs) {
         for (const event of initialReplayEvents.values()) {
           if (event.isClosed || isNearlyZero(event.size ?? Number.NaN)) continue
-          const executionTimeMs = tigerTradeExecutionTimes.get(event.positionId)
-          if (!executionTimeMs || Math.abs(event.eventTimeMs - executionTimeMs) > tigerTradeReplayExecutionToleranceMs) continue
-          enqueueEvent({ ...event, eventTimeMs: recordingStartedAtMs })
+          if (provider.source === 'tigertrade') {
+            const executionTimeMs = tigerTradeExecutionTimes.get(event.positionId)
+            if (!executionTimeMs || Math.abs(event.eventTimeMs - executionTimeMs) > tigerTradeReplayExecutionToleranceMs) continue
+          }
+          enqueueEvent({ ...event, eventTimeMs: Math.max(event.eventTimeMs, recordingStartedAtMs) })
         }
       }
     }
@@ -1089,6 +1211,8 @@ export const createTerminalTradeWatcher = ({
       if (timer) clearInterval(timer)
       timer = undefined
       clearActiveTrades()
+      suppressedTradePositions.clear()
+      suppressedPositionTradeKeys.clear()
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       emit({ active: false, startedAtMs: 0, source: 'multi-terminal', availableSources: [], message: 'Автозапись терминалов остановлена' })

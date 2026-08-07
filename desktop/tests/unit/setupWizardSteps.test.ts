@@ -11,7 +11,7 @@ describe('setupWizardSteps', () => {
       'test-clip',
       'video-done'
     ])
-    expect(videoSetupWizardSteps[0].actions).toContain('Включим встроенную запись открытого терминала без API')
+    expect(videoSetupWizardSteps[0].actions).toContain('Включим встроенную запись окна или экрана открытого терминала без API')
     expect(videoSetupWizardSteps.map((step) => step.id)).not.toContain('trade-source')
     expect(setupWizardSteps).toBe(videoSetupWizardSteps)
   })
@@ -24,7 +24,7 @@ describe('setupWizardSteps', () => {
       'proxy-check',
       'proxy-done'
     ])
-    expect(proxySetupWizardSteps.find((step) => step.id === 'proxy-server')?.title).toBe('Добавьте два сервера')
+    expect(proxySetupWizardSteps.find((step) => step.id === 'proxy-server')?.title).toBe('Добавьте серверы')
     expect(proxySetupWizardSteps.find((step) => step.id === 'proxy-check')?.goal).toContain('поднимет локальный proxy')
   })
 

@@ -18,6 +18,6 @@ describe('clip preview', () => {
 
     expect(source).toContain('openPreview')
     expect(source).toContain('clip.videoPath')
-    expect(source).toContain('Предпросмотр')
+    expect(source).toContain('Открыть предпросмотр клипа')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFfmpegTrimArgs, buildH264VideoArgs } from '../../src/main/services/video/ffmpegCommand'
+import { buildFfmpegTrimArgs, buildH264VideoArgs, calculateFfmpegRenderThreads } from '../../src/main/services/video/ffmpegCommand'
 
 describe('buildFfmpegTrimArgs', () => {
   it('builds a safe stream-copy trim command argument list', () => {
@@ -19,9 +19,16 @@ describe('buildFfmpegTrimArgs', () => {
       startSeconds: 1.25,
       endSeconds: 8.5,
       mode: 'reencode',
-      targetFrameRate: 59.94
+      targetFrameRate: 59.94,
+      platform: 'linux',
+      videoEncoder: 'cpu',
+      renderThreads: 2
     })).toEqual([
       '-y',
+      '-threads',
+      '2',
+      '-filter_threads',
+      '1',
       '-fflags',
       '+genpts',
       '-ss',
@@ -42,6 +49,8 @@ describe('buildFfmpegTrimArgs', () => {
       '18',
       '-pix_fmt',
       'yuv420p',
+      '-threads',
+      '2',
       '-r',
       '59.94',
       '-fps_mode',
@@ -56,6 +65,31 @@ describe('buildFfmpegTrimArgs', () => {
       '+faststart',
       '/tmp/clip.mp4'
     ])
+  })
+
+  it('uses the selected GPU encoder for a Windows clip render', () => {
+    const args = buildFfmpegTrimArgs({
+      inputPath: 'C:/replay.webm',
+      outputPath: 'C:/clip.mp4',
+      startSeconds: 0,
+      endSeconds: 30,
+      mode: 'reencode',
+      platform: 'win32',
+      videoEncoder: 'gpu:nvidia:0',
+      renderThreads: 2
+    })
+
+    expect(args).toContain('h264_nvenc')
+    expect(args).not.toContain('libx264')
+    expect(args.slice(0, args.indexOf('-i'))).toEqual(expect.arrayContaining(['-threads', '2', '-filter_threads', '1']))
+    expect(args.slice(args.indexOf('-i') + 1)).toEqual(expect.arrayContaining(['-threads', '2']))
+  })
+
+  it('keeps render workers below all available logical cores', () => {
+    expect(calculateFfmpegRenderThreads(16)).toBe(2)
+    expect(calculateFfmpegRenderThreads(4)).toBe(2)
+    expect(calculateFfmpegRenderThreads(2)).toBe(1)
+    expect(calculateFfmpegRenderThreads(1)).toBe(1)
   })
 
   it('rejects invalid trim ranges', () => {
@@ -166,6 +200,51 @@ describe('buildFfmpegTrimArgs', () => {
       'zerolatency',
       '-crf',
       '20',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+  })
+
+  it('uses a high-quality native profile without replacing the selected encoder', () => {
+    expect(buildH264VideoArgs({
+      platform: 'win32',
+      purpose: 'recording',
+      encoder: 'gpu:nvidia:1',
+      quality: 'native'
+    })).toEqual([
+      '-c:v',
+      'h264_nvenc',
+      '-gpu',
+      '1',
+      '-preset',
+      'p5',
+      '-tune',
+      'hq',
+      '-rc',
+      'vbr',
+      '-cq',
+      '14',
+      '-b:v',
+      '60M',
+      '-maxrate',
+      '90M',
+      '-bufsize',
+      '120M',
+      '-pix_fmt',
+      'yuv420p'
+    ])
+    expect(buildH264VideoArgs({
+      platform: 'win32',
+      purpose: 'export',
+      encoder: 'cpu',
+      quality: 'native'
+    })).toEqual([
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '14',
       '-pix_fmt',
       'yuv420p'
     ])

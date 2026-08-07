@@ -19,6 +19,61 @@ const dateKey = (value: number | Date): string => {
 
 const startOfDay = (value: Date): Date => new Date(value.getFullYear(), value.getMonth(), value.getDate())
 
+const normalizeSearchText = (value: unknown): string => String(value ?? '')
+  .toLocaleLowerCase('ru-RU')
+  .replace(/\\/g, '/')
+  .replace(/\s+/g, ' ')
+  .trim()
+
+const dateSearchText = (value: number): string => {
+  const date = new Date(value)
+  if (!Number.isFinite(value) || Number.isNaN(date.getTime())) return ''
+  const year = String(date.getFullYear())
+  const shortYear = year.slice(-2)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+
+  return [
+    value,
+    `${year}-${month}-${day}`,
+    `${day}.${month}.${year}`,
+    `${day}.${month}.${shortYear}`,
+    `${day}/${month}/${year}`,
+    `${hours}:${minutes}`,
+    `${hours}:${minutes}:${seconds}`,
+    date.toISOString()
+  ].join(' ')
+}
+
+export const filterClips = (clips: ClipQueueItem[], query: string): ClipQueueItem[] => {
+  const terms = normalizeSearchText(query).split(' ').filter(Boolean)
+  if (terms.length === 0) return clips
+
+  return clips.filter((clip) => {
+    const searchableText = normalizeSearchText([
+      clip.videoPath,
+      clip.metadataPath,
+      clip.fileName,
+      clip.title,
+      clip.symbol,
+      clip.exchange,
+      clip.side,
+      clip.marketType,
+      clip.tmmTradeUrl,
+      clip.durationSeconds,
+      dateSearchText(clip.entryTimeMs),
+      dateSearchText(clip.exitTimeMs),
+      dateSearchText(clip.createdAtMs),
+      clip.captureTarget ? JSON.stringify(clip.captureTarget) : ''
+    ].join(' '))
+
+    return terms.every((term) => searchableText.includes(term))
+  })
+}
+
 const compareValues = (left: number | string, right: number | string): number => (
   typeof left === 'string' && typeof right === 'string'
     ? left.localeCompare(right, 'ru', { sensitivity: 'base' })

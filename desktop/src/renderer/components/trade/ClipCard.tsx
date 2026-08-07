@@ -1,4 +1,4 @@
-import { Check, Copy, FolderOpen, Pencil, Play, Trash2, X } from 'lucide-react'
+import { Check, Copy, ExternalLink, FolderOpen, Pencil, Play, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ClipQueueItem } from '../../../main/services/trades/tradeClipPipeline'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -82,6 +82,16 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
     }
   }
 
+  const openTmmTrade = async () => {
+    if (!clip.tmmTradeUrl) return
+    setManualMessage('')
+    try {
+      await getTradeToolsApi().links.openExternal(clip.tmmTradeUrl)
+    } catch (error) {
+      setManualMessage(error instanceof Error ? error.message : 'Не удалось открыть сделку в TMM')
+    }
+  }
+
   const startRename = () => {
     setFileNameInput(clip.fileName)
     setManualMessage('')
@@ -122,10 +132,10 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
   }
 
   return (
-    <Card>
-      <div className="flex gap-4">
+    <Card className="rounded-2xl p-3">
+      <div className="flex gap-3">
         {onSelectedChange && (
-          <label className="flex h-24 shrink-0 cursor-pointer items-center px-1" title="Выбрать клип">
+          <label className="flex h-16 shrink-0 cursor-pointer items-center px-1" title="Выбрать клип">
             <input
               className="h-4 w-4 cursor-pointer accent-violet-500"
               checked={selected}
@@ -137,24 +147,24 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
         )}
         <button
           type="button"
-          className="flex h-24 w-36 shrink-0 cursor-pointer items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br from-violet-600/40 to-black transition hover:border-violet-300/40 hover:bg-violet-500/10"
+          className="flex h-16 w-24 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-violet-600/40 to-black transition hover:border-violet-300/40 hover:bg-violet-500/10"
           onClick={() => void openPreview()}
           disabled={previewing}
           title="Открыть предпросмотр"
           aria-label="Открыть предпросмотр клипа"
         >
-          <Play />
+          <Play size={18} />
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="m-0 truncate text-base font-semibold">{clip.title}</h3>
+            <h3 className="m-0 truncate text-sm font-semibold">{clip.title}</h3>
           </div>
-          <p className="mono mt-2 truncate text-xs text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.videoPath}</p>
-          <div className="mt-3">
+          <p className="mono mt-1 truncate text-[11px] text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.fileName}</p>
+          <div className="mt-2">
             {editingFileName ? (
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
-                  className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60"
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-zinc-100 outline-none transition focus:border-violet-400/60"
                   value={fileNameInput}
                   onChange={(event) => setFileNameInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -164,50 +174,52 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
                   aria-label="Имя файла клипа"
                 />
                 <div className="flex gap-2">
-                  <Button variant="ghost" onClick={() => void saveFileName()} disabled={renaming}>
-                    <Check size={16} className="mr-2" />{renaming ? 'Сохраняем...' : 'Сохранить'}
+                  <Button variant="ghost" className="min-h-8 rounded-lg px-2 py-1 text-xs" onClick={() => void saveFileName()} disabled={renaming}>
+                    <Check size={14} className="mr-1" />{renaming ? 'Сохраняем...' : 'Сохранить'}
                   </Button>
-                  <Button variant="ghost" onClick={cancelRename} disabled={renaming}>
-                    <X size={16} className="mr-2" />Отмена
+                  <Button variant="ghost" className="min-h-8 rounded-lg px-2 py-1 text-xs" onClick={cancelRename} disabled={renaming}>
+                    <X size={14} className="mr-1" />Отмена
                   </Button>
                 </div>
               </div>
             ) : (
-              <Button variant="ghost" onClick={startRename}>
-                <Pencil size={16} className="mr-2" />Переименовать файл
-              </Button>
+              <div />
             )}
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => void openPreview()} disabled={previewing}>{previewing ? 'Открываем...' : 'Предпросмотр'}</Button>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button variant="ghost" className="min-h-7 rounded-md border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-100 hover:bg-violet-500/20" onClick={() => void openPreview()} disabled={previewing}><Play size={13} className="mr-1" />{previewing ? 'Открываем...' : 'Смотреть'}</Button>
             <Button
               variant="ghost"
-              className="border-red-500/25 text-red-100 hover:bg-red-500/10"
+              className="min-h-7 rounded-md border-sky-400/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20 disabled:text-zinc-500"
+              onClick={() => void openTmmTrade()}
+              disabled={!clip.tmmTradeUrl}
+              title={clip.tmmTradeUrl ? 'Открыть эту сделку в дневнике TraderMake.Money' : 'Для этого клипа сделка в TMM пока не найдена'}
+            >
+              <ExternalLink size={13} className="mr-1" />{clip.tmmTradeUrl ? 'Открыть сделку в TMM' : 'Сделка TMM не найдена'}
+            </Button>
+            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={() => void showInFolder()}><FolderOpen size={13} className="mr-1" />В папке</Button>
+            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={startRename}><Pencil size={13} className="mr-1" />Переименовать</Button>
+            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={() => void copyManualText(clip.title, 'Название скопировано')}><Copy size={13} className="mr-1" />Скопировать</Button>
+            <Button
+              variant="ghost"
+              className="min-h-7 rounded-md border-red-500/25 px-2 py-1 text-[11px] text-red-100 hover:bg-red-500/15"
               onClick={() => void deleteFromQueue()}
               disabled={deleting || deletingFile}
             >
-              <Trash2 size={16} className="mr-2" />{deleting ? 'Удаляем...' : 'Убрать из очереди'}
+              <Trash2 size={13} className="mr-1" />{deleting ? 'Удаляем...' : 'Убрать из списка'}
             </Button>
             <Button
               variant="ghost"
-              className="border-red-500/30 text-red-100 hover:bg-red-500/10"
+              className="min-h-7 rounded-md border-red-500/30 px-2 py-1 text-[11px] text-red-100 hover:bg-red-500/15"
               onClick={() => void deleteFile()}
               disabled={deleting || deletingFile}
             >
-              <Trash2 size={16} className="mr-2" />{deletingFile ? 'Удаляем...' : 'Удалить файл'}
+              <Trash2 size={13} className="mr-1" />{deletingFile ? 'Удаляем...' : 'Удалить видео с диска'}
             </Button>
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => void showInFolder()}>
-              <FolderOpen size={16} className="mr-2" />Открыть файл
-            </Button>
-            <Button variant="ghost" onClick={() => void copyManualText(clip.title, 'Название скопировано')}>
-              <Copy size={16} className="mr-2" />Скопировать название
-            </Button>
-          </div>
-          {previewMessage && <p className="mt-3 text-sm text-amber-200">{previewMessage}</p>}
-          {deleteMessage && <p className="mt-3 text-sm text-amber-200">{deleteMessage}</p>}
-          {manualMessage && <p className="mt-3 text-sm text-zinc-300">{manualMessage}</p>}
+          {previewMessage && <p className="mt-2 text-xs text-amber-200">{previewMessage}</p>}
+          {deleteMessage && <p className="mt-2 text-xs text-amber-200">{deleteMessage}</p>}
+          {manualMessage && <p className="mt-2 text-xs text-zinc-300">{manualMessage}</p>}
         </div>
       </div>
     </Card>

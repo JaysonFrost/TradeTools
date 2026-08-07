@@ -53,7 +53,8 @@ describe('Dashboard layout', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(clipCardSource).toContain('Переименовать файл')
+    expect(clipCardSource).toContain('Имя файла клипа')
+    expect(clipCardSource).toContain('Переименовать')
     expect(clipCardSource).toContain('clips.renameFile')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:rename-file'")
     expect(appSource).toContain("ipcMain.handle('clips:rename-file'")
@@ -64,7 +65,7 @@ describe('Dashboard layout', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(clipCardSource).toContain('Удалить файл')
+    expect(clipCardSource).toContain('Удалить видео с диска')
     expect(clipCardSource).toContain('clips.deleteFile')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:delete-file'")
     expect(appSource).toContain("ipcMain.handle('clips:delete-file'")
@@ -76,7 +77,7 @@ describe('Dashboard layout', () => {
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const queueSectionSource = dashboardSource.slice(dashboardSource.indexOf('Очередь проверки'))
 
-    expect(queueSectionSource).toContain('Открыть папку с видео')
+    expect(queueSectionSource).toContain('Открыть папку')
     expect(queueSectionSource).toContain('onOpenClipFolder')
     expect(dashboardSource).toContain('clips.openOutputFolder()')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:open-output-folder'")
@@ -118,8 +119,8 @@ describe('Dashboard layout', () => {
     expect(controllerSource).toContain('findPreferredTerminalSource')
     expect(controllerSource).toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
-    expect(controllerSource).toContain('settings.recording.systemAudioEnabled')
-    expect(controllerSource).toContain('settings.recording.microphoneEnabled')
+    expect(controllerSource).toContain('currentSettings.recording.systemAudioEnabled')
+    expect(controllerSource).toContain('currentSettings.recording.microphoneEnabled')
     expect(controllerSource).toContain('navigator.mediaDevices.getDisplayMedia')
     expect(controllerSource).toContain("navigator.mediaDevices.getUserMedia({ audio: true, video: false })")
     expect(controllerSource).toContain('new MediaStream')
@@ -171,7 +172,7 @@ describe('Dashboard layout', () => {
     expect(controllerSource).toContain('settings.recording.captureTargets')
     expect(controllerSource).toContain('source.displayId === target.displayId')
     expect(controllerSource).toContain('targetNeedsSync')
-    expect(controllerSource).toContain("`${target.id}:${target.name}:${target.type}:${target.displayId ?? ''}`")
+    expect(controllerSource).toContain("`${target.id}:${target.name}:${target.type}:${target.processId ?? ''}:${target.displayId ?? ''}`")
   })
 
   it('renames video recording settings to recording settings', async () => {
@@ -256,8 +257,8 @@ describe('Dashboard layout', () => {
 
     expect(dashboardSource).toContain('onClearQueue')
     expect(dashboardSource).toContain('onDeleteQueueFiles')
-    expect(dashboardSource).toContain('Очистить очередь')
-    expect(dashboardSource).toContain('Удалить все файлы')
+    expect(dashboardSource).toContain('Убрать все из списка')
+    expect(dashboardSource).toContain('Удалить все видео')
     expect(dashboardSource).toContain('Свободная запись добавлена в очередь')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:clear-queue'")
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:delete-queue-files'")
@@ -326,7 +327,7 @@ describe('Dashboard layout', () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const queueSectionSource = dashboardSource.slice(dashboardSource.indexOf('Очередь проверки'))
 
-    expect(queueSectionSource).toContain('max-h-[560px]')
+    expect(queueSectionSource).toContain('max-h-[620px]')
     expect(queueSectionSource).toContain('overflow-y-auto')
   })
 
@@ -364,7 +365,7 @@ describe('Dashboard layout', () => {
     expect(recordingPanelSource).not.toContain('Сделки: <span className="text-zinc-300">{terminalStatus}</span>')
   })
 
-  it('restarts background window recording only when main asks while background recording is enabled', async () => {
+  it('reconciles background window sources with fresh settings only when main asks', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -373,12 +374,26 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain("ipcRenderer.on('recording:ensure-window'")
     expect(dashboardSource).toContain('recordingEnsureKey')
     expect(dashboardSource).toContain('onEnsureWindowRecording')
-    expect(dashboardSource).toContain('startBackgroundRecording({ silent: true })')
-    expect(dashboardSource).toContain('if (backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })')
-    expect(dashboardSource).not.toContain('if (!backgroundRecordingEnabledRef.current) void startBackgroundRecording({ silent: true })')
+    expect(dashboardSource).toContain('if (!backgroundRecordingEnabledRef.current) return')
+    expect(dashboardSource).toContain('api.settings.get()')
+    expect(dashboardSource).toContain('setSettings(nextSettings)')
+    expect(dashboardSource).toContain('setRecordingEnsureKey((current) => current + 1)')
     expect(dashboardSource).toContain('recordingEnsureKey={recordingEnsureKey}')
     expect(controllerSource).toContain('recordingEnsureKey?: number')
-    expect(controllerSource).toContain('recordingEnsureKey')
+    expect(controllerSource).toContain('requestReconcileRef.current?.()')
+    expect(controllerSource).toContain('const browserRecorders = new Map<string, BrowserRecorderSession>()')
+    expect(controllerSource).toContain('findAutoRecordedTerminalSources')
+    expect(controllerSource).toContain('videoTrack.onended = () => markSessionDead(session)')
+    expect(controllerSource).toContain('videoTrack.onmute = () =>')
+    expect(controllerSource).toContain('if (!browserVideoTrackIsUsable(videoTrack)) markSessionDead(session)')
+    expect(controllerSource).not.toContain('else if (videoTrack.muted) requestReconcile()')
+    expect(controllerSource).toContain('if (!shouldPersistBrowserRecorderChunk(event.data.size)) return')
+    expect(controllerSource).not.toContain('event.data.size <= 0 || session.dead || videoTrack.muted')
+    expect(controllerSource).toContain('if (!session.stopping && !session.dead && streamIsLive(session)) startRecordingSession()')
+    expect(controllerSource).toContain('const sourceDiscoveryIntervalMs = 5_000')
+    expect(controllerSource).toContain("const requiresBrowserTargetReconciliation = prepared.currentSettings.recording.sourceType === 'window'")
+    expect(controllerSource).toContain('if (!optimizedStatus.fallbackRequired && !requiresBrowserTargetReconciliation)')
+    expect(controllerSource).not.toContain('if (disposed) return\n\n                const status = await api.recording.appendSegment')
   })
 
   it('checks a saved window source before showing ffmpeg startup status', async () => {
@@ -386,8 +401,8 @@ describe('Dashboard layout', () => {
 
     expect(controllerSource).toContain('isSavedWindowSourceMissing')
     expect(controllerSource.indexOf('isSavedWindowSourceMissing')).toBeLessThan(controllerSource.indexOf('Запускаем оптимизированную ffmpeg-запись'))
-    expect(controllerSource).toContain('scheduleSourceRetry(start)')
-    expect(controllerSource).toContain('Окно ${settings.recording.windowSourceName} не найдено')
+    expect(controllerSource).toContain('scheduleSourceRetry()')
+    expect(controllerSource).toContain('Окно ${currentSettings.recording.windowSourceName} не найдено')
   })
 
   it('uses terminal window recording as the default no-API trade source', async () => {
@@ -445,8 +460,8 @@ describe('Dashboard layout', () => {
     const panelSource = await readFile(resolve('src/renderer/components/settings/ProxyVaultPanel.tsx'), 'utf8')
 
     expect(source).toContain('secondProxyServer')
-    expect(source).toContain('Сохранить два сервера и связку')
-    expect(source).toContain('setSavedWizardProxyIds([firstProxy.id, secondProxy.id])')
+    expect(source).toContain('Сохранить серверы и маршрут')
+    expect(source).toContain('setSavedWizardProxyIds(secondProxy ? [firstProxy.id, secondProxy.id] : [firstProxy.id])')
     expect(source).toContain('proxies.setupChain({ proxyId: selectedProxyId, localProxyType })')
     expect(panelSource).toContain('Тип подключения')
     expect(source).toContain('Настроить и запустить связку')
@@ -465,6 +480,25 @@ describe('Dashboard layout', () => {
     expect(source).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(source).toContain('longClipPresetSeconds')
     expect(source).toContain('longClipAfterExitSeconds')
+  })
+
+  it('keeps built-in recording fields inside the setup wizard content column', async () => {
+    const source = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
+
+    expect(source).not.toContain('md:grid-cols-[minmax(0,1fr)_160px_140px_100px_120px]')
+    expect(source).toContain('data-testid="wizard-recording-source"')
+    expect(source).toContain('data-testid="wizard-recording-details"')
+    expect(source).toContain('sm:grid-cols-2')
+    expect(source).toContain('flex-[1_1_240px]')
+    expect(source).toContain('lg:max-h-[calc(100dvh-48px)]')
+    expect(source).not.toContain('lg:max-h-[90dvh]')
+  })
+
+  it('explains the actual TraderMake nearest-trade time tolerance', async () => {
+    const source = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+
+    expect(source).toContain('Время входа и выхода может отличаться до 30 минут')
+    expect(source).not.toContain('с допуском 2 минуты')
   })
 
   it('keeps proxy controls on the proxy page', async () => {
@@ -497,7 +531,7 @@ describe('Dashboard layout', () => {
     expect(preloadSource).toContain('proxies:refresh-vpn-bypass')
     expect(panelSource).not.toContain('chainResult.throne')
     expect(panelSource).not.toContain('Следующий сервер в связке')
-    expect(wizardSource).toContain('первым сервером через второй сервер')
+    expect(wizardSource).toContain('Если добавлен второй сервер, он становится выходным сервером цепочки')
     expect(wizardSource).not.toContain('Следующий сервер в связке')
   })
 
