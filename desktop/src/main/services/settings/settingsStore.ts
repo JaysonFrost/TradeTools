@@ -5,6 +5,7 @@ import { createDefaultSettings, normalizeSettings, type AppSettings, type Partia
 export type SettingsStore = {
   load: () => Promise<AppSettings>
   update: (patch: PartialSettings) => Promise<AppSettings>
+  updateIf: (patch: PartialSettings, predicate: (current: AppSettings) => boolean) => Promise<AppSettings>
 }
 
 const settingsFileName = 'settings.json'
@@ -73,6 +74,11 @@ export const createSettingsStore = (appDataDir: string): SettingsStore => {
     load: () => enqueue(loadUnsafe),
     update: (patch) => enqueue(async () => {
       const current = await loadUnsafe()
+      return save(normalizeSettings(mergeSettings(current, patch), appDataDir))
+    }),
+    updateIf: (patch, predicate) => enqueue(async () => {
+      const current = await loadUnsafe()
+      if (!predicate(current)) return current
       return save(normalizeSettings(mergeSettings(current, patch), appDataDir))
     })
   }

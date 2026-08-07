@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createSettingsStore } from '../../src/main/services/settings/settingsStore'
+import { recordingSourceRevision } from '../../src/shared/recordingSourceRevision'
 
 let tempDir: string | undefined
 
@@ -187,5 +188,45 @@ describe('settingsStore', () => {
       entryHost: '92.38.129.126',
       entryUuidConfigured: true
     })
+  })
+
+  it('rejects a stale screen metadata update after the user selects HAPP', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-source-race-'))
+    const store = createSettingsStore(tempDir)
+    const screenSettings = await store.update({
+      recording: {
+        sourceType: 'screen',
+        windowSourceId: 'screen:1',
+        windowSourceName: 'Screen 1',
+        captureTargets: [{ id: 'screen:1', name: 'Screen 1', type: 'screen' }]
+      }
+    })
+    const staleRevision = recordingSourceRevision(screenSettings.recording)
+
+    await store.update({
+      recording: {
+        sourceType: 'window',
+        windowSourceId: 'window:happ',
+        windowSourceName: 'Happ 2.18.3 (573)',
+        captureTargets: [{ id: 'window:happ', name: 'Happ 2.18.3 (573)', type: 'window' }],
+        saveTargetMode: 'selected',
+        saveTargetId: 'window:happ'
+      }
+    })
+    const result = await store.updateIf({
+      recording: {
+        windowSourceId: 'screen:1-new',
+        windowSourceName: 'Screen 1',
+        captureTargets: [{ id: 'screen:1-new', name: 'Screen 1', type: 'screen', displayId: '1' }]
+      }
+    }, (current) => recordingSourceRevision(current.recording) === staleRevision)
+
+    expect(result.recording).toMatchObject({
+      sourceType: 'window',
+      windowSourceId: 'window:happ',
+      windowSourceName: 'Happ 2.18.3 (573)',
+      saveTargetId: 'window:happ'
+    })
+    expect(await store.load()).toEqual(result)
   })
 })

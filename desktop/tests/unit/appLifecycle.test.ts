@@ -7,8 +7,17 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('app.requestSingleInstanceLock()')
+    expect(source).toContain("acquireAppDataInstanceLock(app.getPath('userData'))")
     expect(source).toContain('if (!ownsAppInstance) app.exit(0)')
     expect(source).toContain('if (ownsAppInstance && !keepProxyRunningAfterClose)')
+  })
+
+  it('applies recorder metadata only while the recording source revision is unchanged', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('expectedRecordingSourceRevision')
+    expect(source).toContain('settingsStore.updateIf(')
+    expect(source).toContain('recordingSourceRevision(current.recording) === expectedRecordingSourceRevision')
   })
 
   it('stops recording and clip rendering before installing an update', async () => {
@@ -198,13 +207,35 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain('clipRenderQueue')
     expect(appSource).toContain('enqueueClipRender')
     expect(appSource).toContain('runClipRenderQueue')
-    expect(appSource).toContain('activeClipRenderJob')
+    expect(appSource).toContain('activeClipRenderJobs')
+    expect(appSource).toContain('maxConcurrentClipRenders = 2')
+    expect(appSource).toContain("parallelSafe: settings.recording.mode === 'window'")
+    expect(appSource).toContain('some((job) => !job.parallelSafe)')
+    expect(appSource).toContain('settings: job.settingsSnapshot')
     expect(appSource).toContain('applyWindowRecorderProtection')
     expect(appSource).toContain('watcherProtectedSinceMs')
     expect(appSource).toContain('createClipForClosedTrade: queueClipForClosedTrade')
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())")
     expect(watcherSource).toContain('поставлен в очередь')
     expect(watcherSource).not.toContain('клип ${closedTrade.symbol} сохранён')
+  })
+
+  it('waits for active render processes before releasing the app on normal quit', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(appSource).toContain("app.on('before-quit', (event) =>")
+    expect(appSource).toContain('cancelClipRender()')
+    expect(appSource).toContain('waitForClipRenderIdle(30_000)')
+    expect(appSource).toContain('gracefulQuitFinished = true')
+  })
+
+  it('force-refreshes desktop capture sources for the manual refresh button', async () => {
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+
+    expect(appSource).toContain('listWindowCaptureSources(forceRefresh')
+    expect(appSource).toContain("ipcMain.handle('recording:list-window-sources', async (_event, forceRefresh")
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources', forceRefresh)")
   })
 
   it('expands built-in multi-monitor trades into target-specific render jobs', async () => {
@@ -232,13 +263,13 @@ describe('main app lifecycle', () => {
     expect(source).not.toContain('Terminal trade display matched screen capture target')
   })
 
-  it('reconciles a trade window without replacing the global recording target', async () => {
+  it('uses an ephemeral trade window without rewriting the selected recording target', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('resolveTerminalRecordingTarget')
     expect(source).toContain('knownTerminalRecordingTargetIds')
-    expect(source).toContain('captureTargets: [...targets, target]')
     expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).not.toContain('captureTargets: [...targets, target]')
     expect(source).not.toContain('nextCaptureTargets')
     expect(source).not.toContain('captureTargets: nextCaptureTargets')
   })
@@ -307,7 +338,7 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const notifyIndex = source.indexOf('void notifyClipCreated(clip).catch')
     const resolveIndex = source.indexOf('job.resolve?.(clip)')
-    const finallyIndex = source.indexOf('} finally {', source.indexOf('const runClipRenderQueue'))
+    const finallyIndex = source.indexOf('} finally {', source.indexOf('const processClipRenderJob'))
 
     expect(notifyIndex).toBeGreaterThan(-1)
     expect(resolveIndex).toBeGreaterThan(-1)
@@ -411,7 +442,7 @@ describe('main app lifecycle', () => {
     expect(source).toContain("appLog.info('proxy-watchdog', 'Локальный proxy восстановлен'")
     expect(source).toContain('.finally(startProxyRuntimeWatchdog)')
     expect(source).toContain('proxyRuntimeWatchdogEnabled = false')
-    expect(source).toContain("app.on('before-quit', stopProxyRuntimeWatchdog)")
+    expect(source).toContain('stopProxyRuntimeWatchdog()')
   })
 
   it('exposes a proxy disconnect action that stops Xray and disables background running', async () => {

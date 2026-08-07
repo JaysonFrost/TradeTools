@@ -116,8 +116,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(settingsPanelSource).toContain('longClipAfterExitSeconds')
-    expect(controllerSource).toContain('findPreferredTerminalSource')
-    expect(controllerSource).toContain('Автоматически выбрали окно терминала')
+    expect(controllerSource).toContain('findAutoRecordedTerminalSources')
+    expect(controllerSource).not.toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
     expect(controllerSource).toContain('currentSettings.recording.systemAudioEnabled')
     expect(controllerSource).toContain('currentSettings.recording.microphoneEnabled')
@@ -402,7 +402,8 @@ describe('Dashboard layout', () => {
     expect(controllerSource).toContain('isSavedWindowSourceMissing')
     expect(controllerSource.indexOf('isSavedWindowSourceMissing')).toBeLessThan(controllerSource.indexOf('Запускаем оптимизированную ffmpeg-запись'))
     expect(controllerSource).toContain('scheduleSourceRetry()')
-    expect(controllerSource).toContain('Окно ${currentSettings.recording.windowSourceName} не найдено')
+    expect(controllerSource).toContain('Окно ${savedWindowLabel} не найдено')
+    expect(controllerSource).toContain('mergeBrowserRecorderStatus(status, activeSources, message)')
   })
 
   it('uses terminal window recording as the default no-API trade source', async () => {
@@ -605,6 +606,24 @@ describe('Dashboard layout', () => {
     expect(source).toContain('remoteClipProcessing')
     expect(source).not.toContain('binanceProcessing')
     expect(source).not.toContain('isBinanceWaitingStatus')
+  })
+
+  it('shows every active and waiting clip job instead of one ambiguous bar', async () => {
+    const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+
+    expect(source).toContain('status.activeJobs')
+    expect(source).toContain('status.queuedJobs')
+    expect(source).toContain('Обрабатывается')
+    expect(source).toContain('Ожидает')
+  })
+
+  it('does not replace a temporarily unavailable saved window with an auto-detected terminal', async () => {
+    const wizardSource = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
+    const settingsSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+
+    expect(wizardSource).toContain("!windowSourceId && !windowSourceName")
+    expect(wizardSource).toContain('(временно недоступно)')
+    expect(settingsSource).toContain('(временно недоступно)')
   })
 
   it('keeps clip cards free of the source badge', async () => {

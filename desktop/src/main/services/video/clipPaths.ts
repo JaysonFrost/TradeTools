@@ -53,6 +53,11 @@ const formatCaptureTargetSuffix = (captureTarget?: ClipPathCaptureTarget): strin
   return name ? ` - ${name}` : ''
 }
 
+const formatOutputSequenceSuffix = (outputSequence: number): string => {
+  const sequence = Number.isFinite(outputSequence) ? Math.max(1, Math.trunc(outputSequence)) : 1
+  return sequence > 1 ? ` (${sequence})` : ''
+}
+
 export const toSafeClipFileBaseName = (value: string): string => {
   return value
     .replace(/\.mp4$/iu, '')
@@ -62,22 +67,32 @@ export const toSafeClipFileBaseName = (value: string): string => {
     .replace(/[. ]+$/g, '')
 }
 
-export const buildClipFileNames = (trade: ClipPathTrade, captureTarget?: ClipPathCaptureTarget): ClipFileNames => {
+export const buildClipFileNames = (
+  trade: ClipPathTrade,
+  captureTarget?: ClipPathCaptureTarget,
+  outputSequence = 1
+): ClipFileNames => {
   const { titleTimestamp } = formatDateParts(trade.entryTimeMs)
   const titlePrefix = trade.manualTitle?.trim() || `${formatSymbol(trade.symbol)} ${formatExchange(trade.exchange)}`.trim()
   const title = `${titlePrefix} ${titleTimestamp}${formatCaptureTargetSuffix(captureTarget)}`
   const safeFileName = toSafeClipFileBaseName(title)
+  const outputSequenceSuffix = formatOutputSequenceSuffix(outputSequence)
 
   return {
     title,
-    videoFileName: `${safeFileName}.mp4`,
-    metadataFileName: `${safeFileName}.json`
+    videoFileName: `${safeFileName}${outputSequenceSuffix}.mp4`,
+    metadataFileName: `${safeFileName}${outputSequenceSuffix}.json`
   }
 }
 
-export const buildClipOutputPaths = (dataDir: string, trade: ClipPathTrade, captureTarget?: ClipPathCaptureTarget): ClipOutputPaths => {
+export const buildClipOutputPaths = (
+  dataDir: string,
+  trade: ClipPathTrade,
+  captureTarget?: ClipPathCaptureTarget,
+  outputSequence = 1
+): ClipOutputPaths => {
   const { day } = formatDateParts(trade.entryTimeMs)
-  const names = buildClipFileNames(trade, captureTarget)
+  const names = buildClipFileNames(trade, captureTarget, outputSequence)
   const dayFolder = join(dataDir, day)
 
   return {

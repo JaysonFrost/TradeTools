@@ -86,8 +86,8 @@ describe('buildFfmpegTrimArgs', () => {
   })
 
   it('keeps render workers below all available logical cores', () => {
-    expect(calculateFfmpegRenderThreads(16)).toBe(2)
-    expect(calculateFfmpegRenderThreads(4)).toBe(2)
+    expect(calculateFfmpegRenderThreads(16)).toBe(1)
+    expect(calculateFfmpegRenderThreads(4)).toBe(1)
     expect(calculateFfmpegRenderThreads(2)).toBe(1)
     expect(calculateFfmpegRenderThreads(1)).toBe(1)
   })

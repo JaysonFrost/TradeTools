@@ -2,12 +2,16 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { assertBrowserSessionVideoCoverage, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio } from '../../src/main/services/recording/windowRecorderService'
+import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
 import {
   browserCaptureFrameRate,
   browserVideoBitrate,
   browserVideoTrackIsUsable,
+  hasConfiguredRecordingSource,
+  mergeBrowserRecorderStatus,
+  resolveRecordingTargets,
+  sourceMatchesConfiguredRecording,
   shouldPersistBrowserRecorderChunk
 } from '../../src/renderer/components/recording/WindowRecorderController'
 
@@ -17,6 +21,226 @@ describe('windowRecorderService', () => {
     firstVideoPacketSeconds = 0,
     maxVideoPacketGapSeconds = 0.05
   ) => ({ firstVideoPacketSeconds, videoDurationSeconds, maxVideoPacketGapSeconds })
+
+  it('records only the explicitly selected window even when a terminal is auto-detected', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.sourceType = 'window'
+    settings.recording.windowSourceId = 'window:happ'
+    settings.recording.windowSourceName = 'Happ 2.18.3 (573)'
+    settings.recording.captureTargets = [{
+      id: 'window:happ',
+      name: 'Happ 2.18.3 (573)',
+      type: 'window'
+    }]
+    const sources = [
+      { id: 'window:happ', name: 'Happ 2.18.3 (573)', displayId: '', type: 'window' as const },
+      { id: 'window:vataga', name: 'Vataga.terminal', displayId: '', type: 'window' as const }
+    ]
+
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:happ'])
+  })
+
+  it('auto-detects terminals only while no window is configured', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    const sources = [
+      { id: 'window:happ', name: 'Happ 2.18.3 (573)', displayId: '', type: 'window' as const },
+      { id: 'window:vataga', name: 'Vataga.terminal', displayId: '', type: 'window' as const }
+    ]
+
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:vataga'])
+  })
+
+  it('treats every persisted source reference as configured before auto-selection', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    expect(hasConfiguredRecordingSource(settings)).toBe(false)
+
+    settings.recording.captureTargets = [{
+      id: 'window:happ',
+      name: 'Happ 2.18.3 (573)',
+      type: 'window'
+    }]
+    expect(hasConfiguredRecordingSource(settings)).toBe(true)
+  })
+
+  it('preserves real buffer metrics and reports the actually active browser source', () => {
+    const status = {
+      enabled: true,
+      active: false,
+      mode: 'window' as const,
+      backend: 'browser' as const,
+      sourceId: 'window:vataga',
+      sourceName: 'Vataga.terminal',
+      segmentCount: 12,
+      bufferedSeconds: 60,
+      lastSegmentAtMs: 123_456,
+      message: 'old'
+    }
+
+    expect(mergeBrowserRecorderStatus(status, [{
+      id: 'window:happ',
+      name: 'Happ 2.18.3 (573)'
+    }], 'active')).toEqual({
+      ...status,
+      active: true,
+      sourceId: 'window:happ',
+      sourceName: 'Happ 2.18.3 (573)',
+      message: 'active'
+    })
+  })
+
+  it('stops a stale Vataga recorder when HAPP is the explicit selection', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.windowSourceId = 'window:happ'
+    settings.recording.windowSourceName = 'Happ 2.18.3 (573)'
+
+    expect(sourceMatchesConfiguredRecording({
+      id: 'window:happ',
+      name: 'Happ 2.18.3 (573)',
+      displayId: '',
+      type: 'window'
+    }, settings)).toBe(true)
+    expect(sourceMatchesConfiguredRecording({
+      id: 'window:vataga',
+      name: 'Vataga.terminal',
+      displayId: '',
+      type: 'window'
+    }, settings)).toBe(false)
+  })
+
+  it('keeps every explicitly selected screen recorder during reconciliation', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.sourceType = 'screen'
+    settings.recording.windowSourceId = 'screen:one'
+    settings.recording.windowSourceName = 'Screen one'
+    settings.recording.captureTargets = [
+      { id: 'screen:one', name: 'Screen one', type: 'screen', displayId: '1' },
+      { id: 'screen:two', name: 'Screen two', type: 'screen', displayId: '2' }
+    ]
+
+    expect(sourceMatchesConfiguredRecording({
+      id: 'screen:two',
+      name: 'Screen two',
+      displayId: '2',
+      type: 'screen'
+    }, settings)).toBe(true)
+  })
+
+  it('counts auto-detected terminal segments when no source has been persisted yet', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-auto-source-'))
+    const settings = createDefaultSettings(dataDir)
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const endedAtMs = Date.now()
+
+    try {
+      const status = await service.appendSegment({
+        sourceId: 'window:vataga-auto',
+        sourceName: 'Vataga.terminal',
+        sessionId: 'auto-session',
+        sequence: 0,
+        startedAtMs: endedAtMs - 1_000,
+        endedAtMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      expect(status.active).toBe(true)
+      expect(status.segmentCount).toBe(1)
+      expect(status.bufferedSeconds).toBe(1)
+      expect(status.lastSegmentAtMs).toBe(endedAtMs)
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps explicit HAPP buffer metrics authoritative over a stale Vataga capture target', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-explicit-source-'))
+    const settings = createDefaultSettings(dataDir)
+    settings.recording.windowSourceId = 'window:happ'
+    settings.recording.windowSourceName = 'Happ 2.18.3 (573)'
+    settings.recording.captureTargets = [{
+      id: 'window:vataga',
+      name: 'Vataga.terminal',
+      type: 'window'
+    }]
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const nowMs = Date.now()
+    const happEndedAtMs = nowMs - 2_000
+
+    try {
+      await service.appendSegment({
+        sourceId: 'window:happ',
+        sourceName: 'Happ 2.18.3 (573)',
+        sessionId: 'happ-session',
+        sequence: 0,
+        startedAtMs: happEndedAtMs - 1_000,
+        endedAtMs: happEndedAtMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      await service.appendSegment({
+        sourceId: 'window:vataga',
+        sourceName: 'Vataga.terminal',
+        sessionId: 'vataga-session',
+        sequence: 0,
+        startedAtMs: nowMs - 1_000,
+        endedAtMs: nowMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      const status = await service.getStatus(settings)
+
+      expect(status).toMatchObject({
+        active: true,
+        sourceId: 'window:happ',
+        sourceName: 'Happ 2.18.3 (573)',
+        segmentCount: 1,
+        bufferedSeconds: 1,
+        lastSegmentAtMs: happEndedAtMs,
+        sources: [{
+          sourceId: 'window:happ',
+          sourceName: 'Happ 2.18.3 (573)',
+          segmentCount: 1,
+          bufferedSeconds: 1,
+          lastSegmentAtMs: happEndedAtMs
+        }]
+      })
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reports the minimum real buffer across multiple selected sources', () => {
+    expect(aggregateWindowRecorderSourceStatuses([
+      { sourceId: 'window:one', sourceName: 'One', segmentCount: 3, bufferedSeconds: 30, lastSegmentAtMs: 40_000 },
+      { sourceId: 'window:two', sourceName: 'Two', segmentCount: 3, bufferedSeconds: 30, lastSegmentAtMs: 50_000 }
+    ], {
+      segmentCount: 6,
+      bufferedSeconds: 40,
+      lastSegmentAtMs: 50_000
+    })).toEqual({
+      segmentCount: 6,
+      bufferedSeconds: 30,
+      lastSegmentAtMs: 50_000
+    })
+  })
+
+  it('does not prune a freshly created replay whose mtime represents an older trade', () => {
+    const nowMs = 100_000
+    const cutoffMs = 50_000
+
+    expect(shouldPruneReplayFile({
+      mtimeMs: 40_000,
+      ctimeMs: nowMs - 1_000,
+      birthtimeMs: nowMs - 1_000
+    }, cutoffMs, nowMs)).toBe(false)
+    expect(shouldPruneReplayFile({
+      mtimeMs: 40_000,
+      ctimeMs: nowMs - 61_000,
+      birthtimeMs: nowMs - 61_000
+    }, cutoffMs, nowMs)).toBe(true)
+  })
 
   const pathExists = async (path: string): Promise<boolean> => {
     try {
@@ -281,8 +505,8 @@ describe('windowRecorderService', () => {
       recording: {
         ...defaults.recording,
         mode: 'window' as const,
-        windowSourceId: 'window:primary',
-        windowSourceName: 'Primary terminal',
+        windowSourceId: '',
+        windowSourceName: '',
         captureTargets: [
           { id: 'window:primary', name: 'Primary terminal', type: 'window' as const, processId: 111 },
           { id: 'window:secondary', name: 'Secondary terminal', type: 'window' as const, processId: 222, symbol: 'ETHUSDT' }
@@ -741,6 +965,9 @@ describe('windowRecorderService', () => {
 
     expect(source).toContain('protectSince')
     expect(source).toContain('protectedSinceMs')
+    expect(source).toContain('const replayProtectionTimes = new Map<string, number>()')
+    expect(source).toContain('replayProtectionTimes.delete(replayProtectionId)')
+    expect(source).not.toContain('protectedSinceMs = previousProtectedSinceMs')
     expect(source).toContain('const replayStartMs = trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000')
     expect(source).not.toContain('maxReplayWindowMs')
     expect(source).not.toContain('Math.max(requestedReplayStartMs, replayEndMs - maxReplayWindowMs)')
@@ -1160,6 +1387,35 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('targets.length > 1')
   })
 
+  it('refreshes active browser status from persisted segments instead of publishing a zero buffer', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const activeStatusStart = controllerSource.indexOf('const activeSources = targets.filter')
+    const activeStatusEnd = controllerSource.indexOf('      } else {', activeStatusStart)
+    const activeStatusSource = controllerSource.slice(activeStatusStart, activeStatusEnd)
+
+    expect(activeStatusSource).toContain('const status = await api.recording.getStatus()')
+    expect(activeStatusSource).toContain('mergeBrowserRecorderStatus')
+    expect(activeStatusSource).not.toContain('createLocalStatus')
+  })
+
+  it('keeps persisted buffer metrics when a saved source temporarily disappears', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const missingTargetStart = controllerSource.indexOf('if (targets.length === 0) {')
+    const missingTargetEnd = controllerSource.indexOf('      if (sourceRetryTimer', missingTargetStart)
+    const missingTargetSource = controllerSource.slice(missingTargetStart, missingTargetEnd)
+
+    expect(missingTargetSource).toContain('const status = await api.recording.getStatus()')
+    expect(missingTargetSource).toContain('mergeBrowserRecorderStatus(status, activeSources, message)')
+    expect(missingTargetSource).not.toContain('createLocalStatus')
+  })
+
+  it('never persists an auto-detected terminal over a concurrent explicit selection', async () => {
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(controllerSource).not.toContain('findPreferredTerminalSource')
+    expect(controllerSource).not.toContain('Автоматически выбрали окно терминала')
+  })
+
   it('uses native ddagrab for screen capture targets instead of black Chromium screen streams or flickery GDI capture', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
@@ -1173,9 +1429,11 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain('ddagrab=output_idx=${target.outputIndex ?? 0}:framerate=${frameRate}:draw_mouse=0')
     expect(serviceSource).toContain("'lavfi'")
     expect(serviceSource).not.toContain('Запись экрана идёт через Chromium')
-    expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('if (targets.length > 1)'))
+    expect(controllerSource.indexOf('const optimizedStatus = await api.recording.start()')).toBeLessThan(controllerSource.indexOf('targetsToStart.length > 0 && targets.length > 1'))
     expect(controllerSource).toContain('screenTargetsNeedSync')
     expect(controllerSource).toContain('!target.displayId')
+    expect(controllerSource).toContain('expectedRecordingSourceRevision: recordingSourceRevision(currentSettings.recording)')
+    expect(controllerSource).not.toContain('...currentSettings.recording')
   })
 
   it('records native screens at their source resolution and the exact selected frame rate', () => {
@@ -1204,6 +1462,7 @@ describe('windowRecorderService', () => {
     expect(args[args.indexOf('-i') + 1]).toContain('framerate=60')
     expect(args).not.toContain('-vf')
     expect(args).toEqual(expect.arrayContaining([
+      '-filter_threads', '1', '-threads', '1',
       '-c:v', 'h264_nvenc', '-gpu', '1', '-cq', '14', '-b:v', '60M',
       '-r', '60', '-g', '600'
     ]))

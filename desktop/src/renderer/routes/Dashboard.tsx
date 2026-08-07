@@ -73,28 +73,57 @@ type ProxyPageProps = {
 
 const dashboardRefreshIntervalMs = 5_000
 
-const ClipProcessingBar = ({ status, onCancel }: { status: ClipProcessingStatus, onCancel: (jobId?: string) => void }) => (
-  <div className="rounded-3xl border border-violet-400/20 bg-violet-500/[0.07] p-4">
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <div className="text-sm font-semibold text-violet-100">{status.title || 'Клип сделки'}</div>
-        <div className="mt-1 text-sm text-zinc-400">{status.message}</div>
+const ClipProcessingBar = ({ status, onCancel }: { status: ClipProcessingStatus, onCancel: (jobId?: string) => void }) => {
+  const activeJobs = status.activeJobs?.length
+    ? status.activeJobs
+    : status.active
+      ? [{
+          id: status.activeJobId ?? 'local-processing',
+          title: status.title || 'Клип сделки',
+          message: status.message,
+          progressPercent: status.progressPercent,
+          startedAtMs: status.startedAtMs
+        }]
+      : []
+  const queuedJobs = status.queuedJobs ?? []
+
+  return (
+    <div className="rounded-2xl border border-violet-400/20 bg-violet-500/[0.07] p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-violet-100">Обработка видео</div>
+        <div className="text-xs text-zinc-400">Обрабатывается: {activeJobs.length} · Ожидает: {queuedJobs.length}</div>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="text-xs font-semibold text-violet-200">{Math.round(status.progressPercent)}%</div>
-        <button className="inline-flex cursor-pointer items-center rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100 transition hover:bg-red-500/15" onClick={() => onCancel(status.activeJobId)} type="button">
-          <XCircle size={14} className="mr-1" />Отменить
-        </button>
+      <div className="space-y-2">
+        {activeJobs.map((job) => (
+          <div key={job.id} className="rounded-xl border border-violet-300/15 bg-black/20 px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-semibold text-violet-100">{job.title}</div>
+                <div className="mt-0.5 truncate text-[11px] text-zinc-500">{job.message}</div>
+              </div>
+              <span className="text-[11px] font-semibold text-violet-200">{Math.round(job.progressPercent)}%</span>
+              <button className="inline-flex min-h-7 cursor-pointer items-center rounded-lg border border-red-400/25 bg-red-500/10 px-2 text-[11px] font-semibold text-red-100 transition hover:bg-red-500/15" onClick={() => onCancel(job.id === 'local-processing' ? undefined : job.id)} type="button">
+                <XCircle size={12} className="mr-1" />Отменить
+              </button>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-violet-400 transition-[width] duration-500" style={{ width: `${Math.max(6, Math.min(100, job.progressPercent))}%` }} />
+            </div>
+          </div>
+        ))}
+        {queuedJobs.map((job) => (
+          <div key={job.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2">
+            <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">Ожидает</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-zinc-300">{job.title}</span>
+            <button className="inline-flex min-h-7 cursor-pointer items-center rounded-lg border border-red-400/20 px-2 text-[11px] font-semibold text-red-200 transition hover:bg-red-500/10" onClick={() => onCancel(job.id)} type="button">
+              <X size={12} className="mr-1" />Убрать
+            </button>
+          </div>
+        ))}
       </div>
     </div>
-    <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-      <div
-        className="h-full rounded-full bg-violet-400 transition-[width] duration-500"
-        style={{ width: `${Math.max(6, Math.min(100, status.progressPercent))}%` }}
-      />
-    </div>
-  </div>
-)
+  )
+}
 
 const formatSeconds = (value: number): string => `${Math.max(0, Math.round(value))}с`
 

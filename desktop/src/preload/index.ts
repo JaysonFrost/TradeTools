@@ -151,7 +151,7 @@ const api = {
     testReplaySave: (): Promise<ObsTestReplayResult> => ipcRenderer.invoke('obs:test-replay-save')
   },
   recording: {
-    listWindowSources: (): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources'),
+    listWindowSources: (forceRefresh = false): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources', forceRefresh),
     listVideoEncoders: (): Promise<VideoEncoderOption[]> => ipcRenderer.invoke('recording:list-video-encoders'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
     getFreeStatus: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-status'),

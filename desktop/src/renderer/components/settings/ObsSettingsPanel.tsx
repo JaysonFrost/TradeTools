@@ -5,7 +5,7 @@ import type { AppSettings } from '../../../main/services/settings/settings'
 import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
-import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
+import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
@@ -49,6 +49,7 @@ const toCaptureTarget = (source: WindowCaptureSource): AppSettings['recording'][
   id: source.id,
   name: source.name,
   type: source.type,
+  ...(source.processId ? { processId: source.processId } : {}),
   ...(source.displayId ? { displayId: source.displayId } : {})
 })
 
@@ -183,18 +184,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setLoadingSources(true)
     if (announce) setMessage('')
     try {
-      const sources = await getTradeToolsApi().recording.listWindowSources()
-      setWindowSources(sources)
-      const preferredSource = recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
-        ? findPreferredTerminalSource(sources)
-        : undefined
-      if (preferredSource) {
-        setWindowSourceId(preferredSource.id)
-        setWindowSourceName(preferredSource.name)
-        setCaptureTargets([toCaptureTarget(preferredSource)])
-        if (announce) setMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
-        return
-      }
+      const sources = await refreshWindowSourceList(
+        () => getTradeToolsApi().recording.listWindowSources(announce),
+        setWindowSources
+      )
       if (announce) setMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
     } catch (error) {
       if (announce) setMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
@@ -228,6 +221,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
 
   const windowOptions = windowSources.filter((source) => source.type === 'window')
   const screenSources = windowSources.filter((source) => source.type === 'screen')
+  const selectedWindowTemporarilyUnavailable = Boolean(
+    windowSourceId && !windowOptions.some((source) => source.id === windowSourceId)
+  )
   const isCaptureTargetSelected = (source: WindowCaptureSource): boolean => captureTargets.some((target) => sourceMatchesCaptureTarget(source, target))
 
   const toggleScreenCaptureTarget = (source: WindowCaptureSource, checked: boolean) => {
@@ -519,7 +515,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                         setCaptureTargets(source ? [toCaptureTarget(source)] : [])
                       }}
                     >
-                      <option value="">{windowSourceName || 'Выберите окно'}</option>
+                      <option value="">Выберите окно</option>
+                      {selectedWindowTemporarilyUnavailable && (
+                        <option value={windowSourceId}>{windowSourceName || 'Сохранённое окно'} (временно недоступно)</option>
+                      )}
                       {windowOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                     </select>
                     <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>

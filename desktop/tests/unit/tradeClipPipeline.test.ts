@@ -1,9 +1,10 @@
-import { access, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { EventEmitter } from 'node:events'
+import { access, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
-import { createTradeClipPipeline } from '../../src/main/services/trades/tradeClipPipeline'
+import { createTradeClipPipeline, waitForFfmpegProcessExit } from '../../src/main/services/trades/tradeClipPipeline'
 import { createSimulatedClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import { buildClipOutputPaths } from '../../src/main/services/video/clipPaths'
 import { calculateFfmpegRenderThreads } from '../../src/main/services/video/ffmpegCommand'
@@ -1027,5 +1028,248 @@ describe('tradeClipPipeline', () => {
 
     await expect(pipeline.createClipForClosedTrade(trade)).rejects.toThrow('ffprobe exited with code 1')
     await expect(readFile(paths.videoPath, 'utf8')).resolves.toBe('existing valid clip')
+  })
+
+  it('waits for the ffmpeg process to exit after cancellation', async () => {
+    const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> }
+    child.kill = vi.fn(() => true)
+    const controller = new AbortController()
+    const completion = waitForFfmpegProcessExit(
+      child as unknown as Parameters<typeof waitForFfmpegProcessExit>[0],
+      controller.signal
+    )
+    let outcome = 'pending'
+    const observedCompletion = completion.then(
+      () => { outcome = 'resolved' },
+      () => { outcome = 'rejected' }
+    )
+
+    controller.abort()
+    await Promise.resolve()
+
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(outcome).toBe('pending')
+
+    child.emit('error', new Error('termination still in progress'))
+    await Promise.resolve()
+    expect(outcome).toBe('pending')
+
+    child.emit('close', null)
+    await expect(completion).rejects.toThrow('Сохранение клипа отменено')
+    await observedCompletion
+    expect(outcome).toBe('rejected')
+  })
+
+  it('removes the temporary output when cancellation arrives during final validation', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-cancel-before-commit-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-cancel-replay-'))
+    const replayPath = join(replayDir, 'ready.mp4')
+    const entryTimeMs = Date.parse('2026-08-07T12:10:05.000Z')
+    const trade = {
+      ...createSimulatedClosedTrade(entryTimeMs + 3_000, 3_000),
+      id: 'cancel-before-commit',
+      entryTimeMs,
+      exitTimeMs: entryTimeMs + 3_000
+    }
+    const paths = buildClipOutputPaths(dataDir, trade)
+    const controller = new AbortController()
+    await writeFile(replayPath, 'ready built-in clip')
+    const defaultSettings = createDefaultSettings(dataDir)
+    let probeCount = 0
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: { ...defaultSettings.recording, mode: 'window' },
+        clip: {
+          ...defaultSettings.clip,
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs: trade.exitTimeMs,
+        replayPath,
+        readyClip: true
+      })),
+      getVideoDetails: vi.fn(async () => {
+        probeCount += 1
+        if (probeCount === 2) controller.abort()
+        return { durationSeconds: 11, averageFrameRate: 30 }
+      })
+    })
+
+    await expect(pipeline.createClipForClosedTrade(trade, { signal: controller.signal }))
+      .rejects.toThrow('Сохранение клипа отменено')
+    await expect(access(paths.videoPath)).rejects.toThrow()
+    await expect(access(paths.metadataPath)).rejects.toThrow()
+    const dayEntries = await readdir(paths.dayFolder).catch(() => [])
+    expect(dayEntries.some((name) => name.includes('.tmp-'))).toBe(false)
+  })
+
+  it('rolls back final video and metadata when cancellation arrives after rename', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-late-cancel-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-late-cancel-replay-'))
+    const replayPath = join(replayDir, 'ready.mp4')
+    const entryTimeMs = new Date(2026, 7, 7, 12, 12, 5).getTime()
+    const trade = {
+      ...createSimulatedClosedTrade(entryTimeMs + 3_000, 3_000),
+      id: 'late-cancel-after-rename',
+      entryTimeMs,
+      exitTimeMs: entryTimeMs + 3_000
+    }
+    const paths = buildClipOutputPaths(dataDir, trade)
+    const controller = new AbortController()
+    await writeFile(replayPath, 'ready built-in clip')
+    const defaultSettings = createDefaultSettings(dataDir)
+    let resolveTmmLookup: (url: string | undefined) => void = () => undefined
+    const tmmLookup = new Promise<string | undefined>((resolve) => {
+      resolveTmmLookup = resolve
+    })
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: { ...defaultSettings.recording, mode: 'window' },
+        clip: {
+          ...defaultSettings.clip,
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => ({
+        ok: true,
+        message: 'Встроенный replay сохранён',
+        requestedAtMs: trade.exitTimeMs,
+        replayPath,
+        readyClip: true
+      })),
+      getVideoDetails: vi.fn(async () => ({ durationSeconds: 11, averageFrameRate: 30 })),
+      findTmmTradeUrl: vi.fn(() => tmmLookup)
+    })
+
+    const completion = pipeline.createClipForClosedTrade(trade, { signal: controller.signal })
+    let finalVideoVisible = false
+    for (let attempt = 0; attempt < 100 && !finalVideoVisible; attempt += 1) {
+      finalVideoVisible = await access(paths.videoPath).then(() => true).catch(() => false)
+      if (!finalVideoVisible) await new Promise<void>((resolve) => setTimeout(resolve, 2))
+    }
+    expect(finalVideoVisible).toBe(true)
+
+    controller.abort()
+    resolveTmmLookup('https://tradermake.money/app2/account/my-trades/late-cancel')
+
+    await expect(completion).rejects.toThrow('Сохранение клипа отменено')
+    await expect(access(paths.videoPath)).rejects.toThrow()
+    await expect(access(paths.metadataPath)).rejects.toThrow()
+  })
+
+  it('has a clear commit point before deleting the consumed replay', async () => {
+    const source = await readFile(resolve('src/main/services/trades/tradeClipPipeline.ts'), 'utf8')
+    const replayCleanupStart = source.indexOf("if ((settings.recording.mode === 'obs' || readyClip)")
+    const successfulReturn = source.indexOf('return item', replayCleanupStart)
+    const replayCleanup = source.slice(replayCleanupStart, successfulReturn)
+
+    expect(replayCleanup).toContain('await unlink(replayPath)')
+    expect(replayCleanup).not.toContain('throwIfAborted')
+  })
+
+  it('keeps parallel same-symbol same-second clips in separate readable files', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-parallel-paths-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-parallel-replays-'))
+    const replayPaths = [join(replayDir, 'one.mp4'), join(replayDir, 'two.mp4')]
+    await Promise.all([
+      writeFile(replayPaths[0], 'first clip'),
+      writeFile(replayPaths[1], 'second clip')
+    ])
+    const entryTimeMs = new Date(2026, 7, 7, 12, 15, 10, 250).getTime()
+    const baseTrade = {
+      ...createSimulatedClosedTrade(entryTimeMs + 3_000, 3_000),
+      symbol: 'BEATUSDT',
+      entryTimeMs,
+      exitTimeMs: entryTimeMs + 3_000
+    }
+    const trades = [
+      { ...baseTrade, id: 'parallel-one' },
+      { ...baseTrade, id: 'parallel-two' }
+    ]
+    const defaultSettings = createDefaultSettings(dataDir)
+    let replayIndex = 0
+    const pipeline = createTradeClipPipeline({
+      getSettings: async () => ({
+        ...defaultSettings,
+        recording: { ...defaultSettings.recording, mode: 'window' },
+        clip: {
+          ...defaultSettings.clip,
+          paddingBeforeSeconds: 3,
+          paddingAfterSeconds: 5,
+          outputDir: dataDir
+        }
+      }),
+      saveReplayBuffer: vi.fn(async () => {
+        const replayPath = replayPaths[replayIndex++]
+        return {
+          ok: true,
+          message: 'Встроенный replay сохранён',
+          requestedAtMs: baseTrade.exitTimeMs,
+          replayPath,
+          readyClip: true
+        }
+      }),
+      getVideoDetails: vi.fn(async () => ({ durationSeconds: 11, averageFrameRate: 30 }))
+    })
+
+    const clips = await Promise.all(trades.map((trade) => pipeline.createClipForClosedTrade(trade)))
+
+    expect(new Set(clips.map((clip) => clip.videoPath)).size).toBe(2)
+    expect(clips.map((clip) => clip.fileName).sort()).toEqual([
+      'BEATUSDT Binance 07.08.26 12-15-10 (2).mp4',
+      'BEATUSDT Binance 07.08.26 12-15-10.mp4'
+    ])
+    await Promise.all(clips.flatMap((clip) => [access(clip.videoPath), access(clip.metadataPath)]))
+  })
+
+  it('uses the enqueue-time recording settings while a job waits in the scheduler', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-snapshot-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-snapshot-replay-'))
+    const replayPath = join(replayDir, 'ready.mp4')
+    const entryTimeMs = new Date(2026, 7, 7, 12, 20, 10).getTime()
+    const trade = {
+      ...createSimulatedClosedTrade(entryTimeMs + 3_000, 3_000),
+      id: 'settings-snapshot',
+      entryTimeMs,
+      exitTimeMs: entryTimeMs + 3_000
+    }
+    await writeFile(replayPath, 'ready built-in clip')
+    const snapshot = createDefaultSettings(dataDir)
+    snapshot.recording.mode = 'window'
+    snapshot.clip.outputDir = dataDir
+    snapshot.clip.paddingBeforeSeconds = 3
+    snapshot.clip.paddingAfterSeconds = 5
+    const liveSettings = createDefaultSettings(dataDir)
+    liveSettings.recording.mode = 'obs'
+    const getSettings = vi.fn(async () => liveSettings)
+    const saveReplayBuffer = vi.fn(async () => ({
+      ok: true as const,
+      message: 'Встроенный replay сохранён',
+      requestedAtMs: trade.exitTimeMs,
+      replayPath,
+      readyClip: true
+    }))
+    const pipeline = createTradeClipPipeline({
+      getSettings,
+      saveReplayBuffer,
+      getVideoDetails: vi.fn(async () => ({ durationSeconds: 11, averageFrameRate: 30 }))
+    })
+
+    const clip = await pipeline.createClipForClosedTrade(trade, { settings: snapshot })
+
+    expect(getSettings).not.toHaveBeenCalled()
+    expect(saveReplayBuffer).toHaveBeenCalledWith(expect.objectContaining({
+      settings: expect.objectContaining({ recording: expect.objectContaining({ mode: 'window' }) })
+    }))
+    expect(clip.videoPath.startsWith(dataDir)).toBe(true)
   })
 })

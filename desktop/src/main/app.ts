@@ -10,22 +10,25 @@ import { createObsService } from './services/obs/obsService'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
 import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
 import { preferTerminalSourcesForSymbol, recordingSourceMatchesTarget } from './services/recording/terminalWindowSelection'
+import { selectedWindowTradeTarget } from './services/recording/tradeCaptureTargetSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
 import { localXrayConfigPath } from './services/proxies/xrayBypassTargets'
 import { isLocalXrayRuntimeRunning, setupLocalXrayRuntime, stopLocalXrayRuntime } from './services/proxies/xrayLocalRuntime'
 import { createSecretStore } from './services/security/secretStore'
-import { type AppSettings, type CaptureTargetRef, type LocalProxyType, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
+import { type AppSettings, type CaptureTargetRef, type LocalProxyType, type PartialSettings, type ProxyRecord, type SettingsUpdateInput } from './services/settings/settings'
 import { createSettingsStore } from './services/settings/settingsStore'
 import type { ClosedTrade } from './services/trades/simulatedTradePipeline'
 import { createTerminalTradeWatcher, type TerminalPositionEvent, type TerminalTradeSource } from './services/trades/terminalTradeRecorder'
 import { createTradeClipPipeline, type ClipProcessingStatus, type ClipQueueItem } from './services/trades/tradeClipPipeline'
+import { recordingSourceRevision } from '../shared/recordingSourceRevision'
 import { findTmmTradeUrl, findTmmTradeUrls, updateTmmTradeVideoPath } from './services/trades/tmmTradeMatcher'
 import { createAppUpdateService } from './services/updates/appUpdateService'
 import { listAvailableVideoEncoders } from './services/video/videoEncoderDevices'
 import { defaultLocalProxyPort } from '../shared/defaults'
 import { createAppLogService } from './services/logging/appLogService'
+import { acquireAppDataInstanceLock } from './services/appDataInstanceLock'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -64,8 +67,13 @@ if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('enable-features', macLoopbackAudioFeatures.join(','))
 }
 
-const ownsAppInstance = app.requestSingleInstanceLock()
+const ownsElectronAppInstance = app.requestSingleInstanceLock()
+const appDataInstanceLock = ownsElectronAppInstance
+  ? acquireAppDataInstanceLock(app.getPath('userData'))
+  : { acquired: false, release: () => undefined }
+const ownsAppInstance = ownsElectronAppInstance && appDataInstanceLock.acquired
 if (!ownsAppInstance) app.exit(0)
+process.on('exit', appDataInstanceLock.release)
 
 app.on('second-instance', () => {
   const mainWindow = BrowserWindow.getAllWindows()[0]
@@ -252,9 +260,10 @@ const areWindowsToastNotificationsDisabled = (): boolean => {
 
 const windowsNotificationsDisabledMessage = 'Уведомления Windows выключены на уровне системы. Включите: Параметры Windows -> Система -> Уведомления.'
 
-const extractSettingsPatch = (input: SettingsUpdateInput): SettingsUpdateInput => {
+const extractSettingsPatch = (input: SettingsUpdateInput): PartialSettings => {
   const {
     obsPassword: _obsPassword,
+    expectedRecordingSourceRevision: _expectedRecordingSourceRevision,
     ...patch
   } = input
   return patch
@@ -524,8 +533,8 @@ const scheduleWindowMetadataEnrichment = (windowIds: string[]): void => {
     })
 }
 
-const listWindowCaptureSources = async (): Promise<WindowCaptureSource[]> => {
-  if (windowCaptureSourcesCache && Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs) {
+const listWindowCaptureSources = async (forceRefresh = false): Promise<WindowCaptureSource[]> => {
+  if (!forceRefresh && windowCaptureSourcesCache && Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs) {
     return windowCaptureSourcesCache.sources
   }
 
@@ -1165,9 +1174,14 @@ app.whenReady().then(() => {
     title: string
     queuedAtMs: number
     protectedSinceMs: number
+    parallelSafe: boolean
+    settingsSnapshot: AppSettings
     paddingAfterSeconds?: number
     abortController: AbortController
     cancelled: boolean
+    startedAtMs?: number
+    progressPercent?: number
+    processingMessage?: string
     resolve?: (clip: ClipQueueItem) => void
     reject?: (error: unknown) => void
   }
@@ -1183,8 +1197,8 @@ app.whenReady().then(() => {
   let clipProcessingStatus: ClipProcessingStatus = emptyClipProcessingStatus()
   let watcherProtectedSinceMs = 0
   const clipRenderQueue: ClipRenderJob[] = []
-  let activeClipRenderJob: ClipRenderJob | undefined
-  let clipRenderWorkerRunning = false
+  const activeClipRenderJobs = new Map<string, ClipRenderJob>()
+  const maxConcurrentClipRenders = 2
 
   const normalizeProtectionTime = (value?: number): number => (
     Number.isFinite(value) && (value ?? 0) > 0 ? Math.trunc(value as number) : 0
@@ -1193,7 +1207,7 @@ app.whenReady().then(() => {
   const applyWindowRecorderProtection = () => {
     const protectedTimes = [
       watcherProtectedSinceMs,
-      activeClipRenderJob?.protectedSinceMs ?? 0,
+      ...[...activeClipRenderJobs.values()].map((job) => job.protectedSinceMs),
       ...clipRenderQueue.map((job) => job.protectedSinceMs)
     ].filter((value) => value > 0)
 
@@ -1229,42 +1243,60 @@ app.whenReady().then(() => {
   const currentClipProcessingStatus = (): ClipProcessingStatus => {
     const queuedCount = clipRenderQueue.length
     const queuedJobs = clipRenderQueue.map((job) => ({ id: job.id, title: job.title }))
-    if (!clipProcessingStatus.active) {
-      return queuedCount > 0
-        ? {
-            active: true,
-            title: 'Очередь клипов',
-            message: `Ждём обработки: ${queuedCount}`,
-            progressPercent: 10,
-            queuedCount,
-            queuedJobs
-          }
-        : clipProcessingStatus
+    const activeJobs = [...activeClipRenderJobs.values()].map((job) => {
+      const startedAtMs = job.startedAtMs ?? job.queuedAtMs
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000))
+      const baseProgress = job.progressPercent ?? 35
+      const progressPercent = baseProgress > 0 && baseProgress < 95
+        ? Math.min(88, Math.max(baseProgress, 35 + Math.floor(elapsedSeconds / 2)))
+        : baseProgress
+      const afterExitWaitSeconds = job.trade && job.paddingAfterSeconds
+        ? Math.ceil((job.trade.exitTimeMs + job.paddingAfterSeconds * 1000 - Date.now()) / 1000)
+        : 0
+      const afterExitWaitSuffix = afterExitWaitSeconds > 0
+        ? ` После выхода записываем ещё ${afterExitWaitSeconds}с: так выставлено в настройке "Секунд после выхода".`
+        : ''
+      const elapsedSuffix = elapsedSeconds >= 5 && progressPercent < 95 ? ` Идёт ${elapsedSeconds}с.` : ''
+
+      return {
+        id: job.id,
+        title: job.title,
+        message: `${job.processingMessage ?? 'Сохраняем replay и собираем клип сделки'}${afterExitWaitSuffix}${elapsedSuffix}`,
+        progressPercent,
+        startedAtMs
+      }
+    })
+
+    if (activeJobs.length > 0) {
+      const primary = activeJobs[0]!
+      const progressPercent = activeJobs.reduce((sum, job) => sum + job.progressPercent, 0) / activeJobs.length
+      return {
+        active: true,
+        title: activeJobs.length > 1 ? `Обрабатывается клипов: ${activeJobs.length}` : primary.title,
+        message: queuedCount > 0
+          ? `Параллельно обрабатывается ${activeJobs.length}, ожидает ${queuedCount}`
+          : activeJobs.length > 1 ? `Параллельно обрабатывается ${activeJobs.length}` : primary.message,
+        progressPercent,
+        startedAtMs: Math.min(...activeJobs.map((job) => job.startedAtMs ?? Date.now())),
+        queuedCount,
+        activeJobId: primary.id,
+        activeJobs,
+        queuedJobs
+      }
     }
 
-    const elapsedSeconds = clipProcessingStatus.startedAtMs
-      ? Math.max(0, Math.floor((Date.now() - clipProcessingStatus.startedAtMs) / 1000))
-      : 0
-    const dynamicProgress = clipProcessingStatus.progressPercent > 0 && clipProcessingStatus.progressPercent < 95
-      ? Math.min(88, Math.max(clipProcessingStatus.progressPercent, 35 + Math.floor(elapsedSeconds / 2)))
-      : clipProcessingStatus.progressPercent
-    const queueSuffix = queuedCount > 0 ? ` В очереди ещё ${queuedCount}.` : ''
-    const elapsedSuffix = elapsedSeconds >= 5 && dynamicProgress < 95 ? ` Идёт ${elapsedSeconds}с.` : ''
-    const afterExitWaitSeconds = activeClipRenderJob?.trade && activeClipRenderJob.paddingAfterSeconds
-      ? Math.ceil((activeClipRenderJob.trade.exitTimeMs + activeClipRenderJob.paddingAfterSeconds * 1000 - Date.now()) / 1000)
-      : 0
-    const afterExitWaitSuffix = afterExitWaitSeconds > 0
-      ? ` После выхода записываем ещё ${afterExitWaitSeconds}с: так выставлено в настройке "Секунд после выхода".`
-      : ''
-
-    return {
-      ...clipProcessingStatus,
-      message: `${clipProcessingStatus.message}${afterExitWaitSuffix}${queueSuffix}${elapsedSuffix}`,
-      progressPercent: dynamicProgress,
-      queuedCount,
-      activeJobId: activeClipRenderJob?.id,
-      queuedJobs
+    if (queuedCount > 0) {
+      return {
+        active: true,
+        title: 'Очередь клипов',
+        message: `Ждёт обработки: ${queuedCount}`,
+        progressPercent: 10,
+        queuedCount,
+        queuedJobs
+      }
     }
+
+    return clipProcessingStatus
   }
 
   const clipJobLogContext = (job: ClipRenderJob) => ({
@@ -1279,90 +1311,86 @@ app.whenReady().then(() => {
     queuedCount: clipRenderQueue.length
   })
 
-  const runClipRenderQueue = () => {
-    if (clipRenderWorkerRunning) return
-    clipRenderWorkerRunning = true
+  const processClipRenderJob = async (job: ClipRenderJob): Promise<void> => {
+    job.startedAtMs = Date.now()
+    job.progressPercent = 35
+    job.processingMessage = job.manualBuffer ? 'Сохраняем последний буфер' : 'Сохраняем replay и собираем клип сделки'
+    void appLog.info('clip-queue', 'Clip render started', clipJobLogContext(job))
 
-    void (async () => {
-      try {
-        while (clipRenderQueue.length > 0) {
-          const job = clipRenderQueue.shift()
-          if (!job) continue
-          if (job.cancelled) continue
-
-          activeClipRenderJob = job
-          applyWindowRecorderProtection()
-          const startedAtMs = Date.now()
-          void appLog.info('clip-queue', 'Clip render started', clipJobLogContext(job))
-          setClipProcessingStatus({
-            active: true,
-            title: job.title,
-            message: job.manualBuffer ? 'Сохраняем последний буфер' : 'Сохраняем replay и собираем клип сделки',
-            progressPercent: 35,
-            startedAtMs,
-            queuedCount: clipRenderQueue.length,
-            activeJobId: job.id,
-            queuedJobs: clipRenderQueue.map((queuedJob) => ({ id: queuedJob.id, title: queuedJob.title }))
+    try {
+      const clip = job.manualBuffer
+        ? await clipPipeline.createManualBufferClip({
+            requestedAtMs: job.requestedAtMs,
+            captureTarget: job.captureTarget,
+            signal: job.abortController.signal,
+            settings: job.settingsSnapshot
           })
-
-          try {
-            const clip = job.manualBuffer
-              ? await clipPipeline.createManualBufferClip({
-                  requestedAtMs: job.requestedAtMs,
-                  captureTarget: job.captureTarget,
-                  signal: job.abortController.signal
-                })
-              : await clipPipeline.createClipForClosedTrade(job.trade!, {
-                  captureTarget: job.captureTarget,
-                  signal: job.abortController.signal
-                })
-            setClipProcessingStatus({
-              active: true,
-              title: clip.title,
-              message: 'Клип сохранён, обновляем очередь',
-              progressPercent: 95,
-              startedAtMs,
-              queuedCount: clipRenderQueue.length,
-              activeJobId: job.id
-            })
-            void appLog.info('clip-queue', 'Clip render finished', {
-              ...clipJobLogContext(job),
-              videoPath: clip.videoPath,
-              metadataPath: clip.metadataPath
-            })
-            void notifyClipCreated(clip).catch((error) => {
-              console.warn(`Clip notification failed: ${getErrorMessage(error)}`)
-            })
-            job.resolve?.(clip)
-          } catch (error) {
-            if (job.cancelled || job.abortController.signal.aborted) {
-              void appLog.info('clip-queue', 'Clip render cancelled', clipJobLogContext(job))
-            } else {
-              void appLog.error('clip-queue', 'Clip render failed', error, clipJobLogContext(job))
-            }
-            setClipProcessingStatus({
-              active: false,
-              title: job.title,
-              message: job.cancelled || job.abortController.signal.aborted ? 'Сохранение отменено' : getErrorMessage(error),
-              progressPercent: 0,
-              queuedCount: clipRenderQueue.length
-            })
-            job.reject?.(error)
-            if (!job.reject && !job.cancelled) console.warn(`Clip render failed: ${getErrorMessage(error)}`)
-          } finally {
-            activeClipRenderJob = undefined
-            applyWindowRecorderProtection()
-          }
-        }
-      } finally {
-        clipRenderWorkerRunning = false
-        if (clipRenderQueue.length > 0) {
-          runClipRenderQueue()
-        } else if (clipProcessingStatus.active) {
-          clearClipProcessingSoon()
-        }
+        : await clipPipeline.createClipForClosedTrade(job.trade!, {
+            captureTarget: job.captureTarget,
+            signal: job.abortController.signal,
+            settings: job.settingsSnapshot
+          })
+      job.progressPercent = 95
+      job.processingMessage = 'Клип сохранён, обновляем очередь'
+      setClipProcessingStatus({
+        active: true,
+        title: clip.title,
+        message: job.processingMessage,
+        progressPercent: job.progressPercent,
+        startedAtMs: job.startedAtMs,
+        queuedCount: clipRenderQueue.length,
+        activeJobId: job.id
+      })
+      void appLog.info('clip-queue', 'Clip render finished', {
+        ...clipJobLogContext(job),
+        videoPath: clip.videoPath,
+        metadataPath: clip.metadataPath
+      })
+      void notifyClipCreated(clip).catch((error) => {
+        console.warn(`Clip notification failed: ${getErrorMessage(error)}`)
+      })
+      job.resolve?.(clip)
+    } catch (error) {
+      if (job.cancelled || job.abortController.signal.aborted) {
+        void appLog.info('clip-queue', 'Clip render cancelled', clipJobLogContext(job))
+      } else {
+        void appLog.error('clip-queue', 'Clip render failed', error, clipJobLogContext(job))
       }
-    })()
+      setClipProcessingStatus({
+        active: false,
+        title: job.title,
+        message: job.cancelled || job.abortController.signal.aborted ? 'Сохранение отменено' : getErrorMessage(error),
+        progressPercent: 0,
+        queuedCount: clipRenderQueue.length
+      })
+      job.reject?.(error)
+      if (!job.reject && !job.cancelled) console.warn(`Clip render failed: ${getErrorMessage(error)}`)
+    } finally {
+      activeClipRenderJobs.delete(job.id)
+      applyWindowRecorderProtection()
+      runClipRenderQueue()
+      if (activeClipRenderJobs.size === 0 && clipRenderQueue.length === 0 && clipProcessingStatus.active) {
+        clearClipProcessingSoon()
+      }
+    }
+  }
+
+  const runClipRenderQueue = () => {
+    while (activeClipRenderJobs.size < maxConcurrentClipRenders && clipRenderQueue.length > 0) {
+      const nextJob = clipRenderQueue[0]
+      if (!nextJob) break
+      if (activeClipRenderJobs.size > 0 && (
+        !nextJob.parallelSafe ||
+        [...activeClipRenderJobs.values()].some((job) => !job.parallelSafe)
+      )) break
+
+      const job = clipRenderQueue.shift()
+      if (!job || job.cancelled) continue
+
+      activeClipRenderJobs.set(job.id, job)
+      applyWindowRecorderProtection()
+      void processClipRenderJob(job)
+    }
   }
 
   const targetSuffix = (captureTarget?: CaptureTargetRef): string => captureTarget ? ` - ${captureTarget.name}` : ''
@@ -1387,11 +1415,13 @@ app.whenReady().then(() => {
       : undefined
 
     const job: ClipRenderJob = {
-      id: `${trade.id}-${queuedAtMs}`,
+      id: `clip-${randomUUID()}`,
       trade,
       title,
       queuedAtMs,
       protectedSinceMs,
+      parallelSafe: settings.recording.mode === 'window',
+      settingsSnapshot: settings,
       paddingAfterSeconds: settings.clip.paddingAfterSeconds,
       captureTarget: options.captureTarget,
       abortController: new AbortController(),
@@ -1405,7 +1435,7 @@ app.whenReady().then(() => {
     setClipProcessingStatus({
       active: true,
       title,
-      message: activeClipRenderJob || clipRenderWorkerRunning
+      message: activeClipRenderJobs.size > 0
         ? `Клип поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
         : 'Клип поставлен в очередь обработки',
       progressPercent: 10,
@@ -1436,13 +1466,15 @@ app.whenReady().then(() => {
         })
       : undefined
     const job: ClipRenderJob = {
-      id: `manual-buffer-${options.requestedAtMs}-${options.captureTarget?.id ?? 'default'}-${queuedAtMs}`,
+      id: `manual-buffer-${randomUUID()}`,
       manualBuffer: true,
       requestedAtMs: options.requestedAtMs,
       captureTarget: options.captureTarget,
       title,
       queuedAtMs,
       protectedSinceMs,
+      parallelSafe: settings.recording.mode === 'window',
+      settingsSnapshot: settings,
       abortController: new AbortController(),
       cancelled: false,
       resolve: resolveCompletion,
@@ -1455,7 +1487,7 @@ app.whenReady().then(() => {
     setClipProcessingStatus({
       active: true,
       title,
-      message: activeClipRenderJob || clipRenderWorkerRunning
+      message: activeClipRenderJobs.size > 0
         ? `Буфер поставлен в очередь. Перед ним задач: ${Math.max(0, clipRenderQueue.length - 1)}`
         : 'Буфер поставлен в очередь обработки',
       progressPercent: 10,
@@ -1470,9 +1502,12 @@ app.whenReady().then(() => {
 
   const cancelClipRender = (jobId?: string): { ok: true, cancelledCount: number } => {
     let cancelledCount = 0
-    if ((!jobId || activeClipRenderJob?.id === jobId) && activeClipRenderJob) {
-      activeClipRenderJob.cancelled = true
-      activeClipRenderJob.abortController.abort()
+    const activeJobsToCancel = jobId
+      ? [activeClipRenderJobs.get(jobId)].filter((job): job is ClipRenderJob => Boolean(job))
+      : [...activeClipRenderJobs.values()]
+    for (const job of activeJobsToCancel) {
+      job.cancelled = true
+      job.abortController.abort()
       cancelledCount += 1
     }
 
@@ -1488,12 +1523,13 @@ app.whenReady().then(() => {
     }
 
     if (cancelledCount > 0) {
+      const firstActiveJob = [...activeClipRenderJobs.values()].find((job) => !job.cancelled)
       setClipProcessingStatus({
-        active: Boolean(activeClipRenderJob && !activeClipRenderJob.cancelled),
-        title: activeClipRenderJob?.title ?? '',
+        active: Boolean(firstActiveJob),
+        title: firstActiveJob?.title ?? '',
         message: 'Сохранение отменено',
         progressPercent: 0,
-        activeJobId: activeClipRenderJob?.id,
+        activeJobId: firstActiveJob?.id,
         queuedCount: clipRenderQueue.length,
         queuedJobs: clipRenderQueue.map((job) => ({ id: job.id, title: job.title }))
       })
@@ -1506,10 +1542,10 @@ app.whenReady().then(() => {
 
   const waitForClipRenderIdle = async (timeoutMs = 5_000): Promise<void> => {
     const deadlineMs = Date.now() + timeoutMs
-    while (activeClipRenderJob && Date.now() < deadlineMs) {
+    while ((activeClipRenderJobs.size > 0 || clipRenderQueue.length > 0) && Date.now() < deadlineMs) {
       await new Promise<void>((resolve) => setTimeout(resolve, 50))
     }
-    if (activeClipRenderJob) throw new Error('Не удалось остановить обработку клипа перед обновлением')
+    if (activeClipRenderJobs.size > 0 || clipRenderQueue.length > 0) throw new Error('Не удалось остановить обработку клипа перед обновлением')
   }
 
   const selectClipRenderTargets = (settings: AppSettings, preferredTarget?: CaptureTargetRef): Array<CaptureTargetRef | undefined> => {
@@ -1609,6 +1645,9 @@ app.whenReady().then(() => {
     if (settings.recording.mode !== 'window') return undefined
     if (settings.recording.sourceType === 'screen') return undefined
 
+    const configuredTarget = selectedWindowTradeTarget(settings, event.symbol)
+    if (configuredTarget) return configuredTarget
+
     const sources = await listWindowCaptureSources()
     const patterns = terminalWindowPatterns[event.source]
     const terminalSources = sources.filter((candidate) => (
@@ -1616,8 +1655,6 @@ app.whenReady().then(() => {
     ))
     const selection = selectTerminalSource(event, terminalSources)
     const source = selection.source
-    const targets = configuredCaptureTargets(settings)
-
     if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
       void appLog.warn('recording', 'Terminal process id and ticker did not identify a capture window; trade will wait for an exact window', {
         source: event.source,
@@ -1642,14 +1679,6 @@ app.whenReady().then(() => {
         symbol: event.symbol
       }
       if (!knownTerminalRecordingTargetIds.has(target.id)) {
-        if (!targets.some((candidate) => candidate.id === target.id)) {
-          await settingsStore.update({
-            recording: {
-              ...settings.recording,
-              captureTargets: [...targets, target]
-            }
-          })
-        }
         knownTerminalRecordingTargetIds.add(target.id)
         notifyWindowRecordingNeeded()
       }
@@ -1780,6 +1809,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
     const obsPassword = input.obsPassword?.trim()
+    const expectedRecordingSourceRevision = input.expectedRecordingSourceRevision
     let patch = extractSettingsPatch(input)
 
     if (obsPassword) {
@@ -1793,7 +1823,12 @@ app.whenReady().then(() => {
       }
     }
 
-    let updatedSettings = await settingsStore.update(patch)
+    let updatedSettings = expectedRecordingSourceRevision
+      ? await settingsStore.updateIf(
+          patch,
+          (current) => recordingSourceRevision(current.recording) === expectedRecordingSourceRevision
+        )
+      : await settingsStore.update(patch)
     if (patch.proxies) updatedSettings = await clearProxyRuntimeConfig()
     applyLaunchAtLogin(updatedSettings)
     applyAlwaysOnTop(updatedSettings)
@@ -1804,8 +1839,8 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('obs:get-status', () => obsService.getStatus())
   ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
-  ipcMain.handle('recording:list-window-sources', async () => {
-    return listWindowCaptureSources()
+  ipcMain.handle('recording:list-window-sources', async (_event, forceRefresh = false) => {
+    return listWindowCaptureSources(forceRefresh === true)
   })
   ipcMain.handle('recording:list-video-encoders', async () => listAvailableVideoEncoders())
   ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
@@ -2259,13 +2294,24 @@ app.whenReady().then(() => {
         })
       })
       .finally(startProxyRuntimeWatchdog)
-    app.on('before-quit', () => terminalTradeWatcher.stop())
-    app.on('before-quit', stopProxyRuntimeWatchdog)
-    app.on('before-quit', () => {
+    let gracefulQuitStarted = false
+    let gracefulQuitFinished = false
+    app.on('before-quit', (event) => {
+      if (gracefulQuitFinished) return
+      event.preventDefault()
+      if (gracefulQuitStarted) return
+      gracefulQuitStarted = true
+      terminalTradeWatcher.stop()
+      stopProxyRuntimeWatchdog()
       if (vpnBypassMonitor) vpnBypassMonitor.stop()
-    })
-    app.on('before-quit', () => {
-      void windowRecorderService.stop()
+      cancelClipRender()
+      void Promise.allSettled([
+        waitForClipRenderIdle(30_000),
+        windowRecorderService.stop()
+      ]).finally(() => {
+        gracefulQuitFinished = true
+        app.quit()
+      })
     })
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
   }

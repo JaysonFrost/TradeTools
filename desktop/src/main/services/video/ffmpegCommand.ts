@@ -28,8 +28,8 @@ const formatSeconds = (value: number): string => value.toFixed(3)
 const formatFrameRate = (value: number): string => value.toFixed(3).replace(/\.?0+$/, '')
 
 export const calculateFfmpegRenderThreads = (parallelism = availableParallelism()): number => {
-  const logicalCores = Number.isFinite(parallelism) ? Math.max(1, Math.trunc(parallelism)) : 1
-  return Math.max(1, Math.min(2, Math.floor(logicalCores / 2)))
+  void parallelism
+  return 1
 }
 
 const buildCpuH264VideoArgs = (purpose: H264VideoPurpose, quality: H264VideoQuality): string[] => [

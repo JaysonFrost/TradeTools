@@ -105,6 +105,7 @@ export type PartialSettings = Partial<{
 
 export type SettingsUpdateInput = PartialSettings & {
   obsPassword?: string
+  expectedRecordingSourceRevision?: string
 }
 
 const clamp = (value: number, min: number, max: number): number => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min

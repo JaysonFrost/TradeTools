@@ -37,4 +37,15 @@ describe('clipPaths', () => {
     expect(buildClipOutputPaths('/Users/igor/TradeClips', trade, { id: 'screen:1', name: 'Экран 1', type: 'screen' }).videoPath)
       .toBe(join('/Users/igor/TradeClips', '2026-05-22', 'BTCUSDT Binance 22.05.26 14-32-11 - Экран 1.mp4'))
   })
+
+  it('keeps collision copies readable with a numeric suffix', () => {
+    expect(buildClipFileNames(trade, undefined, 2)).toEqual({
+      title: 'BTCUSDT Binance 22.05.26 14:32:11',
+      videoFileName: 'BTCUSDT Binance 22.05.26 14-32-11 (2).mp4',
+      metadataFileName: 'BTCUSDT Binance 22.05.26 14-32-11 (2).json'
+    })
+
+    expect(buildClipOutputPaths('/Users/igor/TradeClips', trade, undefined, 3).videoPath)
+      .toBe(join('/Users/igor/TradeClips', '2026-05-22', 'BTCUSDT Binance 22.05.26 14-32-11 (3).mp4'))
+  })
 })

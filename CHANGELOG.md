@@ -6,6 +6,23 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-07
+
+### Changed
+
+- An explicitly selected recording window is now authoritative for both background capture and every terminal trade, without silently adding another terminal window.
+- Built-in recording can render two independent trade clips in parallel, while OBS replay saves remain serialized and every FFmpeg process is limited to one render thread.
+- The processing panel now shows every active and waiting video as a separate compact row with a clear cancel or remove action.
+
+### Fixed
+
+- Fixed HAPP selections being overwritten by stale Vataga auto-detection and fixed saved windows disappearing from the source picker during a temporary capture-list miss.
+- Fixed trades being skipped when the selected window briefly disappears from desktop capture discovery, and made manual source refresh bypass the source cache.
+- Fixed the video buffer indicator alternating between its real duration and zero during periodic source reconciliation.
+- Fixed simultaneous trades overwriting each other, losing replay files during late cancellation, or releasing the next worker before FFmpeg had actually exited.
+- Fixed concurrent TradeTools installations and development builds sharing the same settings and recording cache by adding an atomic cross-build instance lock and graceful render shutdown.
+- Fixed automatic no-source mode and multi-screen fallback repeatedly losing their buffer or restarting secondary recorders.
+
 ## [0.5.0] - 2026-08-07
 
 ### Added

@@ -77,6 +77,32 @@ export type WindowRecorderStatus = {
   }>
 }
 
+type WindowRecorderMetrics = Pick<WindowRecorderStatus, 'segmentCount' | 'bufferedSeconds' | 'lastSegmentAtMs'>
+
+const replayFileCreationGraceMs = 60_000
+
+export const shouldPruneReplayFile = (
+  fileStat: { mtimeMs: number, ctimeMs: number, birthtimeMs: number },
+  cutoffMs: number,
+  nowMs = Date.now()
+): boolean => (
+  fileStat.mtimeMs < cutoffMs &&
+  nowMs - Math.max(fileStat.ctimeMs, fileStat.birthtimeMs) >= replayFileCreationGraceMs
+)
+
+export const aggregateWindowRecorderSourceStatuses = (
+  sources: NonNullable<WindowRecorderStatus['sources']>,
+  fallback: WindowRecorderMetrics
+): WindowRecorderMetrics => {
+  if (sources.length === 0) return fallback
+
+  return {
+    segmentCount: sources.reduce((sum, source) => sum + source.segmentCount, 0),
+    bufferedSeconds: Math.min(...sources.map((source) => source.bufferedSeconds)),
+    lastSegmentAtMs: Math.max(...sources.map((source) => source.lastSegmentAtMs))
+  }
+}
+
 export type WindowReplaySaveInput = {
   settings: AppSettings
   trade: ClosedTrade
@@ -558,11 +584,15 @@ export const buildNativeRecorderArgs = (
     '-loglevel',
     'warning',
     '-nostdin',
+    '-filter_threads',
+    '1',
     ...buildNativeRecorderInputArgs(frameRate, target),
     '-map',
     '0:v:0',
     '-an',
     ...nativeRecordingVideoFilter(settings),
+    '-threads',
+    '1',
     ...buildH264VideoArgs({
       platform,
       purpose: 'recording',
@@ -793,6 +823,7 @@ export const createWindowRecorderService = ({
   const pendingSegmentPaths = new Set<string>()
   const activeSegmentReadCounts = new Map<string, number>()
   let protectedSinceMs = 0
+  const replayProtectionTimes = new Map<string, number>()
   let freeRecording: FreeRecordingState | undefined
   let freeRecordingExportProtectedSinceMs = 0
   let nativeRecorders: NativeRecorderState[] = []
@@ -1196,7 +1227,7 @@ export const createWindowRecorderService = ({
 
       const filePath = join(replaysDir, entry.name)
       const fileStat = await stat(filePath).catch(() => undefined)
-      if (!fileStat || fileStat.mtimeMs >= cutoffMs) return
+      if (!fileStat || !shouldPruneReplayFile(fileStat, cutoffMs)) return
       await rm(filePath, { force: true }).catch(() => undefined)
     }))
   }
@@ -1206,7 +1237,12 @@ export const createWindowRecorderService = ({
     await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
-    const protectedCutoffs = [protectedSinceMs, freeRecording?.startedAtMs ?? 0, freeRecordingExportProtectedSinceMs].filter((value) => value > 0)
+    const protectedCutoffs = [
+      protectedSinceMs,
+      ...replayProtectionTimes.values(),
+      freeRecording?.startedAtMs ?? 0,
+      freeRecordingExportProtectedSinceMs
+    ].filter((value) => value > 0)
     const protectedCutoffMs = protectedCutoffs.length > 0 ? Math.min(...protectedCutoffs) : 0
     const cutoffMs = protectedCutoffMs > 0 ? Math.min(replayCutoffMs, protectedCutoffMs) : replayCutoffMs
     const activeBrowserSessionIds = new Set(segments
@@ -1250,8 +1286,11 @@ export const createWindowRecorderService = ({
     const configuredTargets = settings.recording.captureTargets
     const matchesConfiguredTarget = (segment: StoredSegment): boolean => {
       if (captureTarget) return targetMatchesSegment(segment, captureTarget)
+      if (settings.recording.sourceType === 'window' && (sourceId || sourceName)) {
+        return segment.sourceId === sourceId || segment.sourceName === sourceName
+      }
       if (configuredTargets.length > 0) return configuredTargets.some((target) => targetMatchesSegment(segment, target))
-      return sourceId ? segment.sourceId === sourceId || segment.sourceName === sourceName : segment.sourceName === sourceName
+      return true
     }
 
     return segments
@@ -1259,7 +1298,24 @@ export const createWindowRecorderService = ({
       .sort((a, b) => a.startedAtMs - b.startedAtMs)
   }
 
-  const buildSourceStatuses = (settings: AppSettings) => settings.recording.captureTargets.map((target) => {
+  const statusCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => {
+    const { windowSourceId, windowSourceName, sourceType, captureTargets } = settings.recording
+    if (sourceType !== 'window' || (!windowSourceId && !windowSourceName)) return captureTargets
+
+    const selectedTarget = captureTargets.find((target) => (
+      target.type === 'window' && (
+        Boolean(windowSourceId) && target.id === windowSourceId ||
+        Boolean(windowSourceName) && target.name === windowSourceName
+      )
+    ))
+    return [selectedTarget ?? {
+      id: windowSourceId,
+      name: windowSourceName || windowSourceId || 'Выбранное окно',
+      type: 'window'
+    }]
+  }
+
+  const buildSourceStatuses = (settings: AppSettings) => statusCaptureTargets(settings).map((target) => {
     const sourceSegments = relevantSegments(settings, target)
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
@@ -1283,7 +1339,13 @@ export const createWindowRecorderService = ({
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
     const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
-    const bufferedSeconds = Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds)
+    const sourceStatuses = buildSourceStatuses(settings)
+    const metrics = aggregateWindowRecorderSourceStatuses(sourceStatuses, {
+      segmentCount: sourceSegments.length,
+      bufferedSeconds: Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds),
+      lastSegmentAtMs: last?.endedAtMs ?? 0
+    })
+    const bufferedSeconds = metrics.bufferedSeconds
     const hasNativeRecorder = nativeRecorders.length > 0
     const active = Boolean(hasNativeRecorder && override.backend !== 'browser') || Boolean(last && Date.now() - last.endedAtMs < browserSegmentStaleAfterMs(settings))
     const backend = override.backend ?? (hasNativeRecorder ? 'ffmpeg' : 'browser')
@@ -1311,11 +1373,11 @@ export const createWindowRecorderService = ({
       mode: settings.recording.mode,
       sourceId: settings.recording.windowSourceId,
       sourceName: settings.recording.windowSourceName,
-      segmentCount: sourceSegments.length,
+      segmentCount: metrics.segmentCount,
       bufferedSeconds,
-      lastSegmentAtMs: last?.endedAtMs ?? 0,
+      lastSegmentAtMs: metrics.lastSegmentAtMs,
       message: override.message ?? defaultMessage,
-      sources: buildSourceStatuses(settings)
+      sources: sourceStatuses
     }
   }
 
@@ -1747,7 +1809,7 @@ export const createWindowRecorderService = ({
   }
 
   const clearCache = async (settings: AppSettings): Promise<VideoCacheClearResult> => {
-    if (protectedSinceMs > 0 || freeRecording || freeRecordingExportProtectedSinceMs > 0) {
+    if (protectedSinceMs > 0 || replayProtectionTimes.size > 0 || freeRecording || freeRecordingExportProtectedSinceMs > 0) {
       throw new Error('Нельзя очистить кэш во время активной сделки или свободной записи')
     }
 
@@ -1878,13 +1940,13 @@ export const createWindowRecorderService = ({
         }
       }
 
-      const previousProtectedSinceMs = protectedSinceMs
-      protectedSinceMs = Math.max(1, Math.min(
-        previousProtectedSinceMs > 0 ? previousProtectedSinceMs : Number.MAX_SAFE_INTEGER,
-        settings.clip.paddingBeforeSeconds > 0
+      const replayProtectionId = randomUUID()
+      replayProtectionTimes.set(
+        replayProtectionId,
+        Math.max(1, settings.clip.paddingBeforeSeconds > 0
           ? trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000
-          : trade.entryTimeMs
-      ))
+          : trade.entryTimeMs)
+      )
 
       try {
         const replay = await exportReplay(settings, trade, captureTarget, signal)
@@ -1902,7 +1964,7 @@ export const createWindowRecorderService = ({
           message: error instanceof Error ? error.message : 'Не удалось сохранить встроенный replay'
         }
       } finally {
-        protectedSinceMs = previousProtectedSinceMs
+        replayProtectionTimes.delete(replayProtectionId)
       }
     }
   }

@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
+import { recordingSourceRevision } from '../../../shared/recordingSourceRevision'
 import type { WindowCaptureSource, WindowRecorderStatus } from '../../../main/services/recording/windowRecorderService'
 import { terminalTitleMatchesTicker } from '../../../main/services/recording/terminalWindowSelection'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { startOptionalAudioCaptures, type OptionalAudioKind } from '../../lib/asyncAudioCapture'
-import { findAutoRecordedTerminalSources, findPreferredTerminalSource } from '../../lib/windowCaptureSources'
+import { findAutoRecordedTerminalSources } from '../../lib/windowCaptureSources'
 
 export type WindowRecorderControllerProps = {
   settings?: AppSettings
@@ -102,16 +103,20 @@ const targetNeedsSync = (source: WindowCaptureSource, target: AppSettings['recor
   target.displayId !== source.displayId
 )
 
-const resolveRecordingTargets = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource[] => {
+export const resolveRecordingTargets = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource[] => {
   const configuredTargets = settings.recording.captureTargets
     .map((target) => sources.find((source) => sourceMatchesTarget(source, target)))
     .filter((source): source is WindowCaptureSource => source !== undefined)
 
   const selectedSource = resolveSource(sources, settings)
-  const autoRecordedTerminals = settings.recording.sourceType === 'window'
-    ? findAutoRecordedTerminalSources(sources)
-    : []
-  const candidates = [...configuredTargets, ...(selectedSource ? [selectedSource] : []), ...autoRecordedTerminals]
+  if (settings.recording.sourceType === 'window') {
+    if (selectedSource) return [selectedSource]
+    if (settings.recording.windowSourceId || settings.recording.windowSourceName) return []
+    if (configuredTargets.length > 0) return configuredTargets
+    return findAutoRecordedTerminalSources(sources)
+  }
+
+  const candidates = [...configuredTargets, ...(selectedSource ? [selectedSource] : [])]
   const sourceIds = new Set<string>()
   const uniqueTargets = candidates.filter((source) => {
     if (sourceIds.has(source.id)) return false
@@ -127,6 +132,28 @@ const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCapture
   Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName) &&
   !source
 )
+
+export const hasConfiguredRecordingSource = (settings: AppSettings): boolean => Boolean(
+  settings.recording.windowSourceId ||
+  settings.recording.windowSourceName ||
+  settings.recording.captureTargets.length > 0
+)
+
+export const sourceMatchesConfiguredRecording = (
+  source: WindowCaptureSource,
+  settings: AppSettings
+): boolean => {
+  if (source.type !== settings.recording.sourceType) return false
+  if (source.type === 'screen') {
+    return settings.recording.captureTargets.some((target) => sourceMatchesTarget(source, target))
+  }
+  if (settings.recording.windowSourceId || settings.recording.windowSourceName) {
+    return source.id === settings.recording.windowSourceId ||
+      Boolean(settings.recording.windowSourceName) && source.name === settings.recording.windowSourceName
+  }
+
+  return settings.recording.captureTargets.some((target) => sourceMatchesTarget(source, target))
+}
 
 export const browserCaptureFrameRate = (frameRate: number): number => (
   Math.max(10, Math.min(60, Number.isFinite(frameRate) ? frameRate : 30))
@@ -244,6 +271,20 @@ const createLocalStatus = (settings: AppSettings, message: string, active = fals
   lastSegmentAtMs: 0,
   message
 })
+
+export const mergeBrowserRecorderStatus = (
+  status: WindowRecorderStatus,
+  activeSources: Array<Pick<WindowCaptureSource, 'id' | 'name'>>,
+  message: string
+): WindowRecorderStatus => {
+  const primarySource = activeSources[0]
+  return {
+    ...status,
+    active: status.active || activeSources.length > 0,
+    ...(primarySource ? { sourceId: primarySource.id, sourceName: primarySource.name } : {}),
+    message
+  }
+}
 
 const waitForVideoMetadata = async (video: HTMLVideoElement): Promise<void> => {
   if (video.readyState >= HTMLMediaElement.HAVE_METADATA && video.videoWidth > 0 && video.videoHeight > 0) return
@@ -634,7 +675,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
       const source = targets[0] ?? resolveSource(sources, currentSettings)
       if (targets.length === 0 && isSavedWindowSourceMissing(currentSettings, source)) {
-        reportStatus(createLocalStatus(currentSettings, `Окно ${currentSettings.recording.windowSourceName} не найдено. Откройте торговый терминал, TradeTools продолжит запись автоматически.`))
         return { currentSettings, targets: [] }
       }
 
@@ -649,8 +689,8 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         const firstScreen = targets[0]
         reportStatus(createLocalStatus(currentSettings, `Обновляем данные монитора: ${firstScreen.name}`))
         const updated = await api.settings.update({
+          expectedRecordingSourceRevision: recordingSourceRevision(currentSettings.recording),
           recording: {
-            ...currentSettings.recording,
             windowSourceId: firstScreen.id,
             windowSourceName: firstScreen.name,
             captureTargets: targets.map((target) => ({
@@ -670,34 +710,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         targets = resolveRecordingTargets(sources, updated)
       }
 
-      if (targets.length > 0 && !currentSettings.recording.windowSourceId && !currentSettings.recording.windowSourceName && currentSettings.recording.sourceType === 'window') {
-        const preferredSource = findPreferredTerminalSource(targets)
-        if (preferredSource) {
-          reportStatus(createLocalStatus(currentSettings, `Автоматически выбрали окно терминала: ${preferredSource.name}`))
-          const updated = await api.settings.update({
-            recording: {
-              ...currentSettings.recording,
-              sourceType: preferredSource.type,
-              windowSourceId: preferredSource.id,
-              windowSourceName: preferredSource.name,
-              captureTargets: [{
-                id: preferredSource.id,
-                name: preferredSource.name,
-                type: preferredSource.type,
-                ...(preferredSource.processId ? { processId: preferredSource.processId } : {}),
-                ...(preferredSource.displayId ? { displayId: preferredSource.displayId } : {})
-              }],
-              saveTargetMode: 'selected',
-              saveTargetId: preferredSource.id
-            }
-          })
-          currentSettings = updated
-          settingsRef.current = updated
-          onSettingsChangeRef.current?.(updated)
-          targets = resolveRecordingTargets(sources, updated)
-        }
-      }
-
       return { currentSettings, targets }
     }
 
@@ -713,10 +725,30 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       const prepared = await prepareTargets(api, sources)
       const targets = prepared.targets
       if (prepared.currentSettings.recording.sourceType === 'window') ensureSourceDiscovery()
+      if (hasConfiguredRecordingSource(prepared.currentSettings)) {
+        browserRecorders.forEach((session, sourceId) => {
+          if (sourceMatchesConfiguredRecording(session.source, prepared.currentSettings)) return
+          browserRecorders.delete(sourceId)
+          stopBrowserRecorder(session)
+        })
+      }
       if (targets.length === 0) {
-        reportStatus(createLocalStatus(prepared.currentSettings, prepared.currentSettings.recording.sourceType === 'screen'
+        const activeSources = [...browserRecorders.values()]
+          .filter(streamIsLive)
+          .map((session) => session.source)
+        const status = await api.recording.getStatus()
+        const hasSavedWindow = prepared.currentSettings.recording.sourceType === 'window' && hasConfiguredRecordingSource(prepared.currentSettings)
+        const savedWindowLabel = prepared.currentSettings.recording.windowSourceName ||
+          prepared.currentSettings.recording.windowSourceId ||
+          prepared.currentSettings.recording.captureTargets[0]?.name ||
+          prepared.currentSettings.recording.captureTargets[0]?.id ||
+          'выбранное окно'
+        const message = prepared.currentSettings.recording.sourceType === 'screen'
           ? 'Экран для записи не найден. Обновите список источников.'
-          : 'Откройте торговый терминал. TradeTools сам выберет подходящее окно и начнёт запись.'))
+          : hasSavedWindow
+            ? `Окно ${savedWindowLabel} не найдено. Откройте выбранное окно, TradeTools продолжит запись автоматически.`
+            : 'Откройте торговый терминал. TradeTools сам выберет подходящее окно и начнёт запись.'
+        reportStatus(mergeBrowserRecorderStatus(status, activeSources, message))
         scheduleSourceRetry()
         return
       }
@@ -749,9 +781,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         }
       })
 
-      if (targets.length > 1) reportStatus(createLocalStatus(prepared.currentSettings, `Запускаем запись ${targets.length} источников...`, true))
-      for (const target of targets) {
-        if (browserRecorders.has(target.id)) continue
+      const targetsToStart = targets.filter((target) => !browserRecorders.has(target.id))
+      if (targetsToStart.length > 0 && targets.length > 1) {
+        reportStatus(createLocalStatus(prepared.currentSettings, `Запускаем запись ${targets.length} источников...`, true))
+      }
+      for (const target of targetsToStart) {
         try {
           await startBrowserRecorder(api, target)
         } catch (error) {
@@ -761,7 +795,12 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
       const activeSources = targets.filter((target) => browserRecorders.has(target.id))
       if (activeSources.length > 0) {
-        reportStatus(createLocalStatus(prepared.currentSettings, `Встроенная запись активна: ${activeSources.map((target) => target.name).join(', ')}`, true))
+        const status = await api.recording.getStatus()
+        reportStatus(mergeBrowserRecorderStatus(
+          status,
+          activeSources,
+          `Встроенная запись активна: ${activeSources.map((target) => target.name).join(', ')}`
+        ))
       } else {
         scheduleSourceRetry()
       }

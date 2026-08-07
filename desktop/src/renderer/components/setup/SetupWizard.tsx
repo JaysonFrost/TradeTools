@@ -9,6 +9,7 @@ import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaul
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
 import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
+import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { proxySetupWizardSteps, videoSetupWizardSteps } from './setupWizardSteps'
 import { Button } from '../ui/Button'
 
@@ -181,17 +182,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setLoadingSources(true)
     setLocalMessage('')
     try {
-      const sources = await getTradeToolsApi().recording.listWindowSources()
-      setWindowSources(sources)
-      const preferredSource = recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
-        ? findPreferredTerminalSource(sources)
-        : undefined
-      if (preferredSource) {
-        setWindowSourceId(preferredSource.id)
-        setWindowSourceName(preferredSource.name)
-        setLocalMessage(`Автоматически выбрали окно: ${preferredSource.name}`)
-        return
-      }
+      const sources = await refreshWindowSourceList(
+        () => getTradeToolsApi().recording.listWindowSources(true),
+        setWindowSources
+      )
       setLocalMessage(sources.length > 0 ? 'Список окон обновлён' : 'Окна для записи не найдены')
     } catch (error) {
       setLocalMessage(error instanceof Error ? error.message : 'Не удалось получить список окон')
@@ -249,6 +243,9 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const step = steps[stepIndex]
   const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex, steps.length])
   const filteredSources = windowSources.filter((source) => source.type === sourceType)
+  const selectedWindowTemporarilyUnavailable = Boolean(
+    sourceType === 'window' && windowSourceId && !filteredSources.some((source) => source.id === windowSourceId)
+  )
   const stepActionLabels = useMemo(() => {
     if (!step) return []
     if (mode === 'video' && step.id === 'obs-websocket') {
@@ -288,11 +285,14 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       if (latestSources !== windowSources) setWindowSources(latestSources)
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
         ?? latestSources.find((source) => source.id === windowSourceId)
-        ?? (recordingMode === 'window' && sourceType === 'window' ? findPreferredTerminalSource(latestSources) : undefined)
+        ?? (recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
+          ? findPreferredTerminalSource(latestSources)
+          : undefined)
       const selectedTarget = selectedSource ? {
         id: selectedSource.id,
         name: selectedSource.name,
         type: selectedSource.type,
+        ...(selectedSource.processId ? { processId: selectedSource.processId } : {}),
         ...(selectedSource.displayId ? { displayId: selectedSource.displayId } : {})
       } : undefined
       const nextCaptureTargets = sourceType === 'screen'
@@ -816,7 +816,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                                 }}
                                 aria-label="Окно для записи"
                               >
-                                <option value="">{windowSourceName || 'Выберите окно'}</option>
+                                <option value="">Выберите окно</option>
+                                {selectedWindowTemporarilyUnavailable && (
+                                  <option value={windowSourceId}>{windowSourceName || 'Сохранённое окно'} (временно недоступно)</option>
+                                )}
                                 {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                               </select>
                             )}
