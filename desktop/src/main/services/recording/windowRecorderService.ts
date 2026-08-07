@@ -743,8 +743,8 @@ const probeBrowserSessionHasAudio = async (path: string): Promise<boolean> => (
       child.stdout.on('data', (chunk) => {
         stdout += String(chunk)
       })
-      child.on('error', () => settle(false))
-      child.on('exit', (code) => settle(code === 0 && stdout.trim().split(/\s+/).includes('audio')))
+      child.once('error', () => settle(false))
+      child.once('close', (code) => settle(code === 0 && stdout.trim().split(/\s+/).includes('audio')))
     } catch {
       settle(false)
     }
@@ -780,10 +780,10 @@ const probeBrowserSessionVideoPackets = async (path: string): Promise<BrowserSes
       child.stderr.on('data', (chunk) => {
         stderr += String(chunk)
       })
-      child.on('error', (error) => settle(() => rejectProbe(
+      child.once('error', (error) => settle(() => rejectProbe(
         isMissingMediaToolError(error) ? createMissingMediaToolError('ffprobe') : error
       )))
-      child.on('exit', (code) => settle(() => {
+      child.once('close', (code) => settle(() => {
         if (code !== 0) {
           rejectProbe(new Error(`ffprobe exited with code ${code ?? 'unknown'}: ${normalizeFfmpegLog(stderr)}`))
           return

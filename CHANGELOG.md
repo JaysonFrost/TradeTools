@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-07
+
+### Fixed
+
+- Fixed parallel clip renders occasionally parsing incomplete FFprobe JSON and losing one otherwise valid trade video.
+- Fixed browser-session media probes evaluating FFprobe output before its streams had fully closed, which could cause false duration and audio detection failures.
+
 ## [0.5.1] - 2026-08-07
 
 ### Changed

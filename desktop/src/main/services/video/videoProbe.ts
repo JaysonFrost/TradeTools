@@ -68,6 +68,13 @@ const runFfprobe = async (videoPath: string): Promise<string> => {
     const child = spawn(resolveMediaToolPath('ffprobe'), args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
+    let settled = false
+
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      callback()
+    }
 
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
@@ -75,23 +82,33 @@ const runFfprobe = async (videoPath: string): Promise<string> => {
     child.stderr.on('data', (chunk) => {
       stderr += String(chunk)
     })
-    child.on('error', (error) => {
+    child.once('error', (error) => settle(() => {
       reject(isMissingMediaToolError(error) ? createMissingMediaToolError('ffprobe') : error)
-    })
-    child.on('exit', (code) => {
+    }))
+    child.once('close', (code) => settle(() => {
       if (code === 0) {
         resolve(stdout.trim())
         return
       }
 
       reject(new Error(`ffprobe exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
-    })
+    }))
   })
+}
+
+const parseFfprobeOutput = (output: string, videoPath: string): FfprobeOutput => {
+  if (!output) throw new Error(`ffprobe вернул пустой ответ для видео: ${videoPath}`)
+
+  try {
+    return JSON.parse(output) as FfprobeOutput
+  } catch (error) {
+    throw new Error(`ffprobe вернул повреждённый JSON для видео: ${videoPath}`, { cause: error })
+  }
 }
 
 export const probeVideoDetails: VideoDetailsProbe = async (videoPath) => {
   const output = await runFfprobe(videoPath)
-  const parsed = JSON.parse(output) as FfprobeOutput
+  const parsed = parseFfprobeOutput(output, videoPath)
   const stream = parsed.streams?.[0]
   const durationSeconds = parsePositiveNumber(stream?.duration) ?? parsePositiveNumber(parsed.format?.duration)
 

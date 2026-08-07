@@ -1201,6 +1201,18 @@ describe('windowRecorderService', () => {
     expect(source).toContain('shouldConcatBrowserAudio(sessionFiles, browserAudioEnabled(settings))')
   })
 
+  it('waits for ffprobe output streams to close before parsing browser sessions', async () => {
+    const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+    const probeStart = source.indexOf('const probeBrowserSessionHasAudio')
+    const probeEnd = source.indexOf('const probeBrowserSessionMedia')
+    const probeSource = source.slice(probeStart, probeEnd)
+
+    expect(probeStart).toBeGreaterThanOrEqual(0)
+    expect(probeEnd).toBeGreaterThan(probeStart)
+    expect(probeSource.match(/child\.once\('close'/g)).toHaveLength(2)
+    expect(probeSource).not.toContain("child.on('exit'")
+  })
+
   it('fills missing browser session audio with timeline-sized silence', () => {
     const mixedFilter = buildBrowserSessionConcatFilter({
       sessionFiles: [
