@@ -260,7 +260,7 @@ const createRecordingStream = (
 const hasAudioTracks = (stream?: MediaStream): boolean => (stream?.getAudioTracks().length ?? 0) > 0
 
 const createLocalStatus = (settings: AppSettings, message: string, active = false): WindowRecorderStatus => ({
-  enabled: settings.recording.mode === 'window',
+  enabled: true,
   active,
   mode: settings.recording.mode,
   backend: 'browser',
@@ -381,7 +381,9 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     let reconcileRequested = false
 
     const reportStatus = (status: WindowRecorderStatus) => {
-      if (!disposed) onStatusChangeRef.current(status)
+      if (disposed) return
+      onStatusChangeRef.current(status)
+      void getTradeToolsApi().recording.reportStatus(status).catch(() => undefined)
     }
 
     const reportError = (error: unknown) => {
@@ -430,11 +432,11 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       if (statusPollTimer !== undefined) window.clearInterval(statusPollTimer)
       browserRecorders.forEach(stopBrowserRecorder)
       browserRecorders.clear()
-      void getTradeToolsApi().recording.stop().catch(() => undefined)
+      void getTradeToolsApi().recording.stopEngine().catch(() => undefined)
     }
 
     if (enabled === false) {
-      void getTradeToolsApi().recording.stop()
+      void getTradeToolsApi().recording.stopEngine()
         .then(() => reportStatus(createLocalStatus(initialSettings, 'Фоновая запись остановлена')))
         .catch(reportError)
       return cleanup
@@ -716,11 +718,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     const reconcile = async () => {
       const api = getTradeToolsApi()
       const currentSettings = settingsRef.current ?? initialSettings
-      if (currentSettings.recording.mode !== 'window') {
-        reportStatus(await api.recording.getStatus())
-        return
-      }
-
       const sources = await api.recording.listWindowSources()
       const prepared = await prepareTargets(api, sources)
       const targets = prepared.targets
@@ -827,7 +824,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
     return cleanup
   }, [
-    settings?.recording.mode,
     settings?.recording.sourceType,
     settings?.recording.resolutionPreset,
     settings?.recording.frameRate,

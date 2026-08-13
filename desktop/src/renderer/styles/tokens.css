@@ -1,5 +1,31 @@
 :root {
   color-scheme: dark;
+  --bg: #0b1623;
+  --panel: rgba(11, 22, 35, 0.94);
+  --panel-strong: #0d1b2a;
+  --elevated: #122336;
+  --border: rgba(139, 155, 180, 0.28);
+  --border-strong: rgba(86, 181, 213, 0.62);
+  --text: #f0f0f0;
+  --text-secondary: #b7c3d6;
+  --text-muted: #8b9bb4;
+  --grid-line: #1c2b3a;
+  --line: #56b5d5;
+  --action: #ff9f30;
+  --action-hover: #e88a1f;
+  --success: #00ff9d;
+  --danger: #ff5d73;
+  --warning: #ff9f30;
+  /* Compatibility aliases while feature panels migrate to semantic tokens. */
+  --purple: var(--line);
+  --violet: var(--line);
+  --glow: rgba(86, 181, 213, 0.22);
+  --radius-card: 0px;
+  --radius-control: 0px;
+  --shadow-card: 8px 8px 0 rgba(4, 11, 18, 0.46), inset 0 1px 0 rgba(240, 240, 240, 0.03);
+}
+
+html[data-interface-theme='classic'] {
   --bg: #08090a;
   --panel: rgba(15, 16, 21, 0.78);
   --panel-strong: #0f1015;
@@ -8,14 +34,18 @@
   --border-strong: rgba(139, 92, 246, 0.32);
   --text: #f7f8f8;
   --text-secondary: #a8adbd;
-  --text-muted: #686b82;
-  --purple: #7132f5;
-  --violet: #8b5cf6;
-  --glow: rgba(113, 50, 245, 0.35);
+  --text-muted: #9298af;
+  --grid-line: transparent;
+  --line: #8b5cf6;
+  --action: #7132f5;
+  --action-hover: #8b5cf6;
   --success: #10b981;
   --danger: #f43f5e;
   --warning: #f59e0b;
+  --purple: #7132f5;
+  --violet: #8b5cf6;
+  --glow: rgba(113, 50, 245, 0.35);
   --radius-card: 24px;
   --radius-control: 14px;
-  --shadow-card: 0 24px 80px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255,255,255,0.05);
+  --shadow-card: 0 24px 80px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }

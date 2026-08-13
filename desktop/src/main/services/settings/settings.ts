@@ -1,12 +1,13 @@
 import { join } from 'node:path'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
-import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, maxClipPaddingSeconds, maxObsReplayBufferSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
+import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, maxClipPaddingSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
 
 export type RecordingSourceType = 'window' | 'screen'
 export type RecordingSaveTargetMode = 'all' | 'selected'
 export type RecordingVideoEncoder = 'gpu' | 'nvidia' | 'amd' | 'intel' | `gpu:${'nvidia' | 'amd' | 'intel'}:${number}` | 'cpu'
 export type RecordingResolutionPreset = 'native' | '1440p' | '1080p'
 export type LocalProxyType = 'HTTP' | 'SOCKS5'
+export type InterfaceTheme = 'engineering-blueprint' | 'classic'
 
 export type CaptureTargetRef = {
   id: string
@@ -35,7 +36,7 @@ export type ProxyRecord = {
 export type AppSettings = {
   language: 'ru'
   recording: {
-    mode: 'obs' | 'window'
+    mode: 'window'
     sourceType: RecordingSourceType
     windowSourceId: string
     windowSourceName: string
@@ -54,20 +55,16 @@ export type AppSettings = {
     paddingBeforeSeconds: number
     paddingAfterSeconds: number
     replayBufferSeconds: number
-    replaySourceDir: string
     outputDir: string
-  }
-  obs: {
-    host: string
-    port: number
-    passwordConfigured: boolean
   }
   tradeSource: {
     mode: 'terminal-window'
   }
   system: {
+    interfaceTheme: InterfaceTheme
     launchAtLogin: boolean
     alwaysOnTop: boolean
+    backgroundRecordingEnabled: boolean
     keepProxyRunningAfterClose: boolean
     proxyPaymentNotificationsEnabled: boolean
     clipSuccessNotificationsEnabled: boolean
@@ -92,11 +89,15 @@ export type PartialProxyRecord = Partial<ProxyRecord> & {
   paymentDueDate?: string
 }
 
+type PartialRecordingSettings = Omit<Partial<AppSettings['recording']>, 'mode'> & {
+  // Accept unknown persisted modes so legacy installations normalize to the built-in recorder.
+  mode?: unknown
+}
+
 export type PartialSettings = Partial<{
   language: string
-  recording: Partial<AppSettings['recording']>
+  recording: PartialRecordingSettings
   clip: Partial<AppSettings['clip']>
-  obs: Partial<AppSettings['obs']>
   tradeSource: Partial<AppSettings['tradeSource']>
   system: Partial<AppSettings['system']>
   proxyRuntime: Partial<AppSettings['proxyRuntime']>
@@ -104,7 +105,6 @@ export type PartialSettings = Partial<{
 }>
 
 export type SettingsUpdateInput = PartialSettings & {
-  obsPassword?: string
   expectedRecordingSourceRevision?: string
 }
 
@@ -119,6 +119,7 @@ const normalizeCaptureSymbol = (value: unknown): string => (
   typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : ''
 )
 const normalizeLocalProxyType = (value: unknown): LocalProxyType => value === 'HTTP' ? 'HTTP' : 'SOCKS5'
+const normalizeInterfaceTheme = (value: unknown): InterfaceTheme => value === 'engineering-blueprint' ? 'engineering-blueprint' : 'classic'
 
 const normalizePort = (value: unknown, fallback = 0): number => {
   const port = Number(value)
@@ -158,7 +159,7 @@ const normalizeHttpUrl = (value: unknown): string => {
   }
 }
 
-const normalizeRecordingMode = (value: unknown): AppSettings['recording']['mode'] => value === 'window' ? 'window' : 'obs'
+const normalizeRecordingMode = (_value: unknown): AppSettings['recording']['mode'] => 'window'
 const normalizeRecordingSourceType = (value: unknown, sourceId: unknown): AppSettings['recording']['sourceType'] => {
   if (value === 'screen') return 'screen'
   return normalizeString(sourceId).startsWith('screen:') ? 'screen' : 'window'
@@ -305,20 +306,16 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     paddingBeforeSeconds: defaultClipPaddingBeforeSeconds,
     paddingAfterSeconds: defaultClipPaddingAfterSeconds,
     replayBufferSeconds: defaultReplayBufferSeconds,
-    replaySourceDir: join(appDataDir, 'obs-replays'),
     outputDir: join(appDataDir, 'clips')
-  },
-  obs: {
-    host: '127.0.0.1',
-    port: 4455,
-    passwordConfigured: false
   },
   tradeSource: {
     mode: 'terminal-window'
   },
   system: {
+    interfaceTheme: 'classic',
     launchAtLogin: false,
     alwaysOnTop: false,
+    backgroundRecordingEnabled: true,
     keepProxyRunningAfterClose: false,
     proxyPaymentNotificationsEnabled: true,
     clipSuccessNotificationsEnabled: true,
@@ -354,8 +351,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
     : captureTargets[0]?.id ?? ''
   const paddingBeforeSeconds = clamp(settings.clip?.paddingBeforeSeconds ?? defaults.clip.paddingBeforeSeconds, 0, maxClipPaddingSeconds)
   const paddingAfterSeconds = clamp(settings.clip?.paddingAfterSeconds ?? defaults.clip.paddingAfterSeconds, 0, maxClipPaddingSeconds)
-  const maxReplayBufferSeconds = recordingMode === 'window' ? maxWindowReplayBufferSeconds : maxObsReplayBufferSeconds
-  const minReplayBufferSeconds = recordingMode === 'window' ? Math.max(10, paddingBeforeSeconds) : 10
+  const minReplayBufferSeconds = Math.max(10, paddingBeforeSeconds)
 
   return {
     language: 'ru',
@@ -378,21 +374,17 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
     clip: {
       paddingBeforeSeconds,
       paddingAfterSeconds,
-      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, minReplayBufferSeconds, maxReplayBufferSeconds),
-      replaySourceDir: settings.clip?.replaySourceDir ?? defaults.clip.replaySourceDir,
+      replayBufferSeconds: clamp(settings.clip?.replayBufferSeconds ?? defaults.clip.replayBufferSeconds, minReplayBufferSeconds, maxWindowReplayBufferSeconds),
       outputDir: settings.clip?.outputDir ?? defaults.clip.outputDir
-    },
-    obs: {
-      host: settings.obs?.host ?? defaults.obs.host,
-      port: clamp(settings.obs?.port ?? defaults.obs.port, 1, 65535),
-      passwordConfigured: settings.obs?.passwordConfigured ?? defaults.obs.passwordConfigured
     },
     tradeSource: {
       mode: 'terminal-window'
     },
     system: {
+      interfaceTheme: normalizeInterfaceTheme(settings.system?.interfaceTheme ?? defaults.system.interfaceTheme),
       launchAtLogin: settings.system?.launchAtLogin ?? defaults.system.launchAtLogin,
       alwaysOnTop: settings.system?.alwaysOnTop === true,
+      backgroundRecordingEnabled: settings.system?.backgroundRecordingEnabled ?? defaults.system.backgroundRecordingEnabled,
       keepProxyRunningAfterClose: settings.system?.keepProxyRunningAfterClose === true,
       proxyPaymentNotificationsEnabled: settings.system?.proxyPaymentNotificationsEnabled ?? defaults.system.proxyPaymentNotificationsEnabled,
       clipSuccessNotificationsEnabled: settings.system?.clipSuccessNotificationsEnabled ?? defaults.system.clipSuccessNotificationsEnabled,

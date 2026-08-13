@@ -79,6 +79,22 @@ export type WindowRecorderStatus = {
 
 type WindowRecorderMetrics = Pick<WindowRecorderStatus, 'segmentCount' | 'bufferedSeconds' | 'lastSegmentAtMs'>
 
+export const recorderStatusHasFreshSegments = (
+  status: WindowRecorderStatus,
+  settings: Pick<AppSettings, 'recording'>,
+  notBeforeMs: number,
+  nowMs = Date.now()
+): boolean => {
+  const freshnessMs = Math.max(8_000, settings.recording.segmentSeconds * 2_000 + 5_000)
+  if (!status.active || !status.sources || status.sources.length === 0) return false
+
+  return status.sources.every((source) => (
+    source.segmentCount > 0 &&
+    source.lastSegmentAtMs >= notBeforeMs &&
+    nowMs - source.lastSegmentAtMs <= freshnessMs
+  ))
+}
+
 const replayFileCreationGraceMs = 60_000
 
 export const shouldPruneReplayFile = (
@@ -126,6 +142,7 @@ export type VideoCacheClearResult = {
 
 export type FreeRecordingStatus = {
   active: boolean
+  exporting: boolean
   paused: boolean
   startedAtMs: number
   currentIntervalStartedAtMs: number
@@ -908,7 +925,7 @@ export const createWindowRecorderService = ({
   }
 
   const expectedNativeRecorderSettingsKeys = (settings: AppSettings): string[] => (
-    settings.recording.mode === 'window' && settings.recording.sourceType === 'screen'
+    settings.recording.sourceType === 'screen'
       ? nativeScreenTargets(settings).map((target) => nativeSettingsKey(settings, target))
       : []
   )
@@ -1146,11 +1163,6 @@ export const createWindowRecorderService = ({
   }
 
   const startNativeRecorder = async (settings: AppSettings): Promise<WindowRecorderStatus> => {
-    if (settings.recording.mode !== 'window') {
-      await stopNativeRecorder()
-      return buildStatus(settings)
-    }
-
     const missingWindowStatus = await savedWindowSourceMissingStatus(settings)
     if (missingWindowStatus) return missingWindowStatus
 
@@ -1351,9 +1363,7 @@ export const createWindowRecorderService = ({
     const backend = override.backend ?? (hasNativeRecorder ? 'ffmpeg' : 'browser')
     const bufferTargetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
     const bufferMessage = `накоплено ${Math.round(bufferedSeconds)}с из ${bufferTargetSeconds}с`
-    const defaultMessage = settings.recording.mode !== 'window'
-      ? 'Встроенная запись окна выключена'
-      : !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
+    const defaultMessage = !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
         ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
         : backend === 'ffmpeg' && hasNativeRecorder
           ? bufferedSeconds > 0
@@ -1366,10 +1376,10 @@ export const createWindowRecorderService = ({
               : 'Ждём сегменты от встроенного рекордера'
 
     return {
-      enabled: settings.recording.mode === 'window',
+      enabled: true,
       active,
       backend,
-      ...(override.fallbackRequired || (settings.recording.mode === 'window' && !hasNativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
+      ...(override.fallbackRequired || (!hasNativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
       mode: settings.recording.mode,
       sourceId: settings.recording.windowSourceId,
       sourceName: settings.recording.windowSourceName,
@@ -1700,6 +1710,7 @@ export const createWindowRecorderService = ({
     if (!freeRecording) {
       return {
         active: false,
+        exporting: freeRecordingExportProtectedSinceMs > 0,
         paused: false,
         startedAtMs: 0,
         currentIntervalStartedAtMs: 0,
@@ -1722,6 +1733,7 @@ export const createWindowRecorderService = ({
 
     return {
       active: true,
+      exporting: false,
       paused,
       startedAtMs: recording.startedAtMs,
       currentIntervalStartedAtMs: paused ? 0 : currentInterval?.startMs ?? 0,
@@ -1838,7 +1850,7 @@ export const createWindowRecorderService = ({
       })
     }
 
-    if (settings.recording.mode === 'window' && nativeMissingSource?.settingsKey === nativeSettingsKey(settings)) {
+    if (nativeMissingSource?.settingsKey === nativeSettingsKey(settings)) {
       return buildStatus(settings, {
         backend: 'browser',
         fallbackRequired: true,
@@ -1858,8 +1870,6 @@ export const createWindowRecorderService = ({
     finishFreeRecording,
     getFreeRecordingStatus: buildFreeRecordingStatus,
     async appendSegment(input, settings) {
-      if (settings.recording.mode !== 'window') return buildStatus(settings)
-
       const startedAtMs = sanitizeSegmentTime(input.startedAtMs)
       const endedAtMs = sanitizeSegmentTime(input.endedAtMs)
       const processId = sanitizeProcessId(input.processId)
@@ -1916,9 +1926,6 @@ export const createWindowRecorderService = ({
       return buildFreeRecordingStatus(settings)
     },
     async startFreeRecording(settings) {
-      if (settings.recording.mode !== 'window') {
-        throw new Error('Свободная запись доступна во встроенной записи окна или экрана')
-      }
       if (freeRecording) return buildFreeRecordingStatus(settings)
 
       await startNativeRecorder(settings)
@@ -1932,14 +1939,6 @@ export const createWindowRecorderService = ({
     stop: stopNativeRecorder,
     async saveReplayBuffer({ settings, trade, captureTarget, signal }) {
       const requestedAtMs = Date.now()
-      if (settings.recording.mode !== 'window') {
-        return {
-          ok: false,
-          requestedAtMs,
-          message: 'Встроенная запись окна выключена'
-        }
-      }
-
       const replayProtectionId = randomUUID()
       replayProtectionTimes.set(
         replayProtectionId,

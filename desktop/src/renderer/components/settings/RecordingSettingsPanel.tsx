@@ -1,4 +1,4 @@
-import { CircleHelp, Clock3, Clapperboard, ExternalLink, FolderOpen, Link2, Monitor, Pin, Power, Radio, RefreshCw, Trash2 } from 'lucide-react'
+import { CircleHelp, Clock3, Clapperboard, ExternalLink, FolderOpen, Link2, Monitor, Pin, Power, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
@@ -9,16 +9,17 @@ import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 
-export type ObsSettingsPanelProps = {
+export type RecordingSettingsPanelProps = {
   settings?: AppSettings
   onSaved: (settings: AppSettings) => void
 }
 
-const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
-const sectionClass = 'min-w-0 border-t border-white/10 pt-4 first:border-t-0 first:pt-0'
-const sectionTitleClass = 'text-sm font-semibold text-zinc-100'
-const sectionHintClass = 'mt-1 text-xs leading-5 text-zinc-500'
-const checkCardClass = 'flex min-w-0 items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-sm leading-5 text-zinc-300'
+const inputClass = 'mt-1 w-full border border-[#1c2b3a] bg-[#07111c] px-3 py-2 font-mono text-sm text-[#f0f0f0] outline-none transition-colors duration-150 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/30 focus:ring-offset-2 focus:ring-offset-[#0b1623]'
+const sectionClass = 'min-w-0 border-t border-[#1c2b3a] pt-4 first:border-t-0 first:pt-0'
+const sectionTitleClass = 'font-mono text-sm font-semibold uppercase tracking-[0.08em] text-cyan-200'
+const sectionHintClass = 'mt-1 font-mono text-xs leading-5 text-[#8b9bb4]'
+const checkCardClass = 'flex min-w-0 items-start gap-3 border border-[#1c2b3a] bg-[#07111c] p-3 font-mono text-sm leading-5 text-[#8b9bb4] transition-colors duration-150 hover:border-cyan-400/30'
+const fieldLabelClass = 'text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]'
 const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа. Это должно быть не меньше поля «Секунд до входа».'
 
@@ -40,7 +41,7 @@ const normalizeVideoEncoderValue = (value: string): AppSettings['recording']['vi
 }
 
 const FieldHint = ({ text }: { text: string }) => (
-  <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
+  <span className="ml-1 inline-flex align-middle text-[#8b9bb4] transition-colors duration-150 hover:text-cyan-200" title={text}>
     <CircleHelp size={13} />
   </span>
 )
@@ -61,8 +62,7 @@ const sourceMatchesCaptureTarget = (source: WindowCaptureSource, target: AppSett
   )
 )
 
-export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) => {
-  const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
+export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsPanelProps) => {
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
@@ -79,14 +79,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
   const [videoEncoderOptions, setVideoEncoderOptions] = useState<VideoEncoderOption[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
-  const [host, setHost] = useState('127.0.0.1')
-  const [port, setPort] = useState('4455')
   const [paddingBefore, setPaddingBefore] = useState(String(defaultClipPaddingBeforeSeconds))
   const [paddingAfter, setPaddingAfter] = useState(String(defaultClipPaddingAfterSeconds))
   const [replayBufferSeconds, setReplayBufferSeconds] = useState(String(defaultReplayBufferSeconds))
-  const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
-  const [obsPassword, setObsPassword] = useState('')
   const [tmmApiKey, setTmmApiKey] = useState('')
   const [tmmApiKeyConfigured, setTmmApiKeyConfigured] = useState(false)
   const [savingTmmApiKey, setSavingTmmApiKey] = useState(false)
@@ -98,8 +94,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   const lastSavedSnapshotRef = useRef('')
   const skipNextAutosaveRef = useRef(false)
 
-  const buildSettingsSnapshot = (password = obsPassword): string => JSON.stringify({
-    recordingMode,
+  const buildSettingsSnapshot = (): string => JSON.stringify({
     sourceType,
     windowSourceId,
     windowSourceName,
@@ -113,18 +108,13 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     launchAtLogin,
     alwaysOnTop,
     clipSuccessNotificationsEnabled,
-    host,
-    port,
     paddingBefore,
     paddingAfter,
     replayBufferSeconds,
-    replaySourceDir,
-    outputDir,
-    obsPassword: password
+    outputDir
   })
 
   const buildSettingsSnapshotFromSettings = (nextSettings: AppSettings): string => JSON.stringify({
-    recordingMode: nextSettings.recording.mode,
     sourceType: nextSettings.recording.sourceType,
     windowSourceId: nextSettings.recording.windowSourceId,
     windowSourceName: nextSettings.recording.windowSourceName,
@@ -138,14 +128,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     launchAtLogin: nextSettings.system.launchAtLogin,
     alwaysOnTop: nextSettings.system.alwaysOnTop,
     clipSuccessNotificationsEnabled: nextSettings.system.clipSuccessNotificationsEnabled,
-    host: nextSettings.obs.host,
-    port: String(nextSettings.obs.port),
     paddingBefore: String(nextSettings.clip.paddingBeforeSeconds),
     paddingAfter: String(nextSettings.clip.paddingAfterSeconds),
     replayBufferSeconds: String(nextSettings.clip.replayBufferSeconds),
-    replaySourceDir: nextSettings.clip.replaySourceDir,
-    outputDir: nextSettings.clip.outputDir,
-    obsPassword: ''
+    outputDir: nextSettings.clip.outputDir
   })
 
   useEffect(() => {
@@ -153,7 +139,6 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     if (editingDraft && hydratedSettingsRef.current) return
 
     skipNextAutosaveRef.current = true
-    setRecordingMode(settings.recording.mode)
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
@@ -167,14 +152,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setLaunchAtLogin(settings.system.launchAtLogin)
     setAlwaysOnTop(settings.system.alwaysOnTop)
     setClipSuccessNotificationsEnabled(settings.system.clipSuccessNotificationsEnabled)
-    setHost(settings.obs.host)
-    setPort(String(settings.obs.port))
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
     setReplayBufferSeconds(String(settings.clip.replayBufferSeconds))
-    setReplaySourceDir(settings.clip.replaySourceDir)
     setOutputDir(settings.clip.outputDir)
-    setObsPassword('')
     lastSavedSnapshotRef.current = buildSettingsSnapshotFromSettings(settings)
     hydratedSettingsRef.current = true
   }, [settings, editingDraft])
@@ -197,9 +178,8 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
   }
 
   useEffect(() => {
-    if (recordingMode !== 'window') return
     void refreshWindowSources({ announce: false })
-  }, [recordingMode, sourceType])
+  }, [sourceType])
 
   useEffect(() => {
     void getTradeToolsApi().recording.listVideoEncoders()
@@ -240,7 +220,6 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     try {
       const api = getTradeToolsApi()
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
-      const submittedPassword = obsPassword.trim()
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
@@ -260,13 +239,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
       const saveTargetId = sourceType === 'screen'
         ? firstCaptureTarget?.id ?? ''
         : selectedCaptureTarget?.id ?? nextCaptureTargets[0]?.id ?? ''
-      const replayBufferSecondsValue = recordingMode === 'window'
-        ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
-        : parsedReplayBufferSeconds
+      const replayBufferSecondsValue = Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
       const updated = await api.settings.update({
-        obsPassword: submittedPassword || undefined,
         recording: {
-          mode: recordingMode,
+          mode: 'window',
           sourceType,
           windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : windowSourceId,
           windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
@@ -280,15 +256,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           systemAudioEnabled,
           microphoneEnabled
         },
-        obs: {
-          host,
-          port: numberOrUndefined(port)
-        },
         clip: {
           paddingBeforeSeconds: numberOrUndefined(paddingBefore),
           paddingAfterSeconds: numberOrUndefined(paddingAfter),
           replayBufferSeconds: replayBufferSecondsValue,
-          replaySourceDir,
           outputDir
         },
         system: {
@@ -298,8 +269,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         }
       })
       onSaved(updated)
-      lastSavedSnapshotRef.current = submittedPassword ? buildSettingsSnapshot('') : snapshot
-      if (submittedPassword) setObsPassword('')
+      lastSavedSnapshotRef.current = snapshot
       setMessage('Настройки применены')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки')
@@ -323,7 +293,6 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     }, 500)
     return () => window.clearTimeout(timeout)
   }, [
-    recordingMode,
     sourceType,
     windowSourceId,
     windowSourceName,
@@ -337,14 +306,10 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     launchAtLogin,
     alwaysOnTop,
     clipSuccessNotificationsEnabled,
-    host,
-    port,
     paddingBefore,
     paddingAfter,
     replayBufferSeconds,
-    replaySourceDir,
     outputDir,
-    obsPassword,
     settings
   ])
 
@@ -361,9 +326,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
     setPaddingBefore(beforeSeconds)
     setPaddingAfter(afterSeconds)
     setReplayBufferSeconds(beforeSeconds)
-    setMessage(recordingMode === 'window'
-      ? 'Пресет включён: 10 минут до входа и 2 минуты после выхода. Клип появится примерно через 2 минуты после выхода.'
-      : 'Пресет включён: 10 минут до входа и 2 минуты после выхода. В OBS поставьте Replay Buffer минимум 12 минут плюс обычная длина сделки.')
+    setMessage('Пресет включён: 10 минут до входа и 2 минуты после выхода. Клип появится примерно через 2 минуты после выхода.')
   }
 
   const selectDirectory = async (currentPath: string, setValue: (value: string) => void) => {
@@ -442,59 +405,49 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         setEditingDraft(false)
         void saveCurrentSettings()
       }}
+      className="rounded-none border-[#1c2b3a] bg-[#0b1623] font-mono shadow-none backdrop-blur-none"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Настройки записи</h2>
-          <p className="mt-1 text-sm text-zinc-500">Источник, буфер, качество, звук, уведомления и папки клипов.</p>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300">REC.CONFIG // CAPTURE PIPELINE</div>
+          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em] text-[#f0f0f0]">Настройки записи</h2>
+          <p className="mt-1 text-sm text-[#8b9bb4]">Источник, буфер, качество, звук, уведомления и папки клипов.</p>
         </div>
-        {saving && <span className="text-sm text-violet-200">Применяем...</span>}
+        {saving && <span className="border border-orange-400/30 bg-orange-400/10 px-3 py-2 text-sm text-orange-200" role="status">Применяем...</span>}
       </div>
 
       <div className="mt-5 grid gap-6 xl:grid-cols-2">
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Источник записи</div>
-          <p className={sectionHintClass}>OBS использует Replay Buffer. Встроенная запись пишет выбранное окно или выбранные мониторы.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'window' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
-              onClick={() => setRecordingMode('window')}
-              type="button"
-            >
-              <Monitor size={16} className="mr-2" />Встроенная запись
-            </button>
-            <button
-              className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
-              onClick={() => setRecordingMode('obs')}
-              type="button"
-            >
-              <Radio size={16} className="mr-2" />OBS Replay Buffer
-            </button>
+          <p className={sectionHintClass}>Встроенная запись пишет выбранное окно терминала или выбранные мониторы.</p>
+          <div className="mt-3 inline-flex items-center border border-cyan-400/50 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
+            <Monitor size={16} className="mr-2" />Встроенная запись
           </div>
 
-          {recordingMode === 'window' && (
-            <div className="mt-4 space-y-4">
-              <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+          <div className="mt-4 space-y-4">
+              <div className="flex border border-[#1c2b3a] bg-[#07111c] p-1">
                 <button
-                  className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                  className={`flex-1 border px-3 py-2 text-sm font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/40 ${sourceType === 'window' ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-100' : 'border-transparent text-[#8b9bb4] hover:text-[#f0f0f0]'}`}
                   onClick={() => {
                     setSourceType('window')
                     setWindowSourceId('')
                     setWindowSourceName('')
                     setCaptureTargets([])
                   }}
+                  aria-pressed={sourceType === 'window'}
                   type="button"
                 >
                   Окно терминала
                 </button>
                 <button
-                  className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'screen' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                  className={`flex-1 border px-3 py-2 text-sm font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/40 ${sourceType === 'screen' ? 'border-cyan-400/50 bg-cyan-400/15 text-cyan-100' : 'border-transparent text-[#8b9bb4] hover:text-[#f0f0f0]'}`}
                   onClick={() => {
                     setSourceType('screen')
                     setWindowSourceId('')
                     setWindowSourceName('')
                     setCaptureTargets([])
                   }}
+                  aria-pressed={sourceType === 'screen'}
                   type="button"
                 >
                   Мониторы
@@ -502,7 +455,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               </div>
 
               {sourceType === 'window' ? (
-                <label className="block text-xs font-medium text-zinc-500">
+                <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]">
                   Окно для записи
                   <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                     <select
@@ -522,7 +475,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                       {windowOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                     </select>
                     <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>
-                      <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
+                      <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}
                     </Button>
                   </div>
                 </label>
@@ -530,11 +483,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Мониторы для записи</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8b9bb4]">Мониторы для записи</div>
                       <p className={sectionHintClass}>Каждый выбранный монитор сохранится отдельным видео. Лишнее можно быстро удалить в очереди проверки.</p>
                     </div>
                     <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>
-                      <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
+                      <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}
                     </Button>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -542,29 +495,28 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                       <label key={source.id} className={checkCardClass}>
                         <input
                           type="checkbox"
-                          className="mt-1 h-4 w-4 accent-violet-500"
+                          className="mt-1 h-4 w-4 accent-orange-400"
                           checked={isCaptureTargetSelected(source)}
                           onChange={(event) => toggleScreenCaptureTarget(source, event.target.checked)}
                         />
                         <span>
-                          <span className="block font-semibold text-zinc-100">{source.name}</span>
-                          <span className="mt-1 block text-xs text-zinc-500">Сохранять сделки с этого монитора</span>
+                          <span className="block font-semibold text-[#f0f0f0]">{source.name}</span>
+                          <span className="mt-1 block text-xs text-[#8b9bb4]">Сохранять сделки с этого монитора</span>
                         </span>
                       </label>
                     ))}
-                    {screenSources.length === 0 && <span className="text-sm text-zinc-500">Экраны не найдены</span>}
+                    {screenSources.length === 0 && <span className="text-sm text-[#8b9bb4]">Экраны не найдены</span>}
                   </div>
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </section>
 
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Пресеты и длительность</div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <button
-              className="rounded-2xl border border-emerald-300/20 bg-emerald-400/[0.06] p-4 text-left transition hover:bg-emerald-400/[0.1]"
+              className="border border-emerald-400/30 bg-emerald-400/[0.06] p-4 text-left transition-colors duration-150 hover:bg-emerald-400/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1623]"
               onClick={applyDefaultClipPreset}
               type="button"
             >
@@ -572,25 +524,25 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
               <span className="mt-2 block text-xs uppercase tracking-[0.18em] text-emerald-200">буфер 60с</span>
             </button>
             <button
-              className="rounded-2xl border border-amber-300/20 bg-amber-400/[0.06] p-4 text-left transition hover:bg-amber-400/[0.1]"
+              className="border border-orange-400/30 bg-orange-400/[0.06] p-4 text-left transition-colors duration-150 hover:bg-orange-400/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1623]"
               onClick={applyLongClipPreset}
               type="button"
             >
-              <span className="flex items-center gap-2 text-sm font-semibold text-amber-100"><Clock3 size={16} />Пресет 10 минут до / 2 минуты после</span>
-              <span className="mt-2 block text-xs uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
+              <span className="flex items-center gap-2 text-sm font-semibold text-orange-100"><Clock3 size={16} />Пресет 10 минут до / 2 минуты после</span>
+              <span className="mt-2 block text-xs uppercase tracking-[0.18em] text-orange-200">Тяжёлый режим</span>
             </button>
           </div>
           <p className={sectionHintClass}>Длинный пресет хранит большой локальный буфер и завершает клип только после записи времени после выхода.</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Секунд до входа
               <input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Секунд после выхода
               <input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               <span>Буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
               <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
             </label>
@@ -600,7 +552,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Параметры видео</div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Кодирование
               <select
                 className={`${inputClass} appearance-none`}
@@ -610,7 +562,7 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 {videoEncoderOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Разрешение
               <select
                 className={`${inputClass} appearance-none`}
@@ -625,11 +577,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
                 <option value="1080p">Лёгкое 1080p</option>
               </select>
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               FPS записи
               <input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
             </label>
@@ -642,25 +594,25 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
             <label className={checkCardClass}>
               <input
                 type="checkbox"
-                className="mt-1 h-4 w-4 accent-violet-500"
+                className="mt-1 h-4 w-4 accent-orange-400"
                 checked={systemAudioEnabled}
                 onChange={(event) => setSystemAudioEnabled(event.target.checked)}
               />
               <span>
-                <span className="block font-semibold text-zinc-100">Звук с ПК</span>
-                <span className="mt-1 block text-xs text-zinc-500">Добавлять системный звук в запись.</span>
+                <span className="block font-semibold text-[#f0f0f0]">Звук с ПК</span>
+                <span className="mt-1 block text-xs text-[#8b9bb4]">Добавлять системный звук в запись.</span>
               </span>
             </label>
             <label className={checkCardClass}>
               <input
                 type="checkbox"
-                className="mt-1 h-4 w-4 accent-violet-500"
+                className="mt-1 h-4 w-4 accent-orange-400"
                 checked={microphoneEnabled}
                 onChange={(event) => setMicrophoneEnabled(event.target.checked)}
               />
               <span>
-                <span className="block font-semibold text-zinc-100">Микрофон</span>
-                <span className="mt-1 block text-xs text-zinc-500">Добавлять голос с микрофона.</span>
+                <span className="block font-semibold text-[#f0f0f0]">Микрофон</span>
+                <span className="mt-1 block text-xs text-[#8b9bb4]">Добавлять голос с микрофона.</span>
               </span>
             </label>
           </div>
@@ -670,24 +622,24 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
           <div className={sectionTitleClass}>Поведение приложения</div>
           <div className="mt-3 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={launchAtLogin} onChange={(event) => setLaunchAtLogin(event.target.checked)} type="checkbox" />
+              <input className="mt-1 h-4 w-4 shrink-0 accent-orange-400" checked={launchAtLogin} onChange={(event) => setLaunchAtLogin(event.target.checked)} type="checkbox" />
               <span className="min-w-0">
-                <span className="flex items-center gap-2 font-semibold text-zinc-100"><Power size={16} />Автозапуск</span>
-                <span className="mt-1 block text-xs text-zinc-500">Стартовать вместе с Windows.</span>
+                <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Power className="text-cyan-300" size={16} />Автозапуск</span>
+                <span className="mt-1 block text-xs text-[#8b9bb4]">Стартовать вместе с Windows.</span>
               </span>
             </label>
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={alwaysOnTop} onChange={(event) => setAlwaysOnTop(event.target.checked)} type="checkbox" />
+              <input className="mt-1 h-4 w-4 shrink-0 accent-orange-400" checked={alwaysOnTop} onChange={(event) => setAlwaysOnTop(event.target.checked)} type="checkbox" />
               <span className="min-w-0">
-                <span className="flex items-center gap-2 font-semibold text-zinc-100"><Pin size={16} />Поверх окон</span>
-                <span className="mt-1 block text-xs text-zinc-500">Держать TradeTools выше других окон.</span>
+                <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Pin className="text-cyan-300" size={16} />Поверх окон</span>
+                <span className="mt-1 block text-xs text-[#8b9bb4]">Держать TradeTools выше других окон.</span>
               </span>
             </label>
             <label className={checkCardClass}>
-              <input className="mt-1 h-4 w-4 shrink-0 accent-violet-500" checked={clipSuccessNotificationsEnabled} onChange={(event) => setClipSuccessNotificationsEnabled(event.target.checked)} type="checkbox" />
+              <input className="mt-1 h-4 w-4 shrink-0 accent-orange-400" checked={clipSuccessNotificationsEnabled} onChange={(event) => setClipSuccessNotificationsEnabled(event.target.checked)} type="checkbox" />
               <span className="min-w-0">
-                <span className="flex items-center gap-2 font-semibold text-zinc-100"><Clapperboard size={16} />Готовая запись сделки</span>
-                <span className="mt-1 block text-xs text-zinc-500">Показывать системное уведомление после сохранения клипа.</span>
+                <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Clapperboard className="text-cyan-300" size={16} />Готовая запись сделки</span>
+                <span className="mt-1 block text-xs text-[#8b9bb4]">Показывать системное уведомление после сохранения клипа.</span>
               </span>
             </label>
           </div>
@@ -719,32 +671,9 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
         </section>
 
         <section className={`${sectionClass} xl:col-span-2`}>
-          <div className={sectionTitleClass}>Папки и OBS</div>
+          <div className={sectionTitleClass}>Папки</div>
           <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {recordingMode === 'obs' && (
-              <>
-                <label className="text-xs font-medium text-zinc-500">
-                  OBS host
-                  <input className={inputClass} value={host} onChange={(event) => setHost(event.target.value)} />
-                </label>
-                <label className="text-xs font-medium text-zinc-500">
-                  OBS port
-                  <input className={inputClass} value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" />
-                </label>
-                <label className="text-xs font-medium text-zinc-500">
-                  OBS пароль
-                  <input className={inputClass} value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} type="password" placeholder={settings?.obs.passwordConfigured ? 'Сохранён' : 'Не задан'} />
-                </label>
-                <div className="text-xs font-medium text-zinc-500">
-                  Папка OBS replay
-                  <div className="mt-1 flex gap-2">
-                    <input className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
-                    <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
-                  </div>
-                </div>
-              </>
-            )}
-            <div className={`text-xs font-medium text-zinc-500 ${recordingMode === 'obs' ? 'md:col-span-2 xl:col-span-4' : 'md:col-span-2 xl:col-span-4'}`}>
+            <div className={`${fieldLabelClass} md:col-span-2 xl:col-span-4`}>
               Папка клипов
               <div className="mt-1 flex gap-2">
                 <input className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1`} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
@@ -758,11 +687,11 @@ export const ObsSettingsPanel = ({ settings, onSaved }: ObsSettingsPanelProps) =
             </Button>
             <span className={sectionHintClass}>Удаляются только временные записи, итоговые клипы остаются.</span>
           </div>
-          {recordingMode === 'window' && <p className={sectionHintClass}>Если window capture замирает на Windows, выберите мониторы. На macOS может потребоваться разрешение записи экрана.</p>}
+          <p className={sectionHintClass}>Если захват окна замирает на Windows, выберите мониторы. На macOS может потребоваться разрешение записи экрана.</p>
         </section>
       </div>
 
-      {message && <p className="mt-4 text-sm text-emerald-300">{message}</p>}
+      {message && <p className="mt-4 border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-sm text-emerald-300" role="status">{message}</p>}
     </Card>
   )
 }

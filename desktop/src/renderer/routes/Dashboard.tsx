@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, FileText, FolderOpen, ListX, Pause, Play, RefreshCw, Search, Square, Trash2, Video, X, XCircle } from 'lucide-react'
-import type { ObsTestReplayResult } from '../../main/services/obs/obsService'
+import { Copy, FileText, FolderOpen, ListX, Pause, PictureInPicture2, Play, RefreshCw, Search, Square, Trash2, Video, X, XCircle } from 'lucide-react'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
 import type { ClipProcessingStatus, ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import type { AppLogSnapshot } from '../../main/services/logging/appLogService'
+import type { RecordingControlStatus } from '../../shared/recordingControl'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
 import { SetupWizard } from '../components/setup/SetupWizard'
-import { ObsSettingsPanel } from '../components/settings/ObsSettingsPanel'
+import { RecordingSettingsPanel } from '../components/settings/RecordingSettingsPanel'
 import { ProxyVaultPanel, type ProxyVaultRuntimeState } from '../components/settings/ProxyVaultPanel'
 import { WindowRecorderController } from '../components/recording/WindowRecorderController'
 import { SystemSettingsPanel } from '../components/settings/SystemSettingsPanel'
@@ -19,13 +19,6 @@ import { filterClips, getClipDayGroups, getClipsForDate, getClipsForPeriod, type
 import type { AppPage } from '../lib/navigation'
 import { getTradeToolsApi } from '../lib/tradeToolsApi'
 import type { ProxyChainSetupProgress } from '../../preload'
-
-type ObsUiState = {
-  status: string
-  message: string
-  connected: boolean
-  replayBufferActive: boolean
-}
 
 export type DashboardProps = {
   activePage: AppPage
@@ -37,13 +30,13 @@ type VideoPageProps = {
   settings?: AppSettings
   clips: ClipQueueItem[]
   clipMessage: string
-  obs: ObsUiState
   windowRecorder?: WindowRecorderStatus
   freeRecording?: FreeRecordingStatus
   terminalTrade: TerminalTradeRecordingStatus
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
+  onShowRecordingWidget: () => void
   onCreateBuffer: () => void
   onCancelClipRender: (jobId?: string) => void
   onClearQueue: () => void
@@ -88,34 +81,34 @@ const ClipProcessingBar = ({ status, onCancel }: { status: ClipProcessingStatus,
   const queuedJobs = status.queuedJobs ?? []
 
   return (
-    <div className="rounded-2xl border border-violet-400/20 bg-violet-500/[0.07] p-3">
+    <div className="border border-[#56b5d5]/40 bg-[#0b1623]/95 p-3 shadow-[inset_3px_0_0_#ff9f30]">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-violet-100">Обработка видео</div>
-        <div className="text-xs text-zinc-400">Обрабатывается: {activeJobs.length} · Ожидает: {queuedJobs.length}</div>
+        <div className="text-sm font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">Обработка видео</div>
+        <div className="text-xs text-[#8b9bb4]">Обрабатывается: {activeJobs.length} · Ожидает: {queuedJobs.length}</div>
       </div>
       <div className="space-y-2">
         {activeJobs.map((job) => (
-          <div key={job.id} className="rounded-xl border border-violet-300/15 bg-black/20 px-3 py-2">
+          <div key={job.id} className="border border-[#56b5d5]/25 bg-[#102435]/90 px-3 py-2">
             <div className="flex min-w-0 items-center gap-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-semibold text-violet-100">{job.title}</div>
-                <div className="mt-0.5 truncate text-[11px] text-zinc-500">{job.message}</div>
+                <div className="truncate text-xs font-semibold text-[#f0f0f0]">{job.title}</div>
+                <div className="mt-0.5 truncate text-[11px] text-[#8b9bb4]">{job.message}</div>
               </div>
-              <span className="text-[11px] font-semibold text-violet-200">{Math.round(job.progressPercent)}%</span>
-              <button className="inline-flex min-h-7 cursor-pointer items-center rounded-lg border border-red-400/25 bg-red-500/10 px-2 text-[11px] font-semibold text-red-100 transition hover:bg-red-500/15" onClick={() => onCancel(job.id === 'local-processing' ? undefined : job.id)} type="button">
+              <span className="text-[11px] font-semibold text-[#ff9f30]">{Math.round(job.progressPercent)}%</span>
+              <button className="inline-flex min-h-7 cursor-pointer items-center border border-red-400/40 bg-red-500/10 px-2 text-[11px] font-semibold text-red-100 transition-colors duration-150 hover:bg-red-500/20" onClick={() => onCancel(job.id === 'local-processing' ? undefined : job.id)} type="button">
                 <XCircle size={12} className="mr-1" />Отменить
               </button>
             </div>
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-violet-400 transition-[width] duration-500" style={{ width: `${Math.max(6, Math.min(100, job.progressPercent))}%` }} />
+            <div className="mt-1.5 h-1.5 overflow-hidden border border-[#56b5d5]/20 bg-[#1c2b3a]">
+              <div className="h-full bg-[#ff9f30]" style={{ width: `${Math.max(6, Math.min(100, job.progressPercent))}%` }} />
             </div>
           </div>
         ))}
         {queuedJobs.map((job) => (
-          <div key={job.id} className="flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-black/15 px-3 py-2">
-            <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">Ожидает</span>
-            <span className="min-w-0 flex-1 truncate text-xs text-zinc-300">{job.title}</span>
-            <button className="inline-flex min-h-7 cursor-pointer items-center rounded-lg border border-red-400/20 px-2 text-[11px] font-semibold text-red-200 transition hover:bg-red-500/10" onClick={() => onCancel(job.id)} type="button">
+          <div key={job.id} className="flex min-w-0 items-center gap-2 border border-[#56b5d5]/20 bg-[#0e1e2c]/90 px-3 py-2">
+            <span className="shrink-0 border border-[#56b5d5]/25 bg-[#122536] px-1.5 py-0.5 text-[10px] font-semibold text-[#8b9bb4]">Ожидает</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-[#f0f0f0]/85">{job.title}</span>
+            <button className="inline-flex min-h-7 cursor-pointer items-center border border-red-400/30 px-2 text-[11px] font-semibold text-red-200 transition-colors duration-150 hover:bg-red-500/10" onClick={() => onCancel(job.id)} type="button">
               <X size={12} className="mr-1" />Убрать
             </button>
           </div>
@@ -131,7 +124,7 @@ const createStoppedWindowRecorderStatus = (settings: AppSettings): WindowRecorde
   enabled: true,
   active: false,
   backend: 'browser',
-  mode: settings.recording.mode,
+  mode: 'window',
   sourceId: settings.recording.windowSourceId,
   sourceName: settings.recording.windowSourceName,
   segmentCount: 0,
@@ -142,24 +135,23 @@ const createStoppedWindowRecorderStatus = (settings: AppSettings): WindowRecorde
 
 const RecordingStatusPanel = ({
   settings,
-  obs,
   windowRecorder,
   terminalTrade,
   backgroundRecordingEnabled,
   onBackgroundRecordingStart,
   onBackgroundRecordingStop,
+  onShowRecordingWidget,
   onCreateBuffer
 }: {
   settings?: AppSettings
-  obs: ObsUiState
   windowRecorder?: WindowRecorderStatus
   terminalTrade: TerminalTradeRecordingStatus
   backgroundRecordingEnabled: boolean
   onBackgroundRecordingStart: () => void
   onBackgroundRecordingStop: () => void
+  onShowRecordingWidget: () => void
   onCreateBuffer: () => void
 }) => {
-  const isWindowMode = settings?.recording.mode === 'window'
   const targetSeconds = Math.max(1, Math.round(settings?.clip.replayBufferSeconds ?? 1))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
@@ -172,69 +164,66 @@ const RecordingStatusPanel = ({
   })[source])
   const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
   const activeTradeSummary = `${terminalTrade.activeTradeCount} поз.`
-  const showStatusBadge = !isWindowMode || !backgroundRecordingEnabled || hasActiveTrade
-  const statusText = !isWindowMode
-    ? obs.status
-    : !backgroundRecordingEnabled
-      ? 'Фон остановлен'
-      : hasActiveTrade
-        ? 'Пишем сделку'
-        : ''
-  const message = !isWindowMode
-    ? obs.message
-    : !backgroundRecordingEnabled
-      ? 'Автоклипы и свободная запись сейчас выключены.'
-      : hasActiveTrade
-        ? terminalStatus
-        : ''
-  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
+  const showStatusBadge = !backgroundRecordingEnabled || hasActiveTrade
+  const statusText = !backgroundRecordingEnabled
+    ? 'Фон остановлен'
+    : hasActiveTrade
+      ? 'Пишем сделку'
+      : ''
+  const message = !backgroundRecordingEnabled
+    ? 'Автоклипы и свободная запись сейчас выключены.'
+    : hasActiveTrade
+      ? terminalStatus
+      : ''
+  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center border px-4 text-sm font-semibold tracking-[0.02em] transition-colors duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
-    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+    <section className="col-span-12 border border-[#56b5d5]/40 bg-[#0d1d2b]/95 p-4 shadow-[inset_3px_0_0_#ff9f30]">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="m-0 text-base font-semibold">Автозапись терминалов</h2>
+            <h2 className="m-0 text-base font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">Автозапись терминалов</h2>
             {showStatusBadge && (
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusText === 'Пишем сделку' ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : statusText === 'Фон остановлен' ? 'border-white/10 bg-black/20 text-zinc-400' : 'border-amber-300/30 bg-amber-300/10 text-amber-200'}`}>
+              <span className={`border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.06em] ${statusText === 'Пишем сделку' ? 'border-[#00ff9d]/40 bg-[#00ff9d]/10 text-[#00ff9d]' : statusText === 'Фон остановлен' ? 'border-[#8b9bb4]/25 bg-[#07101a]/70 text-[#8b9bb4]' : 'border-[#ff9f30]/40 bg-[#ff9f30]/10 text-[#ffb45f]'}`}>
                 {statusText}
               </span>
             )}
           </div>
-          {message && <p className="mt-2 text-sm leading-6 text-zinc-400">{message}</p>}
-          {isWindowMode && backgroundRecordingEnabled && detectedTerminalNames.length > 0 && (
-            <p className="mt-2 text-xs leading-5 text-zinc-500">Журналы терминалов: <span className="text-zinc-300">{detectedTerminalNames.join(', ')}</span></p>
+          {message && <p className="mt-2 text-sm leading-6 text-[#8b9bb4]">{message}</p>}
+          {backgroundRecordingEnabled && detectedTerminalNames.length > 0 && (
+            <p className="mt-2 text-xs leading-5 text-[#8b9bb4]">Журналы терминалов: <span className="text-[#f0f0f0]">{detectedTerminalNames.join(', ')}</span></p>
           )}
-          {isWindowMode && hasActiveTrade && (
-            <div className="mt-3 grid gap-2 text-xs text-zinc-500 sm:grid-cols-3">
-              <div>Источник: <span className="text-zinc-300">{sourceName}</span></div>
-              <div>Буфер: <span className="text-zinc-300">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
-              <div>Сделки: <span className="text-zinc-300">{activeTradeSummary}</span></div>
+          {hasActiveTrade && (
+            <div className="mt-3 grid gap-2 text-xs text-[#8b9bb4] sm:grid-cols-3">
+              <div className="border-l border-[#56b5d5]/35 pl-2">Источник: <span className="text-[#f0f0f0]">{sourceName}</span></div>
+              <div className="border-l border-[#56b5d5]/35 pl-2">Буфер: <span className="text-[#f0f0f0]">{formatSeconds(bufferedSeconds)} / {formatSeconds(targetSeconds)}</span></div>
+              <div className="border-l border-[#56b5d5]/35 pl-2">Сделки: <span className="text-[#f0f0f0]">{activeTradeSummary}</span></div>
             </div>
           )}
-          {terminalTrade.lastError && <p className="mt-2 text-xs leading-5 text-amber-300">{terminalTrade.lastError}</p>}
+          {terminalTrade.lastError && <p className="mt-2 text-xs leading-5 text-[#ffb45f]">{terminalTrade.lastError}</p>}
         </div>
-        {isWindowMode && (
-          <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
             {backgroundRecordingEnabled ? (
-              <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onBackgroundRecordingStop} type="button">
+              <button className={`${buttonBase} border-[#ff9f30] bg-[#ff9f30] text-[#0b1623] shadow-[3px_3px_0_rgba(0,0,0,0.25)] hover:bg-[#e68c22]`} onClick={onBackgroundRecordingStop} type="button">
                 <Square size={16} className="mr-2" />Остановить фоновую запись
               </button>
             ) : (
-              <button className={`${buttonBase} border-emerald-400/30 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25`} onClick={onBackgroundRecordingStart} disabled={!settings} type="button">
+              <button className={`${buttonBase} border-[#ff9f30] bg-[#ff9f30] text-[#0b1623] shadow-[3px_3px_0_rgba(0,0,0,0.25)] hover:bg-[#e68c22]`} onClick={onBackgroundRecordingStart} disabled={!settings} type="button">
                 <Play size={16} className="mr-2" />Включить фоновую запись
               </button>
             )}
-            <button className={`${buttonBase} border-violet-400/30 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25`} onClick={onCreateBuffer} disabled={!settings || !backgroundRecordingEnabled} type="button">
+            <button className={`${buttonBase} border-[#56b5d5]/60 bg-[#56b5d5]/10 text-[#b9edff] hover:bg-[#56b5d5]/20`} onClick={onCreateBuffer} disabled={!settings || !backgroundRecordingEnabled} type="button">
               <Video size={16} className="mr-2" />Сохранить последний буфер
             </button>
-          </div>
-        )}
+            <button className={`${buttonBase} border-[#8b9bb4]/30 bg-[#1c2b3a]/65 text-[#d6e0ee] hover:border-[#56b5d5]/60 hover:bg-[#56b5d5]/10`} onClick={onShowRecordingWidget} type="button">
+              <PictureInPicture2 size={16} className="mr-2" />Мини-виджет
+            </button>
+        </div>
       </div>
-      {isWindowMode && hasActiveTrade && (
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+      {hasActiveTrade && (
+        <div className="mt-4 h-1.5 overflow-hidden border border-[#56b5d5]/20 bg-[#1c2b3a]">
           <div
-            className="h-full rounded-full bg-violet-400"
+            className="h-full bg-[#00ff9d]"
             style={{ width: `${progressPercent > 0 ? Math.max(3, progressPercent) : 0}%` }}
           />
         </div>
@@ -260,26 +249,25 @@ const FreeRecordingControls = ({
   onFinish: () => void
   backgroundRecordingEnabled: boolean
 }) => {
-  const isWindowMode = settings?.recording.mode === 'window'
   const isActive = Boolean(freeRecording?.active)
   const isPaused = Boolean(freeRecording?.paused)
-  const disabled = !settings || !isWindowMode || !backgroundRecordingEnabled
-  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center rounded-2xl border px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50'
+  const disabled = !settings || !backgroundRecordingEnabled
+  const buttonBase = 'inline-flex min-h-10 cursor-pointer items-center justify-center border px-4 text-sm font-semibold tracking-[0.02em] transition-colors duration-150 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50'
   const startedAt = freeRecording?.startedAtMs ? new Date(freeRecording.startedAtMs).toLocaleTimeString('ru-RU') : ''
 
   return (
-    <section className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+    <section className="col-span-12 border border-[#56b5d5]/35 bg-[#0d1d2b]/95 p-4 shadow-[inset_3px_0_0_#56b5d5]">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="m-0 text-base font-semibold">Свободная запись</h2>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${isActive ? isPaused ? 'border-amber-300/30 bg-amber-300/10 text-amber-200' : 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : 'border-white/10 bg-black/20 text-zinc-400'}`}>
+            <h2 className="m-0 text-base font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">Свободная запись</h2>
+            <span className={`border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.06em] ${isActive ? isPaused ? 'border-[#ff9f30]/40 bg-[#ff9f30]/10 text-[#ffb45f]' : 'border-[#00ff9d]/40 bg-[#00ff9d]/10 text-[#00ff9d]' : 'border-[#8b9bb4]/25 bg-[#07101a]/70 text-[#8b9bb4]'}`}>
               {isActive ? isPaused ? 'Пауза' : 'Идёт запись' : 'Готово'}
             </span>
           </div>
-          <p className="mt-1 text-sm leading-6 text-zinc-400">
+          <p className="mt-1 text-sm leading-6 text-[#8b9bb4]">
             {disabled
-              ? backgroundRecordingEnabled ? 'Свободная запись доступна во встроенной записи окна или экрана.' : 'Сначала включите фоновую запись.'
+              ? 'Сначала включите фоновую запись.'
               : isActive
                 ? `${freeRecording?.message ?? 'Записываем терминал'}${startedAt ? ` с ${startedAt}` : ''}.`
                 : 'Записывает выбранное окно или экран без привязки к сделкам.'}
@@ -287,22 +275,22 @@ const FreeRecordingControls = ({
         </div>
         <div className="flex flex-wrap gap-2">
           {!isActive && (
-            <button className={`${buttonBase} border-violet-400/40 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30`} onClick={onStart} disabled={disabled} type="button">
+            <button className={`${buttonBase} border-[#ff9f30] bg-[#ff9f30] text-[#0b1623] shadow-[3px_3px_0_rgba(0,0,0,0.25)] hover:bg-[#e68c22]`} onClick={onStart} disabled={disabled} type="button">
               <Video size={16} className="mr-2" />Начать
             </button>
           )}
           {isActive && (
-            <button className={`${buttonBase} border-rose-400/30 bg-rose-500/15 text-rose-100 hover:bg-rose-500/25`} onClick={onFinish} type="button">
+            <button className={`${buttonBase} border-[#ff9f30] bg-[#ff9f30] text-[#0b1623] shadow-[3px_3px_0_rgba(0,0,0,0.25)] hover:bg-[#e68c22]`} onClick={onFinish} type="button">
               <Square size={16} className="mr-2" />Завершить
             </button>
           )}
           {isActive && !isPaused && (
-            <button className={`${buttonBase} border-white/10 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]`} onClick={onPause} type="button">
+            <button className={`${buttonBase} border-[#56b5d5]/55 bg-[#56b5d5]/10 text-[#b9edff] hover:bg-[#56b5d5]/20`} onClick={onPause} type="button">
               <Pause size={16} className="mr-2" />Пауза
             </button>
           )}
           {isActive && isPaused && (
-            <button className={`${buttonBase} border-emerald-400/30 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/25`} onClick={onResume} type="button">
+            <button className={`${buttonBase} border-[#ff9f30] bg-[#ff9f30] text-[#0b1623] shadow-[3px_3px_0_rgba(0,0,0,0.25)] hover:bg-[#e68c22]`} onClick={onResume} type="button">
               <Play size={16} className="mr-2" />Продолжить
             </button>
           )}
@@ -323,29 +311,29 @@ const DiagnosticsLogPanel = ({
   onCopy: () => void
   onShowFile: () => void
 }) => (
-  <details className="col-span-12 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-base font-semibold [&::-webkit-details-marker]:hidden">
+  <details className="col-span-12 border border-[#56b5d5]/35 bg-[#0d1d2b]/95 p-4 shadow-[inset_3px_0_0_#56b5d5]">
+    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-base font-semibold uppercase tracking-[0.08em] text-[#f0f0f0] [&::-webkit-details-marker]:hidden">
       <span className="flex items-center gap-2">
-        <FileText size={16} className="text-violet-200" />
+        <FileText size={16} className="text-[#56b5d5]" />
         Логи
       </span>
-      <span className="text-xs font-medium text-zinc-500">Показать</span>
+      <span className="text-xs font-medium text-[#8b9bb4]">Показать</span>
     </summary>
     <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-      <p className="min-w-0 break-all text-xs text-zinc-500">{logs.path || 'Файл логов будет создан после первого события.'}</p>
+      <p className="min-w-0 break-all text-xs text-[#8b9bb4]">{logs.path || 'Файл логов будет создан после первого события.'}</p>
       <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08]" onClick={onRefresh} type="button">
+        <button className="inline-flex min-h-9 cursor-pointer items-center border border-[#56b5d5]/45 bg-[#56b5d5]/10 px-3 text-xs font-semibold text-[#b9edff] transition-colors duration-150 hover:bg-[#56b5d5]/20" onClick={onRefresh} type="button">
           <RefreshCw size={14} className="mr-2" />Обновить
         </button>
-        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-violet-400/30 bg-violet-500/15 px-3 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/25 disabled:cursor-not-allowed disabled:opacity-50" onClick={onCopy} disabled={!logs.text} type="button">
+        <button className="inline-flex min-h-9 cursor-pointer items-center border border-[#ff9f30] bg-[#ff9f30] px-3 text-xs font-semibold text-[#0b1623] transition-colors duration-150 hover:bg-[#e68c22] disabled:cursor-not-allowed disabled:opacity-50" onClick={onCopy} disabled={!logs.text} type="button">
           <Copy size={14} className="mr-2" />Скопировать текст
         </button>
-        <button className="inline-flex min-h-9 cursor-pointer items-center rounded-2xl border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:bg-white/[0.08]" onClick={onShowFile} type="button">
+        <button className="inline-flex min-h-9 cursor-pointer items-center border border-[#8b9bb4]/30 bg-[#1c2b3a]/65 px-3 text-xs font-semibold text-[#d6e0ee] transition-colors duration-150 hover:border-[#56b5d5]/60 hover:bg-[#56b5d5]/10" onClick={onShowFile} type="button">
           <FileText size={14} className="mr-2" />Открыть файл
         </button>
       </div>
     </div>
-    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-white/10 bg-black/30 p-3 text-xs leading-5 text-zinc-300">
+    <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words border border-[#56b5d5]/25 bg-[#07101a]/90 p-3 text-xs leading-5 text-[#b9c6d8]">
       {logs.text || 'Лог пока пуст. Ошибки сохранения клипов появятся здесь.'}
     </pre>
   </details>
@@ -412,35 +400,35 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
     }
   }
 
-  const selectionButtonClass = 'inline-flex min-h-8 cursor-pointer items-center rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-[11px] font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50'
+  const selectionButtonClass = 'inline-flex min-h-8 cursor-pointer items-center border border-[#56b5d5]/30 bg-[#102435]/70 px-2.5 text-[11px] font-semibold text-[#d6e0ee] transition-colors duration-150 hover:border-[#56b5d5]/65 hover:bg-[#56b5d5]/10 disabled:cursor-not-allowed disabled:opacity-50'
 
   return (
-    <section className="col-span-12">
+    <section className="col-span-12 border border-[#56b5d5]/40 bg-[#0d1d2b]/95 p-4 shadow-[inset_3px_0_0_#56b5d5]">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Очередь проверки</h2>
-          <p className="mt-1 text-xs text-zinc-500">Выберите нужные видео, чтобы удалить только их. «Очистить» убирает из списка, «Удалить файл» стирает с диска.</p>
-          {clipMessage && <p className="mt-2 text-sm text-violet-200">{clipMessage}</p>}
+        <h2 className="m-0 text-xl font-semibold uppercase tracking-[0.06em] text-[#f0f0f0]">Очередь проверки</h2>
+          <p className="mt-1 text-xs text-[#8b9bb4]">Выберите нужные видео, чтобы удалить только их. «Очистить» убирает из списка, «Удалить файл» стирает с диска.</p>
+          {clipMessage && <p className="mt-2 border-l-2 border-[#ff9f30] pl-2 text-sm text-[#ffb45f]">{clipMessage}</p>}
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
-          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10" onClick={onOpenClipFolder} type="button">
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-[#56b5d5]/45 bg-[#56b5d5]/10 px-2.5 text-xs font-semibold text-[#b9edff] transition-colors duration-150 hover:bg-[#56b5d5]/20" onClick={onOpenClipFolder} type="button">
             <FolderOpen size={14} className="mr-1.5" />Открыть папку
           </button>
-          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-xs font-semibold text-zinc-200 transition hover:border-violet-400/25 hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-[#8b9bb4]/30 bg-[#1c2b3a]/65 px-2.5 text-xs font-semibold text-[#d6e0ee] transition-colors duration-150 hover:border-[#56b5d5]/60 hover:bg-[#56b5d5]/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
             <ListX size={14} className="mr-1.5" />Убрать все из списка
           </button>
-          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
+          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-red-500/40 bg-red-500/10 px-2.5 text-xs font-semibold text-red-100 transition-colors duration-150 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
             <Trash2 size={14} className="mr-1.5" />Удалить все видео
           </button>
         </div>
       </div>
-      <div className="mb-3 rounded-3xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="mb-3 border border-[#56b5d5]/25 bg-[#091522]/90 p-3">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">Поиск по пути, имени, тикеру или дате</span>
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#56b5d5]" />
             <input
-              className="min-h-10 w-full rounded-xl border border-white/10 bg-black/25 py-2 pl-9 pr-10 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-violet-400/40 focus:bg-black/35 focus:ring-2 focus:ring-violet-500/10"
+              className="min-h-10 w-full border border-[#56b5d5]/30 bg-[#07101a]/85 py-2 pl-9 pr-10 text-sm text-[#f0f0f0] outline-none transition-colors duration-150 placeholder:text-[#8b9bb4]/65 focus:border-[#ff9f30] focus:bg-[#07101a] focus:ring-2 focus:ring-[#ff9f30]/25 focus:ring-offset-2 focus:ring-offset-[#0b1623]"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Поиск по пути, имени, тикеру или дате"
@@ -450,7 +438,7 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             />
             {searchQuery && (
               <button
-                className="absolute right-2 top-1/2 inline-flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-zinc-500 transition hover:bg-white/[0.07] hover:text-zinc-200"
+                className="absolute right-2 top-1/2 inline-flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center text-[#8b9bb4] transition-colors duration-150 hover:bg-[#56b5d5]/10 hover:text-[#f0f0f0]"
                 onClick={() => setSearchQuery('')}
                 aria-label="Очистить поиск"
                 title="Очистить поиск"
@@ -460,7 +448,7 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
               </button>
             )}
           </label>
-          <span className="shrink-0 text-xs text-zinc-500">Найдено <span className="font-semibold text-zinc-200">{filteredClips.length}</span> из {clips.length}</span>
+          <span className="shrink-0 text-xs text-[#8b9bb4]">Найдено <span className="font-semibold text-[#00ff9d]">{filteredClips.length}</span> из {clips.length}</span>
         </div>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap items-center gap-2">
@@ -470,15 +458,15 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'day'))} disabled={filteredClips.length === 0} type="button">Выбрать сегодня</button>
             <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'week'))} disabled={filteredClips.length === 0} type="button">Выбрать неделю</button>
             <button className={selectionButtonClass} onClick={() => selectClips(getClipsForPeriod(filteredClips, 'month'))} disabled={filteredClips.length === 0} type="button">Выбрать месяц</button>
-            <label className="flex min-h-9 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-2 text-xs text-zinc-400">
+            <label className="flex min-h-9 items-center gap-2 border border-[#56b5d5]/30 bg-[#07101a]/75 px-2 text-xs text-[#8b9bb4] focus-within:border-[#ff9f30]">
               <span className="sr-only">Отдельная дата</span>
-              <input className="bg-transparent text-xs text-zinc-100 outline-none [color-scheme:dark]" value={customDate} onChange={(event) => setCustomDate(event.target.value)} type="date" />
-              <button className="font-semibold text-violet-200 disabled:opacity-50" onClick={() => selectClips(getClipsForDate(filteredClips, customDate))} disabled={!customDate || filteredClips.length === 0} type="button">Выбрать дату</button>
+              <input className="bg-transparent text-xs text-[#f0f0f0] outline-none [color-scheme:dark]" value={customDate} onChange={(event) => setCustomDate(event.target.value)} type="date" />
+              <button className="font-semibold text-[#ffb45f] disabled:opacity-50" onClick={() => selectClips(getClipsForDate(filteredClips, customDate))} disabled={!customDate || filteredClips.length === 0} type="button">Выбрать дату</button>
             </label>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-zinc-500">Сортировка</span>
-            <select className="min-h-9 rounded-xl border border-white/10 bg-black/20 px-3 text-xs font-semibold text-zinc-100 outline-none" value={sort} onChange={(event) => setSort(event.target.value as ClipSortKey)} aria-label="Сортировка видео">
+            <span className="text-xs font-medium text-[#8b9bb4]">Сортировка</span>
+            <select className="min-h-9 border border-[#56b5d5]/30 bg-[#07101a]/75 px-3 text-xs font-semibold text-[#f0f0f0] outline-none focus:border-[#ff9f30]" value={sort} onChange={(event) => setSort(event.target.value as ClipSortKey)} aria-label="Сортировка видео">
               <option value="date">Дата</option>
               <option value="name">Имя</option>
               <option value="duration">Длительность</option>
@@ -488,9 +476,9 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             </button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
-          <span className="text-xs text-zinc-400">Выбрано: <span className="font-semibold text-zinc-100">{selectedClips.length}</span> из {clips.length}</span>
-          <button className="inline-flex min-h-9 cursor-pointer items-center rounded-xl border border-red-500/30 bg-red-500/10 px-3 text-xs font-semibold text-red-100 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteSelected()} disabled={selectedClips.length === 0 || deletingSelected} type="button">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#56b5d5]/20 pt-3">
+          <span className="text-xs text-[#8b9bb4]">Выбрано: <span className="font-semibold text-[#f0f0f0]">{selectedClips.length}</span> из {clips.length}</span>
+          <button className="inline-flex min-h-9 cursor-pointer items-center border border-red-500/40 bg-red-500/10 px-3 text-xs font-semibold text-red-100 transition-colors duration-150 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void deleteSelected()} disabled={selectedClips.length === 0 || deletingSelected} type="button">
             <Trash2 size={14} className="mr-2" />{deletingSelected ? 'Удаляем...' : 'Удалить выбранные'}
           </button>
         </div>
@@ -499,9 +487,9 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
       <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
         {groups.length > 0 ? groups.map((group) => (
           <section key={group.key} aria-label={`Видео за ${group.label}`}>
-            <div className="sticky top-0 z-10 mb-2 flex items-center justify-between bg-[#111216]/95 py-1 backdrop-blur">
-              <h3 className="m-0 capitalize text-sm font-semibold text-zinc-300">{group.label}</h3>
-              <span className="text-xs text-zinc-500">{group.clips.length}</span>
+            <div className="sticky top-0 z-10 mb-2 flex items-center justify-between border-b border-[#56b5d5]/25 bg-[#0b1623]/95 py-1 backdrop-blur">
+              <h3 className="m-0 capitalize text-sm font-semibold uppercase tracking-[0.06em] text-[#d6e0ee]">{group.label}</h3>
+              <span className="text-xs text-[#00ff9d]">{group.clips.length}</span>
             </div>
             <div className="space-y-2">
               {group.clips.map((clip) => (
@@ -516,7 +504,7 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
               ))}
             </div>
           </section>
-        )) : <div className="rounded-3xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">
+        )) : <div className="border border-dashed border-[#56b5d5]/30 bg-[#07101a]/40 p-6 text-sm text-[#8b9bb4]">
           {clips.length > 0 && searchQuery.trim() ? 'По запросу ничего не найдено.' : 'Пока нет клипов в очереди.'}
         </div>}
       </div>
@@ -524,16 +512,23 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
   )
 }
 
-const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
-    <div className="mt-6 grid grid-cols-12 gap-4 pb-8">
+const VideoPage = ({ settings, clips, clipMessage, windowRecorder, freeRecording, terminalTrade, backgroundRecordingEnabled, onBackgroundRecordingStart, onBackgroundRecordingStop, onShowRecordingWidget, onCreateBuffer, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage, onFreeRecordingStart, onFreeRecordingPause, onFreeRecordingResume, onFreeRecordingFinish, onSettingsSaved, clipProcessing, logs, onRefreshLogs, onCopyLogs, onShowLogFile }: VideoPageProps) => (
+    <div
+      data-theme="engineering-blueprint"
+      className="mono relative mt-6 grid grid-cols-12 gap-4 overflow-hidden border border-[#56b5d5]/30 bg-[#0b1623] p-4 pb-8 text-[#f0f0f0] shadow-[inset_0_0_48px_rgba(36,184,230,0.06)]"
+      style={{
+        backgroundImage: 'linear-gradient(rgba(36, 184, 230, 0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(36, 184, 230, 0.055) 1px, transparent 1px)',
+        backgroundSize: '24px 24px'
+      }}
+    >
       <RecordingStatusPanel
         settings={settings}
-        obs={obs}
         windowRecorder={windowRecorder}
         terminalTrade={terminalTrade}
         backgroundRecordingEnabled={backgroundRecordingEnabled}
         onBackgroundRecordingStart={onBackgroundRecordingStart}
         onBackgroundRecordingStop={onBackgroundRecordingStop}
+        onShowRecordingWidget={onShowRecordingWidget}
         onCreateBuffer={onCreateBuffer}
       />
       <FreeRecordingControls
@@ -558,8 +553,8 @@ const VideoPage = ({ settings, clips, clipMessage, obs, windowRecorder, freeReco
         onClipRenamed={onClipRenamed}
         onClipMessage={onClipMessage}
       />
-      <section className="col-span-12 space-y-4">
-        <ObsSettingsPanel settings={settings} onSaved={onSettingsSaved} />
+      <section className="col-span-12 space-y-4 border border-[#56b5d5]/30 bg-[#0d1d2b]/90 p-1">
+        <RecordingSettingsPanel settings={settings} onSaved={onSettingsSaved} />
       </section>
     </div>
   )
@@ -604,7 +599,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [appVersion, setAppVersion] = useState<string>()
   const [settings, setSettings] = useState<AppSettings>()
   const [clips, setClips] = useState<ClipQueueItem[]>([])
-  const [lastCheck, setLastCheck] = useState<ObsTestReplayResult>()
   const [clipMessage, setClipMessage] = useState('')
   const [localClipProcessing, setLocalClipProcessing] = useState<ClipProcessingStatus>({
     active: false,
@@ -619,8 +613,8 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     progressPercent: 0
   })
   const [windowRecorder, setWindowRecorder] = useState<WindowRecorderStatus>()
-  const [backgroundRecordingEnabled, setBackgroundRecordingEnabled] = useState(true)
-  const backgroundRecordingEnabledRef = useRef(true)
+  const [backgroundRecordingEnabled, setBackgroundRecordingEnabled] = useState(false)
+  const backgroundRecordingEnabledRef = useRef(false)
   const [recordingEnsureKey, setRecordingEnsureKey] = useState(0)
   const [freeRecording, setFreeRecording] = useState<FreeRecordingStatus>()
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
@@ -641,13 +635,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     chainCheckProgress: [],
     chainSetupProgress: []
   })
-  const [obs, setObs] = useState<ObsUiState>({
-    status: 'Не проверено',
-    message: 'OBS не проверяется автоматически. Нажмите «Проверить видео», когда OBS запущен.',
-    connected: false,
-    replayBufferActive: false
-  })
-
   const setBackgroundRecording = (enabled: boolean) => {
     backgroundRecordingEnabledRef.current = enabled
     setBackgroundRecordingEnabled(enabled)
@@ -656,16 +643,18 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const loadLocalState = async () => {
     try {
       const api = getTradeToolsApi()
-      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade, nextLogs] = await Promise.all([
+      const [version, nextSettings, pendingClips, nextClipProcessing, nextFreeRecording, nextTerminalTrade, nextLogs, controlStatus] = await Promise.all([
         api.app.getVersion(),
         api.settings.get(),
         api.clips.listPending(),
         api.clips.getProcessingStatus(),
         api.recording.getFreeStatus(),
         api.terminalTrade.getStatus(),
-        api.logs.get()
+        api.logs.get(),
+        api.recording.getControlStatus()
       ])
-      const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+      setBackgroundRecording(controlStatus.enabled)
+      const nextWindowRecorder = !controlStatus.enabled
         ? createStoppedWindowRecorderStatus(nextSettings)
         : await api.recording.getStatus()
 
@@ -678,53 +667,9 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setTerminalTrade(nextTerminalTrade)
       setAppLogs(nextLogs)
       lastLogsRefreshAtRef.current = Date.now()
-      setObs((current) => {
-        if (current.connected || current.status === 'Отключено') return current
-
-        return {
-          status: nextSettings.obs.passwordConfigured ? 'Готов к проверке' : 'Нужно настроить',
-          message: nextSettings.obs.passwordConfigured
-            ? 'OBS WebSocket сохранён. Нажмите «Проверить видео», чтобы проверить подключение и Replay Buffer.'
-            : 'Сначала сохраните OBS WebSocket пароль, затем нажмите «Проверить видео».',
-          connected: false,
-          replayBufferActive: false
-        }
-      })
     } catch (error) {
-      setObs({
-        status: 'Electron API недоступен',
-        message: error instanceof Error ? error.message : 'Electron preload API недоступен',
-        connected: false,
-        replayBufferActive: false
-      })
+      setClipMessage(error instanceof Error ? error.message : 'Electron preload API недоступен')
     }
-  }
-
-  const refreshObsStatus = async () => {
-    const api = getTradeToolsApi()
-    const currentSettings = settings ?? await api.settings.get()
-    if (currentSettings.recording.mode === 'window') {
-      const status = backgroundRecordingEnabledRef.current
-        ? await api.recording.getStatus()
-        : createStoppedWindowRecorderStatus(currentSettings)
-      setWindowRecorder(status)
-      setObs({
-        status: status.active ? 'Пишет' : 'Нужно настроить',
-        message: status.message,
-        connected: status.active,
-        replayBufferActive: status.active
-      })
-      return
-    }
-
-    const status = await api.obs.getStatus()
-
-    setObs({
-      status: status.status === 'setup-needed' ? 'Нужно настроить' : status.status === 'connected' ? 'Подключено' : 'Отключено',
-      message: status.message,
-      connected: status.connected,
-      replayBufferActive: status.replayBufferActive
-    })
   }
 
   const refreshPendingClips = async () => {
@@ -742,7 +687,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       setClips(pendingClips)
       setRemoteClipProcessing(nextClipProcessing)
       const currentSettings = settings ?? await api.settings.get()
-      const nextWindowRecorder = currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current
+      const nextWindowRecorder = !backgroundRecordingEnabledRef.current
         ? createStoppedWindowRecorderStatus(currentSettings)
         : await api.recording.getStatus()
       setWindowRecorder(nextWindowRecorder)
@@ -774,34 +719,14 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const runHealthCheck = async (): Promise<string> => {
     try {
       const api = getTradeToolsApi()
-      const currentSettings = settings ?? await api.settings.get()
-      if (currentSettings.recording.mode === 'window') {
-        const status = backgroundRecordingEnabledRef.current
-          ? await api.recording.getStatus()
-          : createStoppedWindowRecorderStatus(currentSettings)
-        setWindowRecorder(status)
-        setLastCheck({
-          ok: status.active,
-          message: status.message,
-          requestedAtMs: Date.now(),
-          replayPath: undefined
-        })
-        await loadLocalState()
-        return status.message
-      }
-
-      const result = await api.obs.testReplaySave()
-      setLastCheck(result)
-      await Promise.all([refreshObsStatus(), loadLocalState()])
-      return result.message
+      const controlStatus = await api.recording.getControlStatus()
+      setBackgroundRecording(controlStatus.enabled)
+      if (!controlStatus.enabled) return controlStatus.message
+      const status = await api.recording.check()
+      setWindowRecorder(status)
+      return status.message
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось проверить видео'
-      setLastCheck({
-        ok: false,
-        message,
-        requestedAtMs: Date.now()
-      })
-      return message
+      return error instanceof Error ? error.message : 'Не удалось проверить видео'
     }
   }
 
@@ -810,16 +735,11 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     setLocalClipProcessing({
       active: true,
       title: 'Буфер TradeTools',
-      message: settings?.recording.mode === 'window'
-        ? 'Сохраняем последний встроенный буфер'
-        : 'Сохраняем OBS replay и режем клип',
+      message: 'Сохраняем последний встроенный буфер',
       progressPercent: 35,
       startedAtMs
     })
-    setClipMessage(settings?.recording.mode === 'window'
-      ? 'Сохраняем последний буфер встроенной записи...'
-      : 'Сохраняем последний OBS replay...'
-    )
+    setClipMessage('Сохраняем последний буфер встроенной записи...')
     try {
       const api = getTradeToolsApi()
       const createdClips = await api.clips.createBuffer()
@@ -862,8 +782,12 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     try {
       const api = getTradeToolsApi()
       const currentSettings = settings ?? await api.settings.get()
-      setBackgroundRecording(false)
-      await api.recording.stop()
+      const controlStatus = await api.recording.setEnabled(false)
+      if (controlStatus.enabled) {
+        setBackgroundRecording(true)
+        setClipMessage(controlStatus.message)
+        return
+      }
       setWindowRecorder(createStoppedWindowRecorderStatus(currentSettings))
       setClipMessage('Фоновая запись остановлена')
     } catch (error) {
@@ -872,24 +796,13 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     }
   }
 
-  const startBackgroundRecording = async (options: { silent?: boolean } = {}) => {
+  const startBackgroundRecording = async () => {
     try {
       const api = getTradeToolsApi()
-      const currentSettings = settings ?? await api.settings.get()
-      if (currentSettings.recording.mode !== 'window') {
-        if (!options.silent) setClipMessage('Фоновая запись доступна во встроенном режиме')
-        return
-      }
-
-      setBackgroundRecording(true)
-      setRecordingEnsureKey((current) => current + 1)
-      if (options.silent) return
-
-      const status = await api.recording.start()
-      setWindowRecorder(status)
-      setClipMessage(status.message)
+      const controlStatus = await api.recording.setEnabled(true)
+      setClipMessage(controlStatus.message)
     } catch (error) {
-      if (!options.silent) setClipMessage(error instanceof Error ? error.message : 'Не удалось включить фоновую запись')
+      setClipMessage(error instanceof Error ? error.message : 'Не удалось включить фоновую запись')
     }
   }
 
@@ -1006,6 +919,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
     let unsubscribeProxyCheck: (() => void) | undefined
     let unsubscribeProxySetup: (() => void) | undefined
     let unsubscribeRecordingEnsure: (() => void) | undefined
+    let unsubscribeRecordingControl: (() => void) | undefined
     try {
       const api = getTradeToolsApi()
       unsubscribeProxyCheck = api.proxies.onConfigureChainProgress((progress) => appendProxyProgress('check', progress))
@@ -1019,6 +933,15 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           })
           .catch(() => undefined)
       })
+      unsubscribeRecordingControl = api.recording.onControlStatus((controlStatus: RecordingControlStatus) => {
+        const wasEnabled = backgroundRecordingEnabledRef.current
+        setBackgroundRecording(controlStatus.enabled)
+        if (controlStatus.enabled && !wasEnabled) setRecordingEnsureKey((current) => current + 1)
+        if (controlStatus.lastError || controlStatus.protected) setClipMessage(controlStatus.message)
+      })
+      void api.recording.getControlStatus().then((controlStatus) => {
+        setBackgroundRecording(controlStatus.enabled)
+      }).catch(() => undefined)
     } catch {
       // loadLocalState already surfaces Electron API errors.
     }
@@ -1028,6 +951,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
       unsubscribeProxyCheck?.()
       unsubscribeProxySetup?.()
       unsubscribeRecordingEnsure?.()
+      unsubscribeRecordingControl?.()
     }
   }, [])
 
@@ -1053,7 +977,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
         mode={setupWizardMode ?? 'video'}
         open={setupWizardMode !== undefined}
         settings={settings}
-        obsMessage={lastCheck?.message ?? ''}
         clipMessage={clipMessage}
         onClose={() => setSetupWizardMode(undefined)}
         onSaved={onSettingsSaved}
@@ -1065,7 +988,6 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           settings={settings}
           clips={clips}
           clipMessage={clipMessage}
-          obs={obs}
           windowRecorder={windowRecorder}
           freeRecording={freeRecording}
           terminalTrade={terminalTrade}
@@ -1073,6 +995,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
           clipProcessing={activeClipProcessing}
           onBackgroundRecordingStart={() => void startBackgroundRecording()}
           onBackgroundRecordingStop={() => void stopBackgroundRecording()}
+          onShowRecordingWidget={() => void getTradeToolsApi().app.showRecordingWidget()}
           onCreateBuffer={() => void createBuffer()}
           onCancelClipRender={(jobId) => void cancelClipRender(jobId)}
           onClearQueue={() => void clearQueue()}

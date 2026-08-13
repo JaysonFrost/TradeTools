@@ -20,10 +20,6 @@ const mergeSettings = (current: AppSettings, patch: PartialSettings): PartialSet
     ...current.clip,
     ...(patch.clip ?? {})
   },
-  obs: {
-    ...current.obs,
-    ...(patch.obs ?? {})
-  },
   tradeSource: {
     ...current.tradeSource,
     ...(patch.tradeSource ?? {})

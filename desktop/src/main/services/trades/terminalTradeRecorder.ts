@@ -21,6 +21,7 @@ export type TerminalTradeRecordingStatus = {
 export type OpenTerminalTrade = Omit<ClosedTrade, 'status' | 'exitTimeMs'> & {
   status: 'open'
   positionId: string
+  recordingGateRevision?: number
   size?: number
   recordingTarget?: CaptureTargetRef
   positionKeys: Set<string>
@@ -52,6 +53,7 @@ export type TerminalTradeWatcherInput = {
   getSettings: () => Promise<AppSettings>
   getRecordingStartedAtMs?: () => number | undefined
   ensureVideoRecordingReady: (event: TerminalPositionEvent, recordingTarget?: CaptureTargetRef) => Promise<boolean>
+  getRecordingGateRevision?: () => number
   protectSince: (timeMs?: number) => void
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
   resolveRecordingTarget?: (event: TerminalPositionEvent) => Promise<CaptureTargetRef | undefined>
@@ -605,6 +607,7 @@ export const createTerminalTradeWatcher = ({
   getSettings,
   getRecordingStartedAtMs,
   ensureVideoRecordingReady,
+  getRecordingGateRevision,
   protectSince,
   createClipForClosedTrade,
   resolveRecordingTarget,
@@ -691,7 +694,7 @@ export const createTerminalTradeWatcher = ({
   }
 
   const syncRecordingBoundary = (settings: AppSettings) => {
-    if (settings.recording.mode !== 'window' || !getRecordingStartedAtMs) return
+    if (!getRecordingStartedAtMs) return
 
     const nextRecordingStartedAtMs = getRecordingStartedAtMs()
     if (nextRecordingStartedAtMs === lastRecordingStartedAtMs) return
@@ -793,10 +796,19 @@ export const createTerminalTradeWatcher = ({
     tradeKey: string,
     positionKey: string
   ): Promise<OpenTerminalTrade | undefined> => {
+    const gateRevision = getRecordingGateRevision?.()
     const recordingTarget = await resolveTradeRecordingTarget(event)
     const ready = await ensureVideoRecordingReady(event, recordingTarget).catch(() => false)
-    return ready ? createOpenTrade(event, tradeKey, positionKey, '', recordingTarget) : undefined
+    const gateUnchanged = gateRevision === undefined || gateRevision === getRecordingGateRevision?.()
+    if (!ready || !gateUnchanged) return undefined
+    const trade = createOpenTrade(event, tradeKey, positionKey, '', recordingTarget)
+    if (gateRevision !== undefined) trade.recordingGateRevision = gateRevision
+    return trade
   }
+
+  const recordingGateStillOpen = (trade: OpenTerminalTrade): boolean => (
+    trade.recordingGateRevision === undefined || trade.recordingGateRevision === getRecordingGateRevision?.()
+  )
 
   const suppressOpenPosition = (tradeKey: string, positionKey: string) => {
     const positions = suppressedTradePositions.get(tradeKey) ?? new Set<string>()
@@ -925,9 +937,6 @@ export const createTerminalTradeWatcher = ({
   const isBeforeActiveRecording = async (event: TerminalPositionEvent): Promise<boolean> => {
     if (!getRecordingStartedAtMs) return false
 
-    const settings = await getSettings()
-    if (settings.recording.mode !== 'window') return false
-
     const recordingStartedAtMs = getRecordingStartedAtMs()
     return !recordingStartedAtMs || event.eventTimeMs < recordingStartedAtMs
   }
@@ -958,7 +967,8 @@ export const createTerminalTradeWatcher = ({
             const closedTrade = await closePositionTrade(openTrade, event, sourceName)
             forgetOpenPositions(openTrade)
             activeTrades.delete(tradeKey)
-            const nextTrade = await prepareOpenTrade(event, tradeKey, positionKey)
+            const preparedTrade = await prepareOpenTrade(event, tradeKey, positionKey)
+            const nextTrade = preparedTrade && recordingGateStillOpen(preparedTrade) ? preparedTrade : undefined
             if (nextTrade) {
               activeTrades.set(tradeKey, nextTrade)
               positionTradeKeys.set(positionKey, tradeKey)
@@ -984,7 +994,7 @@ export const createTerminalTradeWatcher = ({
         }
       } else {
         const nextTrade = await prepareOpenTrade(event, tradeKey, positionKey)
-        if (!nextTrade) {
+        if (!nextTrade || !recordingGateStillOpen(nextTrade)) {
           suppressOpenPosition(tradeKey, positionKey)
           await protectActiveTrades()
           emitBufferWarming(event, sourceName)
@@ -1041,11 +1051,9 @@ export const createTerminalTradeWatcher = ({
     })
   }
 
-  const shouldReadInitialLogLines = (settings: AppSettings): boolean => (
-    settings.recording.mode === 'window' && Boolean(getRecordingStartedAtMs?.())
-  )
+  const shouldReadInitialLogLines = (): boolean => Boolean(getRecordingStartedAtMs?.())
 
-  const pollLogProvider = async (provider: LogProviderState, settings: AppSettings): Promise<boolean> => {
+  const pollLogProvider = async (provider: LogProviderState): Promise<boolean> => {
     const files = await provider.getLogFiles()
     if (files.length === 0) {
       provider.available = false
@@ -1056,7 +1064,7 @@ export const createTerminalTradeWatcher = ({
     const recentFiles = files.slice(-2)
     const initialReplayFiles = new Set<string>()
     if (!provider.initialized) {
-      const readExistingLines = shouldReadInitialLogLines(settings)
+      const readExistingLines = shouldReadInitialLogLines()
       await Promise.all(recentFiles.map(async (filePath) => {
         const fileStat = await stat(filePath)
         provider.cursors.set(filePath, { offset: readExistingLines ? 0 : fileStat.size, remainder: '' })
@@ -1187,7 +1195,7 @@ export const createTerminalTradeWatcher = ({
       if (settings.tradeSource.mode !== 'terminal-window') return
       syncRecordingBoundary(settings)
 
-      await Promise.all(providers.map((provider) => pollLogProvider(provider, settings)))
+      await Promise.all(providers.map((provider) => pollLogProvider(provider)))
       await pollMetaScalpApi()
       await processing
       emitAvailabilityStatus()

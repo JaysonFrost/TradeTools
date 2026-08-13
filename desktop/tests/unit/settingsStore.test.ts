@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,11 +22,11 @@ describe('settingsStore', () => {
     expect(settings.language).toBe('ru')
     expect(settings.recording.mode).toBe('window')
     expect(settings.tradeSource.mode).toBe('terminal-window')
-    expect(settings.obs.host).toBe('127.0.0.1')
+    expect(settings).not.toHaveProperty('obs')
     expect(settings.clip.outputDir).toBe(join(tempDir, 'clips'))
   })
 
-  it('persists normalized recording, OBS and clip settings without storing raw password', async () => {
+  it('persists normalized built-in recording and clip settings', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-'))
     const store = createSettingsStore(tempDir)
 
@@ -42,8 +42,7 @@ describe('settingsStore', () => {
         systemAudioEnabled: true,
         microphoneEnabled: true
       },
-      clip: { paddingBeforeSeconds: 99, outputDir: '/Users/igor/Clips' },
-      obs: { host: 'localhost', port: 4455, passwordConfigured: true }
+      clip: { paddingBeforeSeconds: 99, outputDir: '/Users/igor/Clips' }
     })
 
     expect(settings.recording).toEqual({
@@ -69,10 +68,26 @@ describe('settingsStore', () => {
     expect(settings.clip.paddingBeforeSeconds).toBe(99)
     expect(settings.clip.replayBufferSeconds).toBe(99)
     expect(settings.clip.outputDir).toBe('/Users/igor/Clips')
-    expect(settings.obs).toEqual({ host: 'localhost', port: 4455, passwordConfigured: true })
+    expect(settings).not.toHaveProperty('obs')
 
     const reloaded = await store.load()
     expect(reloaded).toEqual(settings)
+  })
+
+  it('migrates legacy OBS settings to built-in recording and drops OBS fields', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-legacy-obs-'))
+    await writeFile(join(tempDir, 'settings.json'), JSON.stringify({
+      recording: { mode: 'obs' },
+      obs: { host: 'localhost', port: 4455, passwordConfigured: true },
+      clip: { replaySourceDir: 'C:/legacy-obs-replays' }
+    }), 'utf8')
+    const store = createSettingsStore(tempDir)
+
+    const settings = await store.load()
+
+    expect(settings.recording.mode).toBe('window')
+    expect(settings).not.toHaveProperty('obs')
+    expect(settings.clip).not.toHaveProperty('replaySourceDir')
   })
 
   it('drops legacy Binance API settings when persisting settings', async () => {
@@ -127,6 +142,16 @@ describe('settingsStore', () => {
 
     const reloaded = await store.load()
     expect(reloaded).toEqual(settings)
+  })
+
+  it('persists the selected interface theme between app launches', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'TradeTools-settings-theme-'))
+    const store = createSettingsStore(tempDir)
+
+    const saved = await store.update({ system: { interfaceTheme: 'classic' } })
+
+    expect(saved.system.interfaceTheme).toBe('classic')
+    expect((await store.load()).system.interfaceTheme).toBe('classic')
   })
 
   it('keeps active proxy runtime when updating unrelated settings', async () => {

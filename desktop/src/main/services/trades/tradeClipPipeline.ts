@@ -5,7 +5,6 @@ import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import { buildFfmpegTrimArgs } from '../video/ffmpegCommand'
 import { buildClipFileNames, buildClipOutputPaths, toSafeClipFileBaseName } from '../video/clipPaths'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
-import { waitForNewestReplayFile } from '../video/replayFileFinder'
 import { planReplayTrim } from '../video/trimPlanner'
 import { probeVideoDetails, type VideoDetails, type VideoDetailsProbe, type VideoDurationProbe } from '../video/videoProbe'
 import type { ClosedTrade } from './simulatedTradePipeline'
@@ -245,7 +244,7 @@ const assertUsableFrameRate = (details: VideoDetails, sourceLabel: string): void
   const frameRate = details.averageFrameRate ?? details.nominalFrameRate
   if (!frameRate || frameRate >= minimumUsableFrameRate) return
 
-  throw new Error(`${sourceLabel} содержит только ${frameRate.toFixed(1)} fps. TradeTools не может восстановить кадры, которых нет в исходной записи. Проверьте в OBS: Settings > Video > Common FPS Values, Output > Encoder overload, Game/Display Capture и Replay Buffer output.`)
+  throw new Error(`${sourceLabel} содержит только ${frameRate.toFixed(1)} fps. TradeTools не может восстановить кадры, которых нет в исходной записи. Проверьте частоту кадров, нагрузку на кодировщик и выбранный источник записи.`)
 }
 
 const minimumAcceptableOutputDuration = (trimDurationSeconds: number): number => {
@@ -479,23 +478,17 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
     throwIfAborted(options.signal)
     if (!replaySave.ok) throw new Error(replaySave.message)
 
-    const replayPath = replaySave.replayPath ?? await waitForNewestReplayFile({
-      directory: settings.clip.replaySourceDir,
-      afterMs: replaySave.requestedAtMs
-    })
+    const replayPath = replaySave.replayPath
     if (!replayPath) {
-      throw new Error(settings.recording.mode === 'window'
-        ? 'Встроенный рекордер не вернул replay-файл. Проверьте, что выбранное окно терминала открыто и запись активна.'
-        : `OBS сохранил Replay Buffer, но свежий replay-файл не найден в папке: ${settings.clip.replaySourceDir}. Проверьте, что это та же папка, куда OBS сохраняет Replay Buffer.`
-      )
+      throw new Error('Встроенный рекордер не вернул replay-файл. Проверьте, что выбранное окно терминала открыто и запись активна.')
     }
 
     const replayStat = await stat(replayPath)
     const replaySavedAtMs = replayStat.mtimeMs
     const replayDetails = await getVideoDetails(replayPath)
-    assertUsableFrameRate(replayDetails, settings.recording.mode === 'window' ? 'Встроенный replay-файл' : 'OBS replay-файл')
+    assertUsableFrameRate(replayDetails, 'Встроенный replay-файл')
     const replayDurationSeconds = replayDetails.durationSeconds
-    const readyClip = replaySave.readyClip === true && settings.recording.mode === 'window'
+    const readyClip = replaySave.readyClip === true
     const expectedReadyClipDurationSeconds = targetTrade.exchange === 'TradeTools'
       ? replayDurationSeconds
       : Math.max(
@@ -612,7 +605,7 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
 
       await writeFile(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf8')
       throwIfAborted(options.signal)
-      if ((settings.recording.mode === 'obs' || readyClip) && resolve(replayPath) !== resolve(paths.videoPath)) {
+      if (readyClip && resolve(replayPath) !== resolve(paths.videoPath)) {
         await unlink(replayPath).catch(() => undefined)
       }
       return item
@@ -711,7 +704,18 @@ export const createTradeClipPipeline = (deps: TradeClipPipelineDeps): TradeClipP
         manualTitle: 'Буфер TradeTools'
       }
 
-      return createClipForClosedTrade(trade, input)
+      return createClipForClosedTrade(trade, {
+        ...input,
+        settings: {
+          ...settings,
+          clip: {
+            ...settings.clip,
+            // The synthetic trade already spans the complete requested buffer.
+            paddingBeforeSeconds: 0,
+            paddingAfterSeconds: 0
+          }
+        }
+      })
     },
     syncTmmTradeLinks,
     deleteQueueFiles: () => clearQueue(true),

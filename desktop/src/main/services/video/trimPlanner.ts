@@ -29,7 +29,7 @@ export const planReplayTrim = (input: ReplayTrimInput): ReplayTrimPlan => {
   const replayEndTimeMs = input.replaySavedAtMs
   const clockToleranceMs = (input.clockToleranceSeconds ?? 5) * 1000
   if (input.tradeExitTimeMs < replayStartTimeMs - clockToleranceMs || input.tradeEntryTimeMs > replayEndTimeMs + clockToleranceMs) {
-    throw new Error('Сделка не попадает в окно OBS Replay Buffer. Проверьте длительность Replay Buffer в OBS и время сделки из API.')
+    throw new Error('Сделка не попадает в сохранённый буфер записи. Проверьте длительность буфера и время сделки из API.')
   }
 
   const rawStartSeconds = (input.tradeEntryTimeMs - replayStartTimeMs) / 1000 - input.paddingBeforeSeconds

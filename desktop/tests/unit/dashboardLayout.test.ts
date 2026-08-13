@@ -20,14 +20,48 @@ describe('Dashboard layout', () => {
   it('keeps video controls on the video page', async () => {
     const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
 
-    expect(source.indexOf('Очередь проверки')).toBeLessThan(source.indexOf('<ObsSettingsPanel'))
+    expect(source.indexOf('Очередь проверки')).toBeLessThan(source.indexOf('<RecordingSettingsPanel'))
     expect(source).not.toContain('Клипы остаются локально')
     expect(source).not.toContain('Пока нет локальных клипов')
     expect(source).not.toContain('BinanceFuturesSettingsPanel')
-    expect(source).toContain('<ObsSettingsPanel')
+    expect(source).toContain('<RecordingSettingsPanel')
     expect(source).not.toContain('<SystemSettingsPanel mode="video"')
     expect(source).not.toContain('ActiveTradeCard')
     expect(source).not.toContain('Пайплайн клипа')
+  })
+
+  it('shows built-in video health check progress and result in the top bar', async () => {
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const topBarSource = await readFile(resolve('src/renderer/components/layout/TopBar.tsx'), 'utf8')
+
+    expect(topBarSource).toContain('checkingVideo')
+    expect(topBarSource).toContain("'Проверяем...'")
+    expect(topBarSource).toContain('videoCheckMessage')
+    expect(topBarSource).toContain('role="status"')
+    const healthCheckSource = dashboardSource.slice(
+      dashboardSource.indexOf('const runHealthCheck'),
+      dashboardSource.indexOf('const createBuffer')
+    )
+    expect(healthCheckSource).toContain('api.recording.getControlStatus()')
+    expect(healthCheckSource).toContain('api.recording.check()')
+    expect(healthCheckSource).toContain('if (!controlStatus.enabled) return controlStatus.message')
+    expect(healthCheckSource).not.toContain('api.recording.getStatus()')
+    expect(dashboardSource).not.toContain('api.obs')
+  })
+
+  it('uses the engineering blueprint treatment for video operations', async () => {
+    const source = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const blueprintSource = source.slice(
+      source.indexOf('const ClipProcessingBar'),
+      source.indexOf('const ProxyPage')
+    )
+
+    expect(blueprintSource).toContain('data-theme="engineering-blueprint"')
+    expect(blueprintSource).toContain("backgroundSize: '24px 24px'")
+    expect(blueprintSource).toContain('bg-[#0b1623]')
+    expect(blueprintSource).toContain('bg-[#ff9f30]')
+    expect(blueprintSource).toContain('text-[#00ff9d]')
+    expect(blueprintSource).not.toContain('rounded-')
   })
 
   it('does not show a separate clip review status badge', async () => {
@@ -86,7 +120,7 @@ describe('Dashboard layout', () => {
   })
 
   it('supports built-in terminal window recording without requiring OBS', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -117,6 +151,7 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(settingsPanelSource).toContain('longClipAfterExitSeconds')
     expect(controllerSource).toContain('findAutoRecordedTerminalSources')
+    expect(controllerSource).not.toContain("recording.mode !== 'window'")
     expect(controllerSource).not.toContain('Автоматически выбрали окно терминала')
     expect(controllerSource).toContain('navigator.mediaDevices.getUserMedia')
     expect(controllerSource).toContain('currentSettings.recording.systemAudioEnabled')
@@ -133,10 +168,16 @@ describe('Dashboard layout', () => {
     expect(appSource).toContain("ipcMain.handle('recording:list-video-encoders'")
     expect(appSource).toContain("ipcMain.handle('recording:append-segment'")
     expect(appSource).toContain('windowRecorderService.saveReplayBuffer(input)')
+    expect(settingsPanelSource).not.toContain('OBS Replay Buffer')
+    expect(settingsPanelSource).not.toContain('OBS host')
+    expect(settingsPanelSource).not.toContain('OBS пароль')
+    expect(dashboardSource).not.toContain('api.obs')
+    expect(preloadSource).not.toContain('obs: {')
+    expect(appSource).not.toContain('createObsService')
   })
 
   it('offers video cache cleanup without touching the configured clip output', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
 
@@ -148,7 +189,7 @@ describe('Dashboard layout', () => {
   })
 
   it('supports multi-monitor capture target selection in built-in recording settings', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('captureTargets')
@@ -176,14 +217,14 @@ describe('Dashboard layout', () => {
   })
 
   it('renames video recording settings to recording settings', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('Настройки записи')
     expect(settingsPanelSource).not.toContain('Запись видео')
   })
 
   it('groups recording settings by source, presets, video, audio, folders and app behavior', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('Источник записи')
@@ -192,7 +233,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).not.toContain('Длительность клипа')
     expect(settingsPanelSource).toContain('Параметры видео')
     expect(settingsPanelSource).toContain('Звук записи')
-    expect(settingsPanelSource).toContain('Папки и OBS')
+    expect(settingsPanelSource).toContain('Папки')
+    expect(settingsPanelSource).not.toContain('Папки и OBS')
     expect(settingsPanelSource).toContain('Поведение приложения')
     expect(settingsPanelSource).toContain('Готовая запись сделки')
     expect(settingsPanelSource).toContain('clipSuccessNotificationsEnabled')
@@ -203,7 +245,7 @@ describe('Dashboard layout', () => {
   })
 
   it('auto-saves video settings without polling window sources forever', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('saveCurrentSettings')
     expect(settingsPanelSource).toContain('refreshWindowSources({ announce: false })')
@@ -215,7 +257,7 @@ describe('Dashboard layout', () => {
   })
 
   it('does not overwrite a focused recording settings input while auto-save normalizes values', async () => {
-    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(settingsPanelSource).toContain('editingDraft')
     expect(settingsPanelSource).toContain('onFocusCapture')
@@ -233,9 +275,13 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).not.toContain('RecorderBufferProgress')
     expect(dashboardSource).not.toContain('TerminalTradeControls')
     expect(dashboardSource).toContain('backgroundRecordingEnabled')
+    expect(dashboardSource).toContain('useState(false)')
+    expect(dashboardSource).toContain('const nextWindowRecorder = !controlStatus.enabled')
+    expect(dashboardSource).toContain('app.showRecordingWidget()')
+    expect(dashboardSource).toContain('Мини-виджет')
     expect(dashboardSource).toContain('Остановить фоновую запись')
     expect(dashboardSource).toContain('Включить фоновую запись')
-    expect(dashboardSource).toContain('recording.stop()')
+    expect(dashboardSource).toContain('recording.setEnabled(false)')
     expect(controllerSource).toContain('enabled?: boolean')
     expect(controllerSource).toContain('enabled === false')
     expect(dashboardSource).toContain('enabled={backgroundRecordingEnabled}')
@@ -247,6 +293,27 @@ describe('Dashboard layout', () => {
     expect(dashboardSource).toContain('recording.finishFree()')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:free-start'")
     expect(appSource).toContain("ipcMain.handle('recording:free-finish'")
+  })
+
+  it('routes the compact widget without creating a second capture controller', async () => {
+    const mainSource = await readFile(resolve('src/renderer/main.tsx'), 'utf8')
+    const widgetSource = await readFile(resolve('src/renderer/components/recording/RecordingWidget.tsx'), 'utf8')
+    const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(mainSource).toContain("searchParams.get('window') === 'recording-widget'")
+    expect(mainSource).toContain('<RecordingWidget />')
+    expect(widgetSource).toContain('recording.getControlStatus()')
+    expect(widgetSource).toContain('recording.onControlStatus')
+    expect(widgetSource).toContain('settings.onChanged')
+    expect(widgetSource).toContain('applyInterfaceTheme(theme)')
+    expect(widgetSource).toContain('recording.setEnabled(!status.enabled)')
+    expect(widgetSource).toContain('<main\n      style={dragRegionStyle}')
+    expect((widgetSource.match(/style=\{noDragRegionStyle\}/g) ?? [])).toHaveLength(3)
+    expect(widgetSource).not.toContain('WindowRecorderController')
+    expect(dashboardSource).toContain('recording.onControlStatus')
+    expect(dashboardSource).toContain('setBackgroundRecording(controlStatus.enabled)')
+    expect(controllerSource).toContain('recording.reportStatus')
   })
 
   it('shows finished free recordings in the review queue and has bulk queue actions', async () => {
@@ -361,8 +428,8 @@ describe('Dashboard layout', () => {
     )
 
     expect(recordingPanelSource).toContain('const activeTradeSummary')
-    expect(recordingPanelSource).toContain('Сделки: <span className="text-zinc-300">{activeTradeSummary}</span>')
-    expect(recordingPanelSource).not.toContain('Сделки: <span className="text-zinc-300">{terminalStatus}</span>')
+    expect(recordingPanelSource).toContain('Сделки: <span className="text-[#f0f0f0]">{activeTradeSummary}</span>')
+    expect(recordingPanelSource).not.toContain('Сделки: <span className="text-[#f0f0f0]">{terminalStatus}</span>')
   })
 
   it('reconciles background window sources with fresh settings only when main asks', async () => {
@@ -496,7 +563,7 @@ describe('Dashboard layout', () => {
   })
 
   it('explains the actual TraderMake nearest-trade time tolerance', async () => {
-    const source = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const source = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(source).toContain('Время входа и выхода может отличаться до 30 минут')
     expect(source).not.toContain('с допуском 2 минуты')
@@ -560,8 +627,8 @@ describe('Dashboard layout', () => {
     expect(source).toContain('setInterval')
     expect(source).toContain('api.clips.listPending()')
     expect(source).toContain('api.clips.getProcessingStatus()')
-    expect(source).toContain("const nextWindowRecorder = nextSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current")
-    expect(source).toContain("const nextWindowRecorder = currentSettings.recording.mode === 'window' && !backgroundRecordingEnabledRef.current")
+    expect(source).toContain('const nextWindowRecorder = !controlStatus.enabled')
+    expect(source).toContain('const nextWindowRecorder = !backgroundRecordingEnabledRef.current')
     expect(preloadSource).toContain("ipcRenderer.invoke('clips:get-processing-status')")
     expect(appSource).toContain("ipcMain.handle('clips:get-processing-status'")
   })
@@ -619,7 +686,7 @@ describe('Dashboard layout', () => {
 
   it('does not replace a temporarily unavailable saved window with an auto-detected terminal', async () => {
     const wizardSource = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
-    const settingsSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const settingsSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(wizardSource).toContain("!windowSourceId && !windowSourceName")
     expect(wizardSource).toContain('(временно недоступно)')
@@ -635,7 +702,7 @@ describe('Dashboard layout', () => {
 
   it('auto-saves system toggle changes instead of waiting for a restart-prone form save', async () => {
     const source = await readFile(resolve('src/renderer/components/settings/SystemSettingsPanel.tsx'), 'utf8')
-    const recordingSettingsSource = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const recordingSettingsSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
     expect(source).toContain('toggleLaunchAtLogin')
     expect(source).toContain('toggleAlwaysOnTop')

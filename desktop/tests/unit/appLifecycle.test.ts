@@ -72,7 +72,8 @@ describe('main app lifecycle', () => {
   it('passes video readiness into the automatic terminal trade watcher', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('const ensureObsReplayBufferActive')
+    expect(source).not.toContain('createObsService')
+    expect(source).not.toContain("ipcMain.handle('obs:")
     expect(source).toContain('const ensureVideoRecordingReady')
     expect(source).toContain('createTerminalTradeWatcher')
     expect(source).toContain('ensureVideoRecordingReady,')
@@ -209,7 +210,7 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain('runClipRenderQueue')
     expect(appSource).toContain('activeClipRenderJobs')
     expect(appSource).toContain('maxConcurrentClipRenders = 2')
-    expect(appSource).toContain("parallelSafe: settings.recording.mode === 'window'")
+    expect(appSource).toContain('parallelSafe: true')
     expect(appSource).toContain('some((job) => !job.parallelSafe)')
     expect(appSource).toContain('settings: job.settingsSnapshot')
     expect(appSource).toContain('applyWindowRecorderProtection')
@@ -225,6 +226,8 @@ describe('main app lifecycle', () => {
 
     expect(appSource).toContain("app.on('before-quit', (event) =>")
     expect(appSource).toContain('cancelClipRender()')
+    expect(appSource).toContain('recordingControlShuttingDown = true')
+    expect(appSource).toContain('recordingControlQueue.catch(() => undefined).then')
     expect(appSource).toContain('waitForClipRenderIdle(30_000)')
     expect(appSource).toContain('gracefulQuitFinished = true')
   })
@@ -234,7 +237,7 @@ describe('main app lifecycle', () => {
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
 
     expect(appSource).toContain('listWindowCaptureSources(forceRefresh')
-    expect(appSource).toContain("ipcMain.handle('recording:list-window-sources', async (_event, forceRefresh")
+    expect(appSource).toContain("ipcMain.handle('recording:list-window-sources', async (event, forceRefresh")
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources', forceRefresh)")
   })
 
@@ -389,14 +392,71 @@ describe('main app lifecycle', () => {
     expect(source).toContain('applyLaunchAtLogin(updatedSettings)')
   })
 
-  it('applies the always-on-top system preference to app windows', async () => {
+  it('applies the always-on-top system preference only to the main window', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('applyAlwaysOnTop')
-    expect(source).toContain('window.setAlwaysOnTop(settings.system.alwaysOnTop)')
-    expect(source).toContain('for (const window of BrowserWindow.getAllWindows())')
+    expect(source).toContain('mainWindow?.setAlwaysOnTop(settings.system.alwaysOnTop)')
     expect(source).toContain('applyAlwaysOnTop(updatedSettings)')
     expect(source).toContain('applyAlwaysOnTop(settings)')
+  })
+
+  it('creates an independent pinned recording widget with a global toggle hotkey', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('let mainWindow: BrowserWindow | undefined')
+    expect(source).toContain('let recordingWidgetWindow: BrowserWindow | undefined')
+    expect(source).toContain('const createRecordingWidgetWindow')
+    expect(source).toContain('alwaysOnTop: true')
+    expect(source).toContain('skipTaskbar: true')
+    expect(source).toContain('frame: false')
+    expect(source).toContain('setContentProtection(true)')
+    expect(source).toContain("window: 'recording-widget'")
+    expect(source).toContain("ipcMain.handle('app:show-recording-widget'")
+    expect(source).toContain('recordingWidgetWindow.showInactive()')
+    expect(source).toContain("webContents.send('settings:changed', updatedSettings)")
+    expect(source).toContain("globalShortcut.register(recordingToggleAccelerator")
+    expect(source).toContain('globalShortcut.unregisterAll()')
+  })
+
+  it('owns recording intent in main and separates it from engine cleanup', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
+    const recorderSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
+
+    expect(source).toContain("ipcMain.handle('recording:get-control-status'")
+    expect(source).toContain("ipcMain.handle('recording:set-enabled'")
+    expect(source).toContain("ipcMain.handle('recording:report-status'")
+    expect(source).toContain("ipcMain.handle('recording:stop-engine'")
+    expect(source).toContain("ipcMain.handle('recording:check'")
+    expect(source).toContain("event.sender !== mainWindow?.webContents")
+    expect(source).toContain('notifyWindowRecordingNeeded()')
+    expect(source).toContain('const checkStartedAtMs = Date.now()')
+    expect(source).toContain('recorderStatusHasFreshSegments(status, settings, checkStartedAtMs)')
+    expect(recorderSource).toContain('source.lastSegmentAtMs >= notBeforeMs')
+    expect(source).toContain('gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown')
+    expect(source).toContain("ipcMain.handle('recording:clear-cache', async (event)")
+    expect(source).toContain("ipcMain.handle('recording:free-start', async (event)")
+    expect(source).toContain("ipcMain.handle('recording:free-finish', async (event)")
+    expect(source).not.toContain("ipcMain.handle('recording:stop'")
+    expect(source).toContain("webContents.send('recording:control-status'")
+    expect(source).toContain('activeTradeCount > 0')
+    expect(source).toContain('freeRecording.active')
+    expect(source).toContain('freeRecording.exporting')
+    expect(source).not.toContain("settings.recording.mode !== 'window'")
+    expect(source).toContain('getRecordingGateRevision: () => recordingGateRevision')
+    expect(source).toContain('gateRevision !== recordingGateRevision')
+    expect(source).toContain('await windowRecorderService.stop()')
+    expect(source).toContain('const previousEnabled = recordingControlStatus.enabled')
+    expect(source).toContain('backgroundWindowRecordingEnabled = previousEnabled')
+    expect(preloadSource).toContain('getControlStatus')
+    expect(preloadSource).toContain('setEnabled')
+    expect(preloadSource).toContain('reportStatus')
+    expect(preloadSource).not.toContain("stop: (): Promise<void> => ipcRenderer.invoke('recording:stop')")
+    expect(preloadSource).toContain('stopEngine')
+    expect(preloadSource).toContain('onControlStatus')
+    expect(preloadSource).toContain("ipcRenderer.on('settings:changed', listener)")
+    expect(source).toContain("backgroundRecordingEnabled: recordingControlStatus.enabled")
   })
 
   it('can leave the local proxy running after app close without spawning duplicates next launch', async () => {

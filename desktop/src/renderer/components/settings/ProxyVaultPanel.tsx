@@ -56,8 +56,9 @@ const createEmptyForm = (settings?: AppSettings): ProxyFormState => ({
   notes: ''
 })
 
-const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
-const compactButtonClass = 'h-9 px-3'
+const inputClass = 'mt-1 w-full border border-[#1c2b3a] bg-[#07111c] px-3 py-2 font-mono text-sm text-[#f0f0f0] outline-none transition-colors duration-150 focus:border-[#ff9f30] focus:ring-2 focus:ring-[#ff9f30]/30 focus:ring-offset-2 focus:ring-offset-[#0b1623]'
+const compactButtonClass = 'h-9 rounded-none px-3'
+const fieldLabelClass = 'font-mono text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]'
 
 const dayMs = 24 * 60 * 60 * 1000
 
@@ -178,22 +179,22 @@ const progressStatusLabel = (status: ProxyChainSetupProgress['status']): string 
 const progressStatusClass = (status: ProxyChainSetupProgress['status']): string => {
   if (status === 'success') return 'text-emerald-300'
   if (status === 'error') return 'text-rose-300'
-  if (status === 'info') return 'text-amber-300'
-  return 'text-sky-300'
+  if (status === 'info') return 'text-[#ff9f30]'
+  return 'text-[#56b5d5]'
 }
 
 type NetworkDiagnosticsSnapshot = ProxyChainSetupResult['network']
 
 const networkStatusClass = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
   if (status === 'ok') return 'text-emerald-200'
-  if (status === 'warning') return 'text-amber-200'
-  return 'text-sky-200'
+  if (status === 'warning') return 'text-[#ff9f30]'
+  return 'text-[#56b5d5]'
 }
 
 const networkStatusBorderClass = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
   if (status === 'ok') return 'border-emerald-400/20 bg-emerald-400/10'
-  if (status === 'warning') return 'border-amber-400/20 bg-amber-400/10'
-  return 'border-sky-400/20 bg-sky-400/10'
+  if (status === 'warning') return 'border-[#ff9f30]/30 bg-[#ff9f30]/10'
+  return 'border-[#56b5d5]/30 bg-[#56b5d5]/10'
 }
 
 const networkStatusLabel = (status: NetworkDiagnosticsSnapshot['diagnostics'][number]['status']): string => {
@@ -208,22 +209,22 @@ const NetworkDiagnosticsBlock = ({ network }: { network?: NetworkDiagnosticsSnap
   const hasWarning = network.likelyVpnActive || network.systemProxyEnabled || network.diagnostics.some((diagnostic) => diagnostic.status === 'warning')
 
   return (
-    <div className={`mt-3 rounded-2xl border p-4 ${hasWarning ? 'border-amber-400/20 bg-amber-400/10' : 'border-white/10 bg-black/20'}`}>
-      <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-        <ShieldAlert size={16} className={hasWarning ? 'text-amber-200' : 'text-emerald-200'} />
+    <div className={`mt-3 border p-4 ${hasWarning ? 'border-[#ff9f30]/30 bg-[#ff9f30]/10' : 'border-[#1c2b3a] bg-[#07111c]'}`}>
+      <div className="flex items-center gap-2 font-mono text-sm font-semibold text-[#f0f0f0]">
+        <ShieldAlert size={16} className={hasWarning ? 'text-[#ff9f30]' : 'text-emerald-200'} />
         <span>VPN и маршрут</span>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-3">
         {network.diagnostics.map((diagnostic) => (
-          <div key={`${diagnostic.name}-${diagnostic.message}`} className={`rounded-xl border px-3 py-2 ${networkStatusBorderClass(diagnostic.status)}`}>
+          <div key={`${diagnostic.name}-${diagnostic.message}`} className={`border px-3 py-2 ${networkStatusBorderClass(diagnostic.status)}`}>
             <div className={`text-[11px] font-semibold uppercase ${networkStatusClass(diagnostic.status)}`}>{networkStatusLabel(diagnostic.status)}</div>
-            <div className="mt-1 text-xs font-semibold text-zinc-100">{diagnostic.name}</div>
-            <div className="mt-1 break-words text-xs leading-5 text-zinc-400">{diagnostic.message}</div>
+            <div className="mt-1 text-xs font-semibold text-[#f0f0f0]">{diagnostic.name}</div>
+            <div className="mt-1 break-words text-xs leading-5 text-[#8b9bb4]">{diagnostic.message}</div>
           </div>
         ))}
       </div>
       {network.advice.length > 0 && (
-        <ol className="mt-3 list-decimal space-y-1 pl-4 text-xs leading-5 text-zinc-300">
+        <ol className="mt-3 list-decimal space-y-1 pl-4 font-mono text-xs leading-5 text-[#8b9bb4]">
           {network.advice.map((item) => <li key={item}>{item}</li>)}
         </ol>
       )}
@@ -235,20 +236,20 @@ const VpnBypassResultBlock = ({ result }: { result?: VpnBypassRouteResult }) => 
   if (!result) return null
 
   return (
-    <div className={`mt-4 rounded-2xl border p-4 text-xs leading-5 ${result.ok ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-amber-400/20 bg-amber-400/10'}`}>
-      <div className={`text-sm font-semibold ${result.ok ? 'text-emerald-100' : 'text-amber-100'}`}>Обход VPN для VPS</div>
-      <div className="mt-2 break-words text-zinc-300">{result.message}</div>
+    <div className={`mt-4 border p-4 font-mono text-xs leading-5 ${result.ok ? 'border-emerald-400/30 bg-emerald-400/10' : 'border-[#ff9f30]/30 bg-[#ff9f30]/10'}`}>
+      <div className={`text-sm font-semibold ${result.ok ? 'text-emerald-100' : 'text-orange-100'}`}>Обход VPN для VPS</div>
+      <div className="mt-2 break-words text-[#f0f0f0]">{result.message}</div>
       {result.gateway && (
-        <div className="mt-2 text-zinc-400">
+        <div className="mt-2 text-[#8b9bb4]">
           Gateway: {result.gateway}{result.interfaceName ? `, интерфейс: ${result.interfaceName}` : ''}
         </div>
       )}
       {result.routes.length > 0 && (
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {result.routes.map((route) => (
-            <div key={`${route.address}-${route.host}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-              <div className={route.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-amber-200'}>{route.address}</div>
-              <div className="mt-1 break-words text-zinc-400">{route.host}: {route.message}</div>
+            <div key={`${route.address}-${route.host}`} className="border border-[#1c2b3a] bg-[#07111c] px-3 py-2">
+              <div className={route.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-[#ff9f30]'}>{route.address}</div>
+              <div className="mt-1 break-words text-[#8b9bb4]">{route.host}: {route.message}</div>
             </div>
           ))}
         </div>
@@ -621,31 +622,32 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
   }
 
   return (
-    <Card id="proxy-section" className="col-span-12 scroll-mt-4">
+    <Card id="proxy-section" className="col-span-12 scroll-mt-4 rounded-none border-[#1c2b3a] bg-[#0b1623] font-mono shadow-none backdrop-blur-none">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Прокси-серверы</h2>
-          <p className="mt-1 text-sm text-zinc-500">Сохраняйте серверы, SSH-доступ, оплату и ссылки на хостинг. Серверы можно связать в маршрут.</p>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#56b5d5]">NET.ROUTE // PROXY VAULT</div>
+          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em] text-[#f0f0f0]">Прокси-серверы</h2>
+          <p className="mt-1 text-sm text-[#8b9bb4]">Сохраняйте серверы, SSH-доступ, оплату и ссылки на хостинг. Серверы можно связать в маршрут.</p>
         </div>
         <Button variant="ghost" onClick={resetForm}><Plus size={17} className="mr-2" />Новый сервер</Button>
       </div>
 
-      <div className={`mt-5 rounded-2xl border p-4 ${connectionSummary.tone === 'success' ? 'border-emerald-400/20 bg-emerald-400/10' : 'border-sky-400/20 bg-sky-500/10'}`}>
+      <div className={`mt-5 border p-4 ${connectionSummary.tone === 'success' ? 'border-emerald-400/30 bg-emerald-400/10' : 'border-[#56b5d5]/30 bg-[#56b5d5]/10'}`}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-              <Server size={17} className={connectionSummary.tone === 'success' ? 'text-emerald-200' : 'text-sky-200'} />
+            <div className="flex items-center gap-2 text-sm font-semibold text-[#f0f0f0]">
+              <Server size={17} className={connectionSummary.tone === 'success' ? 'text-emerald-200' : 'text-[#56b5d5]'} />
               <span>{connectionSummary.title}</span>
             </div>
-            <div className="mt-2 text-xs text-zinc-300">{connectionSummary.bypassLabel}</div>
-            <div className="mt-2 text-xs text-zinc-400">Маршрут: {connectionResult?.route || orderedChainProxies.map(proxyName).join(' -> ') || 'добавьте серверы'}</div>
-            <div className="mt-1 text-xs text-zinc-400">Терминал: {connectionResult?.entryProxy.type ?? localProxyType} 127.0.0.1:{connectionResult?.entryProxy.port || orderedChainProxies[0]?.localProxyPort || defaultLocalProxyPort}</div>
+            <div className="mt-2 text-xs text-[#f0f0f0]">{connectionSummary.bypassLabel}</div>
+            <div className="mt-2 text-xs text-[#8b9bb4]">Маршрут: {connectionResult?.route || orderedChainProxies.map(proxyName).join(' -> ') || 'добавьте серверы'}</div>
+            <div className="mt-1 text-xs text-[#8b9bb4]">Терминал: {connectionResult?.entryProxy.type ?? localProxyType} 127.0.0.1:{connectionResult?.entryProxy.port || orderedChainProxies[0]?.localProxyPort || defaultLocalProxyPort}</div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <label className="min-w-40 text-xs font-medium text-zinc-300">
+            <label className={`min-w-40 ${fieldLabelClass}`}>
               Тип подключения
               <select
-                className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60"
+                className={`${inputClass} appearance-none`}
                 value={localProxyType}
                 onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}
                 disabled={busy}
@@ -674,18 +676,18 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             )}
           </div>
         </div>
-        {message && <div className="mt-3 text-xs text-zinc-300">{message}</div>}
-        <details className="mt-3 rounded-xl border border-white/10 bg-black/15 p-3">
-          <summary className="cursor-pointer text-sm font-semibold text-zinc-200">Состояние и проверки</summary>
+        {message && <div className="mt-3 border border-[#56b5d5]/30 bg-[#56b5d5]/10 px-3 py-2 text-xs text-cyan-100" role="status">{message}</div>}
+        <details className="mt-3 border border-[#1c2b3a] bg-[#07111c] p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-[#f0f0f0]">Состояние и проверки</summary>
           <div className="mt-3">
             {chainCheckProgress.length > 0 && (
-              <div className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
-                <div className="mb-2 text-sm font-semibold text-zinc-100">Проверка связки</div>
+              <div className="max-h-64 overflow-auto border border-[#1c2b3a] bg-[#07111c] p-3">
+                <div className="mb-2 text-sm font-semibold text-[#f0f0f0]">Проверка связки</div>
                 <div className="space-y-2 text-xs leading-5">
                   {chainCheckProgress.map((progress, index) => (
                     <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
                       <span className={progressStatusClass(progress.status)}>{progressStatusLabel(progress.status)}</span>
-                      <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                      <span className="min-w-0 break-words text-[#8b9bb4]">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
                     </div>
                   ))}
                 </div>
@@ -693,13 +695,13 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             )}
 
             {chainSetupProgress.length > 0 && (
-              <div className="max-h-64 overflow-auto rounded-2xl border border-white/10 bg-black/25 p-3">
-                <div className="mb-2 text-sm font-semibold text-zinc-100">Прогресс настройки</div>
+              <div className="max-h-64 overflow-auto border border-[#1c2b3a] bg-[#07111c] p-3">
+                <div className="mb-2 text-sm font-semibold text-[#f0f0f0]">Прогресс настройки</div>
                 <div className="space-y-2 text-xs leading-5">
                   {chainSetupProgress.map((progress, index) => (
                     <div key={`${progress.timestampMs}-${index}`} className="flex gap-2">
                       <span className={progressStatusClass(progress.status)}>{progressStatusLabel(progress.status)}</span>
-                      <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                      <span className="min-w-0 break-words text-[#8b9bb4]">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
                     </div>
                   ))}
                 </div>
@@ -709,15 +711,15 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             <VpnBypassResultBlock result={vpnBypassResult} />
 
             {chainSetupResult && (
-              <div className="mt-3 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-xs leading-5 text-zinc-200">
+              <div className="mt-3 border border-emerald-400/30 bg-emerald-400/10 p-4 text-xs leading-5 text-[#f0f0f0]">
                 <div className="text-sm font-semibold text-emerald-100">Локальный proxy запущен</div>
                 <div className="mt-2 break-words">Маршрут: {chainSetupResult.route}</div>
                 {chainSetupResult.diagnostics.length > 0 && (
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     {chainSetupResult.diagnostics.map((check) => (
-                      <div key={check.name} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                        <div className={check.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-amber-200'}>{check.name}</div>
-                        <div className="mt-1 break-words text-zinc-400">{check.message}</div>
+                      <div key={check.name} className="border border-[#1c2b3a] bg-[#07111c] px-3 py-2">
+                        <div className={check.ok ? 'font-semibold text-emerald-200' : 'font-semibold text-[#ff9f30]'}>{check.name}</div>
+                        <div className="mt-1 break-words text-[#8b9bb4]">{check.message}</div>
                       </div>
                     ))}
                   </div>
@@ -727,17 +729,17 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
             )}
 
             {chainResult && (
-              <div className="mt-3 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
+              <div className="mt-3 border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-cyan-100">
                   <Route size={17} />
                   <span>Проверка подключения</span>
                 </div>
-                <p className="mt-3 break-words text-xs leading-5 text-zinc-300">Маршрут: {chainResult.route}</p>
-                <div className="mt-3 grid gap-2 text-xs text-zinc-300 sm:grid-cols-2">
+                <p className="mt-3 break-words text-xs leading-5 text-[#f0f0f0]">Маршрут: {chainResult.route}</p>
+                <div className="mt-3 grid gap-2 text-xs text-[#f0f0f0] sm:grid-cols-2">
                   {chainResult.sshChecks.map((check) => (
-                    <div key={`${check.host}:${check.port}:${check.login}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                    <div key={`${check.host}:${check.port}:${check.login}`} className="border border-[#1c2b3a] bg-[#07111c] px-3 py-2">
                       <div className="font-semibold text-emerald-200">{check.host}:{check.port}</div>
-                      <div className="mt-1 text-zinc-500">{check.message}{check.serverInfo ? `, ${check.serverInfo}` : ''}</div>
+                      <div className="mt-1 text-[#8b9bb4]">{check.message}{check.serverInfo ? `, ${check.serverInfo}` : ''}</div>
                     </div>
                   ))}
                 </div>
@@ -753,15 +755,15 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
           {proxies.length > 0 ? proxies.map((proxy) => {
             const status = paymentBadge(proxy)
             return (
-              <div key={proxy.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div key={proxy.id} className="border border-[#1c2b3a] bg-[#07111c] p-4 transition-colors duration-150 hover:border-[#56b5d5]/30">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Server size={17} className="text-violet-200" />
-                      <h3 className="m-0 max-w-full truncate text-base font-semibold text-zinc-100">{proxyName(proxy)}</h3>
+                      <Server size={17} className="text-[#56b5d5]" />
+                      <h3 className="m-0 max-w-full truncate text-base font-semibold text-[#f0f0f0]">{proxyName(proxy)}</h3>
                       <Badge tone={status.tone}>{status.label}</Badge>
                     </div>
-                    <div className="mt-2 grid gap-1 text-xs text-zinc-500 sm:grid-cols-2">
+                    <div className="mt-2 grid gap-1 text-xs text-[#8b9bb4] sm:grid-cols-2">
                       <span className="truncate">IP / домен: {proxy.server || 'не задан'}</span>
                       <span className="truncate">SSH-логин: {proxy.login || 'не задан'}</span>
                       <span>SSH-пароль: {proxy.passwordConfigured ? 'сохранён в keychain' : 'не задан'}</span>
@@ -770,11 +772,11 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
                       <span className="truncate">Хостинг: {proxy.dashboardUrl || 'ссылка не задана'}</span>
                       <span className="truncate">Следующий: {proxy.nextProxyId ? proxyName(proxyById.get(proxy.nextProxyId) ?? proxy) : 'нет'}</span>
                     </div>
-                    <div className="mt-2 flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs leading-5 text-zinc-300">
-                      <Route size={14} className="mt-0.5 shrink-0 text-violet-200" />
+                    <div className="mt-2 flex items-start gap-2 border border-[#1c2b3a] bg-[#0b1623] px-3 py-2 text-xs leading-5 text-[#f0f0f0]">
+                      <Route size={14} className="mt-0.5 shrink-0 text-[#56b5d5]" />
                       <span className="min-w-0 break-words">{routeText(proxy, proxyById)}</span>
                     </div>
-                    {proxy.notes && <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">{proxy.notes}</p>}
+                    {proxy.notes && <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#8b9bb4]">{proxy.notes}</p>}
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     <Button variant="ghost" className={compactButtonClass} title="Проверить подключение" onClick={() => void configureProxyFromCard(proxy)} disabled={busy}><Wrench size={15} /></Button>
@@ -789,45 +791,45 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               </div>
             )
           }) : (
-            <div className="rounded-2xl border border-dashed border-white/10 p-6 text-sm text-zinc-500">Серверы ещё не добавлены.</div>
+            <div className="border border-dashed border-[#1c2b3a] p-6 text-sm text-[#8b9bb4]">Серверы ещё не добавлены.</div>
           )}
         </div>
 
-        <form className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-4" onSubmit={save}>
+        <form className="border border-[#56b5d5]/30 bg-[#56b5d5]/[0.06] p-4" onSubmit={save}>
           <div className="mb-4 flex items-center gap-2">
-            <CalendarClock size={18} className="text-violet-200" />
-            <h3 className="m-0 text-base font-semibold">{form.id ? 'Редактировать сервер' : 'Добавить сервер'}</h3>
+            <CalendarClock size={18} className="text-[#56b5d5]" />
+            <h3 className="m-0 text-base font-semibold text-[#f0f0f0]">{form.id ? 'Редактировать сервер' : 'Добавить сервер'}</h3>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Название
               <input className={inputClass} value={form.name} onChange={(event) => updateForm({ name: event.target.value })} placeholder="Tokyo exit / Hetzner #1" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               IP или домен
               <input className={inputClass} value={form.server} onChange={(event) => updateForm({ server: event.target.value })} placeholder="1.2.3.4" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               SSH-логин
               <input className={inputClass} value={form.login} onChange={(event) => updateForm({ login: event.target.value })} placeholder="root" />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               SSH-пароль
               <input className={inputClass} value={form.password} onChange={(event) => updateForm({ password: event.target.value })} type="password" placeholder={editedProxy?.passwordConfigured ? 'Сохранён' : 'Не задан'} />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Локальный порт терминала
               <input className={inputClass} value={form.localProxyPort} onChange={(event) => updateForm({ localProxyPort: event.target.value })} inputMode="numeric" placeholder={String(defaultLocalProxyPort)} />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               День оплаты в месяце
               <input className={inputClass} value={form.paymentDueDay} onChange={(event) => updateForm({ paymentDueDay: event.target.value })} type="number" min="1" max="31" inputMode="numeric" placeholder={currentPaymentDueDay()} />
             </label>
-            <label className="text-xs font-medium text-zinc-500">
+            <label className={fieldLabelClass}>
               Сайт хостинга
               <input className={inputClass} value={form.dashboardUrl} onChange={(event) => updateForm({ dashboardUrl: event.target.value })} placeholder="https://..." />
             </label>
-            <label className="text-xs font-medium text-zinc-500 sm:col-span-2">
+            <label className={`${fieldLabelClass} sm:col-span-2`}>
               Заметки
               <textarea className={`${inputClass} min-h-20 resize-none`} value={form.notes} onChange={(event) => updateForm({ notes: event.target.value })} placeholder="Назначение, провайдер, тариф, что проверить перед оплатой" />
             </label>
@@ -839,14 +841,14 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
         </form>
       </div>
 
-      <div className="mt-5 rounded-2xl border border-sky-400/20 bg-sky-500/10 p-4">
+      <div className="mt-5 border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-sky-100">
+            <div className="flex items-center gap-2 text-sm font-semibold text-cyan-100">
               <Route size={17} />
               <span>Порядок связки</span>
             </div>
-            <p className="mt-2 text-xs leading-5 text-zinc-300">Добавьте все серверы, затем перетащите их в нужном порядке. Первый сервер будет входом, последний - выходом. Можно использовать кнопки вверх/вниз, если перетаскивание неудобно.</p>
+            <p className="mt-2 text-xs leading-5 text-[#8b9bb4]">Добавьте все серверы, затем перетащите их в нужном порядке. Первый сервер будет входом, последний - выходом. Можно использовать кнопки вверх/вниз, если перетаскивание неудобно.</p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="ghost" onClick={() => void saveChainOrder()} disabled={busy || orderedChainProxies.length === 0 || !chainOrderDirty}>
@@ -886,13 +888,13 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
                 clearCheckState()
               }}
               onDragEnd={() => setDraggedProxyId('')}
-              className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/25 px-3 py-3"
+              className="flex flex-wrap items-center gap-3 border border-[#1c2b3a] bg-[#07111c] px-3 py-3 transition-colors duration-150 hover:border-[#56b5d5]/30"
             >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-sky-300/20 bg-sky-400/10 text-sm font-semibold text-sky-100">{index + 1}</div>
-              <GripVertical className="shrink-0 cursor-grab text-zinc-500 active:cursor-grabbing" size={18} />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-[#56b5d5]/30 bg-[#56b5d5]/10 text-sm font-semibold text-cyan-100">{index + 1}</div>
+              <GripVertical className="shrink-0 cursor-grab text-[#8b9bb4] active:cursor-grabbing" size={18} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-zinc-100">{proxyName(proxy)}</div>
-                <div className="mt-0.5 truncate text-xs text-zinc-500">{proxy.server || 'IP не задан'}{index === 0 ? ' · вход' : index === orderedChainProxies.length - 1 ? ' · выход' : ' · промежуточный'}</div>
+                <div className="truncate text-sm font-semibold text-[#f0f0f0]">{proxyName(proxy)}</div>
+                <div className="mt-0.5 truncate text-xs text-[#8b9bb4]">{proxy.server || 'IP не задан'}{index === 0 ? ' · вход' : index === orderedChainProxies.length - 1 ? ' · выход' : ' · промежуточный'}</div>
               </div>
               <div className="flex gap-2">
                 <Button variant="ghost" className={compactButtonClass} title="Выше" onClick={() => {
@@ -906,14 +908,14 @@ export const ProxyVaultPanel = ({ settings, onSaved, runtimeState, onRuntimeStat
               </div>
             </div>
           )) : (
-            <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-zinc-500">Добавьте хотя бы один сервер, чтобы собрать связку.</div>
+            <div className="border border-dashed border-[#1c2b3a] p-4 text-sm text-[#8b9bb4]">Добавьте хотя бы один сервер, чтобы собрать связку.</div>
           )}
         </div>
 
         {orderedChainProxies.length > 0 && (
-          <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs leading-5 text-zinc-300">
+          <div className="mt-3 border border-[#1c2b3a] bg-[#07111c] px-3 py-2 text-xs leading-5 text-[#f0f0f0]">
             {orderedChainProxies.map((proxy) => proxyName(proxy)).join(' -> ')}
-            {chainOrderDirty && <span className="ml-2 text-sky-200">Есть несохранённые изменения порядка</span>}
+            {chainOrderDirty && <span className="ml-2 text-[#ff9f30]">Есть несохранённые изменения порядка</span>}
           </div>
         )}
 

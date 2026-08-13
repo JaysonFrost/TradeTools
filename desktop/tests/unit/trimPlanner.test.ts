@@ -54,6 +54,6 @@ describe('planReplayTrim', () => {
         paddingBeforeSeconds: 3,
         paddingAfterSeconds: 5
       })
-    ).toThrow('Сделка не попадает в окно OBS Replay Buffer')
+    ).toThrow('Сделка не попадает в сохранённый буфер записи')
   })
 })

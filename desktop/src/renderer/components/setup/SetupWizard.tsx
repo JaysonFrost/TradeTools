@@ -1,5 +1,5 @@
-import { ArrowLeft, ArrowRight, CheckCircle2, CircleHelp, Clock3, FolderOpen, Monitor, Radio, RefreshCw, Route, Server, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, ArrowRight, CheckCircle2, CircleHelp, Clock3, FolderOpen, Monitor, RefreshCw, Route, Server, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WindowCaptureSource } from '../../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
@@ -17,7 +17,6 @@ export type SetupWizardProps = {
   mode: Exclude<AppPage, 'support'>
   open: boolean
   settings?: AppSettings
-  obsMessage: string
   clipMessage: string
   onClose: () => void
   onSaved: (settings: AppSettings) => void
@@ -25,8 +24,9 @@ export type SetupWizardProps = {
   onCreateTestClip: () => Promise<void>
 }
 
-const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
+const inputClass = 'mt-1 w-full border border-[#1c2b3a] bg-[#07111c] px-3 py-2 font-mono text-sm text-[#f0f0f0] outline-none transition-colors duration-150 focus:border-[#ff9f30] focus:ring-2 focus:ring-[#ff9f30]/30 focus:ring-offset-2 focus:ring-offset-[#0b1623]'
 const compactInputClass = inputClass.replace('mt-1 ', '')
+const fieldLabelClass = 'font-mono text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]'
 const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа в сделку. Это должно быть не меньше поля «Секунд до входа».'
 
@@ -36,7 +36,7 @@ const normalizeVideoEncoderValue = (value: string): AppSettings['recording']['vi
 }
 
 const FieldHint = ({ text }: { text: string }) => (
-  <span className="ml-1 inline-flex align-middle text-zinc-500 transition hover:text-violet-200" title={text}>
+  <span className="ml-1 inline-flex align-middle text-[#8b9bb4] transition-colors duration-150 hover:text-[#56b5d5]" title={text}>
     <CircleHelp size={13} />
   </span>
 )
@@ -60,8 +60,8 @@ const progressStatusLabel = (status: ProxyChainSetupProgress['status']): string 
 const progressStatusClass = (status: ProxyChainSetupProgress['status']): string => {
   if (status === 'success') return 'text-emerald-300'
   if (status === 'error') return 'text-rose-300'
-  if (status === 'info') return 'text-amber-300'
-  return 'text-sky-300'
+  if (status === 'info') return 'text-[#ff9f30]'
+  return 'text-[#56b5d5]'
 }
 
 const userFacingErrorMessage = (error: unknown, fallback: string): string => {
@@ -72,13 +72,9 @@ const userFacingErrorMessage = (error: unknown, fallback: string): string => {
     .replace(/^Error:\s*/i, '')
 }
 
-export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onClose, onSaved, onRunHealthCheck, onCreateTestClip }: SetupWizardProps) => {
+export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSaved, onRunHealthCheck, onCreateTestClip }: SetupWizardProps) => {
   const steps = mode === 'video' ? videoSetupWizardSteps : proxySetupWizardSteps
   const [stepIndex, setStepIndex] = useState(0)
-  const [host, setHost] = useState('127.0.0.1')
-  const [port, setPort] = useState('4455')
-  const [obsPassword, setObsPassword] = useState('')
-  const [recordingMode, setRecordingMode] = useState<AppSettings['recording']['mode']>('window')
   const [sourceType, setSourceType] = useState<AppSettings['recording']['sourceType']>('window')
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
@@ -92,7 +88,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [windowSources, setWindowSources] = useState<WindowCaptureSource[]>([])
   const [videoEncoderOptions, setVideoEncoderOptions] = useState<VideoEncoderOption[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
-  const [replaySourceDir, setReplaySourceDir] = useState('')
   const [outputDir, setOutputDir] = useState('')
   const [paddingBefore, setPaddingBefore] = useState(String(defaultClipPaddingBeforeSeconds))
   const [paddingAfter, setPaddingAfter] = useState(String(defaultClipPaddingAfterSeconds))
@@ -123,6 +118,58 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const [saving, setSaving] = useState(false)
   const [checkingVideo, setCheckingVideo] = useState(false)
   const [localMessage, setLocalMessage] = useState('')
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const focusTimer = window.setTimeout(() => {
+      const initialFocus = dialogRef.current?.querySelector<HTMLElement>('[data-dialog-initial-focus]')
+      ;(initialFocus ?? dialogRef.current)?.focus()
+    }, 0)
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+
+      if (event.key !== 'Tab' || !dialogRef.current) return
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => element.getClientRects().length > 0 && element.getAttribute('aria-hidden') !== 'true')
+
+      if (focusable.length === 0) {
+        event.preventDefault()
+        dialogRef.current.focus()
+        return
+      }
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleDialogKeyDown)
+    return () => {
+      window.clearTimeout(focusTimer)
+      document.removeEventListener('keydown', handleDialogKeyDown)
+      previouslyFocused?.focus()
+    }
+  }, [open])
 
   const resetProxyDraft = (nextSettings = settings) => {
     setProxyTitle(defaultProxyTitle(nextSettings))
@@ -157,7 +204,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   useEffect(() => {
     if (!settings) return
-    setRecordingMode(settings.recording.mode)
     setSourceType(settings.recording.sourceType)
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
@@ -169,9 +215,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
     setMicrophoneEnabled(settings.recording.microphoneEnabled)
     setLocalProxyType(settings.proxyRuntime.localProxyType)
-    setHost(settings.obs.host)
-    setPort(String(settings.obs.port))
-    setReplaySourceDir(settings.clip.replaySourceDir)
     setOutputDir(settings.clip.outputDir)
     setPaddingBefore(String(settings.clip.paddingBeforeSeconds))
     setPaddingAfter(String(settings.clip.paddingAfterSeconds))
@@ -195,16 +238,16 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   }
 
   useEffect(() => {
-    if (!open || mode !== 'video' || recordingMode !== 'window') return
+    if (!open || mode !== 'video') return
     void refreshWindowSources()
-  }, [mode, open, recordingMode])
+  }, [mode, open])
 
   useEffect(() => {
-    if (!open || mode !== 'video' || recordingMode !== 'window') return
+    if (!open || mode !== 'video') return
     void getTradeToolsApi().recording.listVideoEncoders()
       .then((options) => setVideoEncoderOptions(options))
       .catch(() => setVideoEncoderOptions([]))
-  }, [mode, open, recordingMode])
+  }, [mode, open])
 
   useEffect(() => {
     if (!settings?.proxies.length) {
@@ -248,21 +291,21 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   )
   const stepActionLabels = useMemo(() => {
     if (!step) return []
-    if (mode === 'video' && step.id === 'obs-websocket') {
+    if (mode === 'video' && step.id === 'recording-source') {
       return [
-        'Использовать встроенную запись окна или экрана',
-        'Использовать OBS Replay Buffer',
-        'Сохранить выбранный режим записи'
+        'Открыть окно торгового терминала',
+        'Выбрать окно или мониторы для записи',
+        'Сохранить источник записи'
       ]
     }
-    if (mode === 'video' && step.id === 'obs-replay' && recordingMode === 'window') {
+    if (mode === 'video' && step.id === 'recording-buffer') {
       return [
         'Откройте окно торгового терминала',
         'Если окно не выбрано, TradeTools попробует выбрать его автоматически',
         'Нажмите проверку видео'
       ]
     }
-    if (mode === 'video' && step.id === 'folders' && recordingMode === 'window') {
+    if (mode === 'video' && step.id === 'folders') {
       return [
         'Выбрать папку готовых клипов',
         'Поставить секунды до входа и после выхода'
@@ -270,7 +313,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     }
 
     return step.actions
-  }, [mode, recordingMode, step])
+  }, [mode, step])
 
   if (!open || !step) return null
 
@@ -279,13 +322,13 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setLocalMessage('')
     try {
       const api = getTradeToolsApi()
-      const latestSources = recordingMode === 'window' && !windowSourceId && !windowSourceName
+      const latestSources = !windowSourceId && !windowSourceName
         ? await api.recording.listWindowSources()
         : windowSources
       if (latestSources !== windowSources) setWindowSources(latestSources)
       const selectedSource = windowSources.find((source) => source.id === windowSourceId)
         ?? latestSources.find((source) => source.id === windowSourceId)
-        ?? (recordingMode === 'window' && sourceType === 'window' && !windowSourceId && !windowSourceName
+        ?? (sourceType === 'window' && !windowSourceId && !windowSourceName
           ? findPreferredTerminalSource(latestSources)
           : undefined)
       const selectedTarget = selectedSource ? {
@@ -302,13 +345,10 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
-      const replayBufferSecondsValue = recordingMode === 'window'
-        ? Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
-        : parsedReplayBufferSeconds
+      const replayBufferSecondsValue = Math.max(Number.isFinite(parsedReplayBufferSeconds) ? parsedReplayBufferSeconds : 0, paddingBeforeSeconds)
       const updated = await api.settings.update({
-        obsPassword: obsPassword.trim() || undefined,
         recording: {
-          mode: recordingMode,
+          mode: 'window',
           sourceType,
           windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? windowSourceId,
           windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
@@ -322,12 +362,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
           systemAudioEnabled,
           microphoneEnabled
         },
-        obs: {
-          host,
-          port: Number(port)
-        },
         clip: {
-          replaySourceDir,
           outputDir,
           paddingBeforeSeconds: Number(paddingBefore),
           paddingAfterSeconds: Number(paddingAfter),
@@ -335,7 +370,6 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
         }
       })
       onSaved(updated)
-      setObsPassword('')
       setLocalMessage('Настройки видео сохранены')
     } catch (error) {
       setLocalMessage(error instanceof Error ? error.message : 'Не удалось сохранить настройки видео')
@@ -357,9 +391,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     setPaddingBefore(beforeSeconds)
     setPaddingAfter(afterSeconds)
     setReplayBufferSeconds(beforeSeconds)
-    setLocalMessage(recordingMode === 'window'
-      ? 'Пресет включён: 10 минут до входа и 2 минуты после выхода. Клип появится примерно через 2 минуты после выхода.'
-      : 'Пресет включён: 10 минут до входа и 2 минуты после выхода. В OBS вручную поставьте Replay Buffer минимум 12 минут плюс обычная длина сделки.')
+    setLocalMessage('Пресет включён: 10 минут до входа и 2 минуты после выхода. Клип появится примерно через 2 минуты после выхода.')
   }
 
   const saveProxyServers = async () => {
@@ -482,7 +514,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const runVideoHealthCheck = async () => {
     setCheckingVideo(true)
-    setLocalMessage(recordingMode === 'window' ? 'Проверяем встроенную запись окна...' : 'Проверяем OBS WebSocket и Replay Buffer...')
+    setLocalMessage('Проверяем встроенную запись окна или экрана...')
     try {
       const message = await onRunHealthCheck()
       setLocalMessage(message || 'Проверка видео завершена')
@@ -518,38 +550,30 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
       return
     }
 
-    if (step.id === 'obs-websocket') {
+    if (step.id === 'recording-source') {
       if (actionIndex === 0) {
-        setRecordingMode('window')
         await refreshWindowSources()
         return
       }
       if (actionIndex === 1) {
-        setRecordingMode('obs')
-        setLocalMessage('Для OBS введите WebSocket данные ниже и нажмите «Сохранить этот шаг».')
+        setLocalMessage('Выберите окно или мониторы ниже и нажмите «Сохранить этот шаг».')
         return
       }
-      setLocalMessage(recordingMode === 'window'
-        ? 'Откройте терминал и нажмите «Сохранить этот шаг». Если окно найдено, TradeTools выберет его автоматически.'
-        : 'Введите пароль OBS WebSocket ниже и нажмите «Сохранить этот шаг».')
+      setLocalMessage('Откройте терминал и нажмите «Сохранить этот шаг». Если окно найдено, TradeTools выберет его автоматически.')
       return
     }
 
-    if (step.id === 'obs-replay') {
+    if (step.id === 'recording-buffer') {
       if (actionIndex === stepActionLabels.length - 1) {
         await runVideoHealthCheck()
       } else {
-        setLocalMessage(recordingMode === 'window'
-          ? 'Окно терминала должно быть открыто. После сохранения источника нажмите проверку видео.'
-          : 'Выполните этот пункт в OBS. После запуска Replay Buffer нажмите проверку видео.')
+        setLocalMessage('Окно терминала или выбранный монитор должен быть доступен. После сохранения источника нажмите проверку видео.')
       }
       return
     }
 
     if (step.id === 'folders') {
-      if (recordingMode === 'obs' && actionIndex === 0) {
-        await selectDirectory(replaySourceDir, setReplaySourceDir)
-      } else if ((recordingMode === 'obs' && actionIndex === 1) || (recordingMode === 'window' && actionIndex === 0)) {
+      if (actionIndex === 0) {
         await selectDirectory(outputDir, setOutputDir)
       } else {
         setLocalMessage('Задайте отступы ниже и нажмите «Сохранить этот шаг».')
@@ -602,9 +626,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const next = () => changeStep((value) => value + 1)
   const previous = () => changeStep((value) => value - 1)
   const statusMessage = localMessage || (mode === 'video'
-    ? step.id === 'obs-replay'
-      ? obsMessage
-      : step.id === 'test-clip'
+    ? step.id === 'test-clip'
         ? clipMessage
         : ''
     : '')
@@ -613,18 +635,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
     switch (step.id) {
       case 'video-welcome':
         return 'Вы пройдёте только видео-настройки, не смешивая их с прокси.'
-      case 'obs-websocket':
-        return recordingMode === 'window'
-          ? 'TradeTools будет писать выбранное окно или экран напрямую, без OBS.'
-          : 'TradeTools сможет подключаться к OBS и отправлять команду сохранения replay.'
-      case 'obs-replay':
-        return recordingMode === 'window'
-          ? 'Встроенный рекордер будет держать локальный буфер сегментов и собирать replay сделки.'
-          : 'OBS начнет держать последние минуты записи в памяти и отдавать их по команде.'
+      case 'recording-source':
+        return 'TradeTools будет писать выбранное окно или экраны напрямую.'
+      case 'recording-buffer':
+        return 'Встроенный рекордер будет держать локальный буфер сегментов и собирать видео сделки.'
       case 'folders':
-        return recordingMode === 'window'
-          ? 'TradeTools будет складывать готовые клипы в выбранную папку и держать локальный буфер до входа.'
-          : 'TradeTools будет знать, где найти исходный OBS replay и куда положить готовый клип.'
+        return 'TradeTools будет складывать готовые клипы в выбранную папку и держать локальный буфер до входа.'
       case 'test-clip':
         return 'В очереди проверки появится локальный клип с metadata JSON.'
       case 'proxy-welcome':
@@ -645,8 +661,8 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
   const actionButtons = (
     <div className="space-y-3">
       {stepActionLabels.map((action, index) => (
-        <button key={action} type="button" className="flex w-full cursor-pointer gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-left text-sm text-zinc-300 transition hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-zinc-100" onClick={() => void runStepAction(index)}>
-          <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-violet-300" />
+        <button key={action} type="button" className="flex w-full cursor-pointer gap-3 border border-[#1c2b3a] bg-[#07111c] p-3 text-left font-mono text-sm text-[#8b9bb4] transition-colors duration-150 hover:border-[#56b5d5]/40 hover:bg-[#56b5d5]/10 hover:text-[#f0f0f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff9f30]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1623]" onClick={() => void runStepAction(index)}>
+          <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-[#56b5d5]" />
           <span>{action}</span>
         </button>
       ))}
@@ -655,114 +671,94 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
 
   const folderFields = step.id === 'folders' ? (
     <div className="grid gap-4 md:grid-cols-2">
-      <div className="md:col-span-2 flex flex-wrap items-center gap-3 text-sm leading-6 text-zinc-400">
+      <div className="md:col-span-2 flex flex-wrap items-center gap-3 font-mono text-sm leading-6 text-[#8b9bb4]">
         <Button variant="ghost" onClick={applyDefaultClipPreset}><Clock3 size={16} className="mr-2" />Пресет 2с до / 2с после</Button>
         <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">буфер 60с</span>
       </div>
-      <div className="md:col-span-2 border-l-2 border-amber-300/60 pl-3 text-sm leading-6 text-zinc-400">
+      <div className="md:col-span-2 border-l-2 border-[#ff9f30]/60 pl-3 font-mono text-sm leading-6 text-[#8b9bb4]">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" onClick={applyLongClipPreset}><Clock3 size={16} className="mr-2" />Пресет 10 минут до / 2 минуты после</Button>
-          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Тяжёлый режим</span>
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[#ff9f30]">Тяжёлый режим</span>
         </div>
         <p className="mt-2">
-          Клип появится только после записи времени после выхода. Для OBS нужен Replay Buffer минимум 12 минут плюс обычная длина сделки; встроенная запись будет держать 10 минут локального буфера и 2 минуты после выхода.
+          Клип появится только после записи времени после выхода. Встроенная запись будет держать 10 минут локального буфера и 2 минуты после выхода.
         </p>
       </div>
-      {recordingMode === 'obs' && (
-        <div className="md:col-span-2">
-          <div className="text-xs font-medium text-zinc-500">Папка OBS replay</div>
-          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-            <input className={`${compactInputClass} min-w-0 flex-1`} value={replaySourceDir} onChange={(event) => setReplaySourceDir(event.target.value)} />
-            <Button variant="ghost" onClick={() => void selectDirectory(replaySourceDir, setReplaySourceDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
-          </div>
-        </div>
-      )}
       <div className="md:col-span-2">
-        <div className="text-xs font-medium text-zinc-500">Папка клипов</div>
+        <div className={fieldLabelClass}>Папка клипов</div>
         <div className="mt-1 flex flex-col gap-2 sm:flex-row">
           <input className={`${compactInputClass} min-w-0 flex-1`} value={outputDir} onChange={(event) => setOutputDir(event.target.value)} />
           <Button variant="ghost" onClick={() => void selectDirectory(outputDir, setOutputDir)}><FolderOpen size={16} className="mr-2" />Выбрать</Button>
         </div>
       </div>
-      <label className="text-xs font-medium text-zinc-500">Секунд до входа<input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" /></label>
-      <label className="text-xs font-medium text-zinc-500">Секунд после выхода<input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" /></label>
-      {recordingMode === 'window' && (
-        <label className="text-xs font-medium text-zinc-500 md:col-span-2">
-          <span>Локальный буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
-          <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
-        </label>
-      )}
+      <label className={fieldLabelClass}>Секунд до входа<input className={inputClass} value={paddingBefore} onChange={(event) => setPaddingBefore(event.target.value)} inputMode="numeric" /></label>
+      <label className={fieldLabelClass}>Секунд после выхода<input className={inputClass} value={paddingAfter} onChange={(event) => setPaddingAfter(event.target.value)} inputMode="numeric" /></label>
+      <label className={`${fieldLabelClass} md:col-span-2`}>
+        <span>Локальный буфер до входа, сек<FieldHint text={replayBufferSecondsHint} /></span>
+        <input className={inputClass} value={replayBufferSeconds} onChange={(event) => setReplayBufferSeconds(event.target.value)} inputMode="numeric" />
+      </label>
     </div>
   ) : null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden bg-black/70 p-2 backdrop-blur-xl sm:p-4 lg:items-center lg:p-6">
-      <div className="flex h-full max-h-[calc(100dvh-16px)] w-full max-w-6xl overflow-hidden rounded-[24px] border border-white/10 bg-[#0b0c10] shadow-[0_24px_90px_rgba(0,0,0,0.65)] sm:max-h-[calc(100dvh-32px)] lg:max-h-[calc(100dvh-48px)] lg:rounded-[32px]">
-        <aside className="hidden w-72 shrink-0 border-r border-white/10 bg-white/[0.03] p-5 lg:block">
-          <div className="text-sm font-semibold text-zinc-200">{mode === 'video' ? 'Настройка видео' : 'Настройка прокси'}</div>
-          <div className="mt-2 h-2 rounded-full bg-white/10">
-            <div className="h-full rounded-full bg-violet-500" style={{ width: `${progress}%` }} />
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center overflow-hidden bg-[#050b12]/90 p-2 sm:p-4 lg:items-center lg:p-6">
+      <div
+        ref={dialogRef}
+        className="flex h-full max-h-[calc(100dvh-16px)] w-full max-w-6xl overflow-hidden border border-[#56b5d5]/30 bg-[#0b1623] font-mono shadow-[0_24px_90px_rgba(0,0,0,0.65)] sm:max-h-[calc(100dvh-32px)] lg:max-h-[calc(100dvh-48px)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setup-wizard-title"
+        aria-describedby="setup-wizard-description"
+        tabIndex={-1}
+      >
+        <aside className="hidden w-72 shrink-0 border-r border-[#1c2b3a] bg-[#07111c] p-5 lg:block">
+          <div className="text-sm font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">{mode === 'video' ? 'Настройка видео' : 'Настройка прокси'}</div>
+          <div className="mt-2 h-2 border border-[#1c2b3a] bg-[#0b1623]">
+            <div className="h-full bg-[#ff9f30]" style={{ width: `${progress}%` }} />
           </div>
           <div className="mt-5 space-y-2">
             {steps.map((item, index) => (
               <button
                 key={item.id}
-                className={`flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-2 text-left text-sm transition ${index === stepIndex ? 'bg-violet-500/20 text-violet-100' : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300'}`}
+                className={`flex w-full cursor-pointer items-center gap-3 border px-3 py-2 text-left text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff9f30]/40 ${index === stepIndex ? 'border-[#56b5d5]/50 bg-[#56b5d5]/10 text-cyan-100' : 'border-transparent text-[#8b9bb4] hover:border-[#1c2b3a] hover:text-[#f0f0f0]'}`}
                 onClick={() => changeStep(index)}
               >
-                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${index < stepIndex ? 'bg-emerald-400 text-black' : index === stepIndex ? 'bg-violet-500 text-white' : 'bg-white/10 text-zinc-500'}`}>{index < stepIndex ? '✓' : index + 1}</span>
+                <span className={`flex h-6 w-6 items-center justify-center border text-xs ${index < stepIndex ? 'border-emerald-400 bg-emerald-400 text-[#07111c]' : index === stepIndex ? 'border-[#ff9f30] bg-[#ff9f30] text-[#07111c]' : 'border-[#1c2b3a] bg-[#0b1623] text-[#8b9bb4]'}`}>{index < stepIndex ? '✓' : index + 1}</span>
                 <span>{item.title}</span>
               </button>
             ))}
           </div>
         </aside>
         <main className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-start justify-between gap-4 border-b border-white/10 p-4 sm:p-6">
+          <div className="flex items-start justify-between gap-4 border-b border-[#1c2b3a] p-4 sm:p-6">
             <div>
-              <div className="text-xs font-medium uppercase tracking-[0.24em] text-violet-300">Шаг {stepIndex + 1} из {steps.length}</div>
-              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-zinc-100 sm:text-3xl">{step.title}</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">{step.goal}</p>
+              <div className="text-xs font-medium uppercase tracking-[0.24em] text-[#56b5d5]">Шаг {stepIndex + 1} из {steps.length}</div>
+              <h2 id="setup-wizard-title" className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[#f0f0f0] sm:text-3xl">{step.title}</h2>
+              <p id="setup-wizard-description" className="mt-2 max-w-2xl text-sm leading-6 text-[#8b9bb4]">{step.goal}</p>
             </div>
-            <button className="cursor-pointer rounded-2xl border border-white/10 bg-white/[0.04] p-2 text-zinc-400 transition hover:text-zinc-100" onClick={onClose} aria-label="Закрыть пошаговую настройку">
+            <button data-dialog-initial-focus className="cursor-pointer border border-[#1c2b3a] bg-[#07111c] p-2 text-[#8b9bb4] transition-colors duration-150 hover:border-[#56b5d5]/40 hover:text-[#f0f0f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff9f30]/40" onClick={onClose} aria-label="Закрыть пошаговую настройку">
               <X size={18} />
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_240px]">
-              <section className="min-w-0 rounded-[24px] border border-white/10 bg-white/[0.03] p-4 sm:p-5">
-                <div className="mb-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 p-3 text-sm leading-5 text-zinc-300 xl:hidden">
-                  <span className="font-semibold text-violet-100">Что получится: </span>{resultText()}
+              <section className="min-w-0 border border-[#1c2b3a] bg-[#07111c] p-4 sm:p-5">
+                <div className="mb-4 border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-3 text-sm leading-5 text-[#8b9bb4] xl:hidden">
+                  <span className="font-semibold text-cyan-100">Что получится: </span>{resultText()}
                 </div>
                 {step.id === 'folders' ? folderFields : actionButtons}
-                {step.id === 'obs-websocket' && (
+                {step.id === 'recording-source' && (
                   <div className="mt-5 space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'window' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
-                        onClick={() => {
-                          setRecordingMode('window')
-                          void refreshWindowSources()
-                        }}
-                        type="button"
-                      >
-                        <Monitor size={16} className="mr-2" />Встроенная запись
-                      </button>
-                      <button
-                        className={`inline-flex min-h-10 items-center rounded-2xl border px-4 text-sm font-semibold transition ${recordingMode === 'obs' ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]'}`}
-                        onClick={() => setRecordingMode('obs')}
-                        type="button"
-                      >
-                        <Radio size={16} className="mr-2" />OBS Replay Buffer
-                      </button>
+                    <div className="inline-flex items-center border border-[#56b5d5]/50 bg-[#56b5d5]/10 px-4 py-2 text-sm font-semibold text-cyan-100">
+                      <Monitor size={16} className="mr-2" />Встроенная запись
                     </div>
-                    {recordingMode === 'window' ? (
-                      <div className="space-y-4">
+                    <div className="space-y-4">
                         <fieldset data-testid="wizard-recording-source" className="min-w-0">
-                          <legend className="text-xs font-medium text-zinc-500">Источник записи</legend>
+                          <legend className={fieldLabelClass}>Источник записи</legend>
                           <div className="mt-1 flex min-w-0 flex-wrap items-stretch gap-2">
-                            <div className="flex shrink-0 rounded-2xl border border-white/10 bg-black/20 p-1">
+                            <div className="flex shrink-0 border border-[#1c2b3a] bg-[#0b1623] p-1">
                               <button
-                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'window' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                className={`border px-3 py-2 text-sm font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff9f30]/40 ${sourceType === 'window' ? 'border-[#56b5d5]/50 bg-[#56b5d5]/15 text-cyan-100' : 'border-transparent text-[#8b9bb4] hover:text-[#f0f0f0]'}`}
                                 onClick={() => {
                                   setSourceType('window')
                                   setWindowSourceId('')
@@ -774,7 +770,7 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                                 Окно
                               </button>
                               <button
-                                className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${sourceType === 'screen' ? 'bg-violet-500 text-white' : 'text-zinc-400 hover:text-zinc-100'}`}
+                                className={`border px-3 py-2 text-sm font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff9f30]/40 ${sourceType === 'screen' ? 'border-[#56b5d5]/50 bg-[#56b5d5]/15 text-cyan-100' : 'border-transparent text-[#8b9bb4] hover:text-[#f0f0f0]'}`}
                                 onClick={() => {
                                   setSourceType('screen')
                                   setWindowSourceId('')
@@ -824,12 +820,12 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                               </select>
                             )}
                             <Button className="shrink-0" variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
-                              <RefreshCw size={16} className={`mr-2 ${loadingSources ? 'animate-spin' : ''}`} />Обновить
+                              <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}
                             </Button>
                           </div>
                         </fieldset>
                         <div data-testid="wizard-recording-details" className="grid min-w-0 gap-3 sm:grid-cols-2">
-                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
+                        <label className={`block min-w-0 ${fieldLabelClass}`}>
                           Разрешение
                           <select
                             className={`${inputClass} appearance-none`}
@@ -844,81 +840,74 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                             <option value="1080p">Лёгкое 1080p</option>
                           </select>
                         </label>
-                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
+                        <label className={`block min-w-0 ${fieldLabelClass}`}>
                           Кодирование
                           <select className={`${inputClass} appearance-none`} value={videoEncoder} onChange={(event) => setVideoEncoder(normalizeVideoEncoderValue(event.target.value))}>
                             {(videoEncoderOptions.length > 0 ? videoEncoderOptions : [{ id: videoEncoder, label: videoEncoder === 'cpu' ? 'CPU' : 'Авто GPU' }]).map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                           </select>
                         </label>
-                        <label className="block min-w-0 text-xs font-medium text-zinc-500">FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
-                        <label className="block min-w-0 text-xs font-medium text-zinc-500">
+                        <label className={`block min-w-0 ${fieldLabelClass}`}>FPS<input className={inputClass} value={frameRate} onChange={(event) => setFrameRate(event.target.value)} inputMode="numeric" /></label>
+                        <label className={`block min-w-0 ${fieldLabelClass}`}>
                           <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
                           <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
                         </label>
                         </div>
-                        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-zinc-400">
-                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-violet-500" checked={systemAudioEnabled} onChange={(event) => setSystemAudioEnabled(event.target.checked)} type="checkbox" />Звук с ПК</label>
-                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-violet-500" checked={microphoneEnabled} onChange={(event) => setMicrophoneEnabled(event.target.checked)} type="checkbox" />Микрофон</label>
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-[#8b9bb4]">
+                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-[#ff9f30]" checked={systemAudioEnabled} onChange={(event) => setSystemAudioEnabled(event.target.checked)} type="checkbox" />Звук с ПК</label>
+                          <label className="flex items-center gap-2"><input className="h-4 w-4 accent-[#ff9f30]" checked={microphoneEnabled} onChange={(event) => setMicrophoneEnabled(event.target.checked)} type="checkbox" />Микрофон</label>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="grid gap-4 md:grid-cols-3">
-                        <label className="text-xs font-medium text-zinc-500">OBS host<input className={inputClass} value={host} onChange={(event) => setHost(event.target.value)} /></label>
-                        <label className="text-xs font-medium text-zinc-500">OBS port<input className={inputClass} value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">OBS пароль<input className={inputClass} value={obsPassword} onChange={(event) => setObsPassword(event.target.value)} type="password" placeholder={settings?.obs.passwordConfigured ? 'Сохранён' : 'Не задан'} /></label>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 )}
                 {step.id === 'folders' && <div className="mt-5">{actionButtons}</div>}
                 {step.id === 'proxy-server' && (
                   <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="mb-3 text-sm font-semibold text-zinc-100">1. Первый сервер</div>
+                    <div className="border border-[#1c2b3a] bg-[#0b1623] p-4">
+                      <div className="mb-3 text-sm font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">1. Первый сервер</div>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={proxyTitle} onChange={(event) => setProxyTitle(event.target.value)} placeholder="Edgecenter" /></label>
-                        <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={proxyServer} onChange={(event) => setProxyServer(event.target.value)} placeholder="1.2.3.4" /></label>
-                        <label className="text-xs font-medium text-zinc-500">SSH-логин<input className={inputClass} value={proxyLogin} onChange={(event) => setProxyLogin(event.target.value)} /></label>
-                        <label className="text-xs font-medium text-zinc-500">SSH-пароль<input className={inputClass} value={proxyPassword} onChange={(event) => setProxyPassword(event.target.value)} type="password" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Сайт хостинга<input className={inputClass} value={proxyDashboardUrl} onChange={(event) => setProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
-                        <label className="text-xs font-medium text-zinc-500">День оплаты<input className={inputClass} value={proxyPaymentDueDay} onChange={(event) => setProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Локальный порт<input className={inputClass} value={proxyLocalPort} onChange={(event) => setProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500 sm:col-span-2">Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={proxyNotes} onChange={(event) => setProxyNotes(event.target.value)} /></label>
+                        <label className={fieldLabelClass}>Название<input className={inputClass} value={proxyTitle} onChange={(event) => setProxyTitle(event.target.value)} placeholder="Edgecenter" /></label>
+                        <label className={fieldLabelClass}>IP или домен<input className={inputClass} value={proxyServer} onChange={(event) => setProxyServer(event.target.value)} placeholder="1.2.3.4" /></label>
+                        <label className={fieldLabelClass}>SSH-логин<input className={inputClass} value={proxyLogin} onChange={(event) => setProxyLogin(event.target.value)} /></label>
+                        <label className={fieldLabelClass}>SSH-пароль<input className={inputClass} value={proxyPassword} onChange={(event) => setProxyPassword(event.target.value)} type="password" /></label>
+                        <label className={fieldLabelClass}>Сайт хостинга<input className={inputClass} value={proxyDashboardUrl} onChange={(event) => setProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
+                        <label className={fieldLabelClass}>День оплаты<input className={inputClass} value={proxyPaymentDueDay} onChange={(event) => setProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
+                        <label className={fieldLabelClass}>Локальный порт<input className={inputClass} value={proxyLocalPort} onChange={(event) => setProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
+                        <label className={`${fieldLabelClass} sm:col-span-2`}>Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={proxyNotes} onChange={(event) => setProxyNotes(event.target.value)} /></label>
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <div className="mb-1 text-sm font-semibold text-zinc-100">2. Второй сервер</div>
-                      <div className="mb-3 text-xs text-zinc-500">Необязательно. Нужен только для цепочки из двух серверов.</div>
+                    <div className="border border-[#1c2b3a] bg-[#0b1623] p-4">
+                      <div className="mb-1 text-sm font-semibold uppercase tracking-[0.08em] text-[#f0f0f0]">2. Второй сервер</div>
+                      <div className="mb-3 text-xs text-[#8b9bb4]">Необязательно. Нужен только для цепочки из двух серверов.</div>
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs font-medium text-zinc-500">Название<input className={inputClass} value={secondProxyTitle} onChange={(event) => setSecondProxyTitle(event.target.value)} placeholder="Vultr" /></label>
-                        <label className="text-xs font-medium text-zinc-500">IP или домен<input className={inputClass} value={secondProxyServer} onChange={(event) => setSecondProxyServer(event.target.value)} placeholder="5.6.7.8" /></label>
-                        <label className="text-xs font-medium text-zinc-500">SSH-логин<input className={inputClass} value={secondProxyLogin} onChange={(event) => setSecondProxyLogin(event.target.value)} /></label>
-                        <label className="text-xs font-medium text-zinc-500">SSH-пароль<input className={inputClass} value={secondProxyPassword} onChange={(event) => setSecondProxyPassword(event.target.value)} type="password" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Сайт хостинга<input className={inputClass} value={secondProxyDashboardUrl} onChange={(event) => setSecondProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
-                        <label className="text-xs font-medium text-zinc-500">День оплаты<input className={inputClass} value={secondProxyPaymentDueDay} onChange={(event) => setSecondProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500">Локальный порт<input className={inputClass} value={secondProxyLocalPort} onChange={(event) => setSecondProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
-                        <label className="text-xs font-medium text-zinc-500 sm:col-span-2">Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={secondProxyNotes} onChange={(event) => setSecondProxyNotes(event.target.value)} /></label>
+                        <label className={fieldLabelClass}>Название<input className={inputClass} value={secondProxyTitle} onChange={(event) => setSecondProxyTitle(event.target.value)} placeholder="Vultr" /></label>
+                        <label className={fieldLabelClass}>IP или домен<input className={inputClass} value={secondProxyServer} onChange={(event) => setSecondProxyServer(event.target.value)} placeholder="5.6.7.8" /></label>
+                        <label className={fieldLabelClass}>SSH-логин<input className={inputClass} value={secondProxyLogin} onChange={(event) => setSecondProxyLogin(event.target.value)} /></label>
+                        <label className={fieldLabelClass}>SSH-пароль<input className={inputClass} value={secondProxyPassword} onChange={(event) => setSecondProxyPassword(event.target.value)} type="password" /></label>
+                        <label className={fieldLabelClass}>Сайт хостинга<input className={inputClass} value={secondProxyDashboardUrl} onChange={(event) => setSecondProxyDashboardUrl(event.target.value)} placeholder="https://..." /></label>
+                        <label className={fieldLabelClass}>День оплаты<input className={inputClass} value={secondProxyPaymentDueDay} onChange={(event) => setSecondProxyPaymentDueDay(event.target.value)} type="number" min="1" max="31" inputMode="numeric" /></label>
+                        <label className={fieldLabelClass}>Локальный порт<input className={inputClass} value={secondProxyLocalPort} onChange={(event) => setSecondProxyLocalPort(event.target.value)} inputMode="numeric" /></label>
+                        <label className={`${fieldLabelClass} sm:col-span-2`}>Заметки<textarea className={`${inputClass} min-h-16 resize-none`} value={secondProxyNotes} onChange={(event) => setSecondProxyNotes(event.target.value)} /></label>
                       </div>
                     </div>
                   </div>
                 )}
                 {step.id === 'proxy-chain' && (
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-zinc-300">
+                  <div className="mt-5 border border-[#1c2b3a] bg-[#0b1623] p-4 text-sm leading-6 text-[#f0f0f0]">
                     {savedWizardProxyIds.length >= 2 ? (
                       <>
                         <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={16} />Связка сохранена</div>
                         <div>{proxyName(settings, savedWizardProxyIds[0])} {'->'} {proxyName(settings, savedWizardProxyIds[1])}</div>
-                        <div className="mt-2 text-xs text-zinc-500">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается выбранный локальный SOCKS5 или HTTP proxy.</div>
+                        <div className="mt-2 text-xs text-[#8b9bb4]">Первый сервер будет входом цепочки, второй сервер будет выходом. В торговом терминале после настройки указывается выбранный локальный SOCKS5 или HTTP proxy.</div>
                       </>
                     ) : savedWizardProxyIds.length === 1 ? (
                       <>
                         <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={16} />Один сервер сохранён</div>
                         <div>{proxyName(settings, savedWizardProxyIds[0])}</div>
-                        <div className="mt-2 text-xs text-zinc-500">Этот сервер будет входом и выходом маршрута. Второй узел можно добавить позже на странице прокси.</div>
+                        <div className="mt-2 text-xs text-[#8b9bb4]">Этот сервер будет входом и выходом маршрута. Второй узел можно добавить позже на странице прокси.</div>
                       </>
                     ) : (
                       <>
-                        <div className="mb-2 font-semibold text-amber-100">Сервер ещё не сохранён</div>
+                        <div className="mb-2 font-semibold text-orange-100">Сервер ещё не сохранён</div>
                         <div>Вернитесь на предыдущий шаг, заполните первый сервер и нажмите сохранение.</div>
                       </>
                     )}
@@ -927,13 +916,13 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                 {step.id === 'proxy-check' && (
                   <div className="mt-5 space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2">
-                     <label className="block text-xs font-medium text-zinc-500">Первый сервер маршрута
+                     <label className={`block ${fieldLabelClass}`}>Первый сервер маршрута
                        <select className={`${inputClass} appearance-none`} value={selectedProxyId} onChange={(event) => setSelectedProxyId(event.target.value)}>
                          <option value="">Сервер не выбран</option>
                          {settings?.proxies.map((proxy) => <option key={proxy.id} value={proxy.id}>{proxy.name || proxy.server}</option>)}
                        </select>
                      </label>
-                     <label className="block text-xs font-medium text-zinc-500">Тип подключения терминала
+                     <label className={`block ${fieldLabelClass}`}>Тип подключения терминала
                        <select className={`${inputClass} appearance-none`} value={localProxyType} onChange={(event) => setLocalProxyType(event.target.value === 'HTTP' ? 'HTTP' : 'SOCKS5')}>
                          <option value="SOCKS5">SOCKS5</option>
                          <option value="HTTP">HTTP</option>
@@ -945,53 +934,53 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
                       <Button onClick={() => void setupProxyChain()} disabled={saving || !selectedProxyId}>{saving ? 'Настраиваем...' : 'Настроить и запустить связку'}</Button>
                     </div>
                     {chainCheckProgress.length > 0 && (
-                      <div className="max-h-48 overflow-y-auto rounded-2xl border border-sky-400/20 bg-sky-400/10 p-3 text-xs leading-5">
-                        <div className="mb-2 font-semibold text-sky-100">Проверка SSH</div>
+                      <div className="max-h-48 overflow-y-auto border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-3 text-xs leading-5">
+                        <div className="mb-2 font-semibold text-cyan-100">Проверка SSH</div>
                         {chainCheckProgress.map((progress, index) => (
                           <div key={`${progress.timestampMs}-${progress.step}-${index}`} className="grid grid-cols-[44px_minmax(0,1fr)] gap-2">
                             <span className={`font-mono ${progressStatusClass(progress.status)}`}>{progressStatusLabel(progress.status)}</span>
-                            <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                            <span className="min-w-0 break-words text-[#f0f0f0]">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
                           </div>
                         ))}
                       </div>
                     )}
                     {chainSetupProgress.length > 0 && (
-                      <div className="max-h-56 overflow-y-auto rounded-2xl border border-violet-400/20 bg-violet-400/10 p-3 text-xs leading-5">
-                        <div className="mb-2 font-semibold text-violet-100">Настройка серверов</div>
+                      <div className="max-h-56 overflow-y-auto border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-3 text-xs leading-5">
+                        <div className="mb-2 font-semibold text-cyan-100">Настройка серверов</div>
                         {chainSetupProgress.map((progress, index) => (
                           <div key={`${progress.timestampMs}-${progress.step}-${index}`} className="grid grid-cols-[44px_minmax(0,1fr)] gap-2">
                             <span className={`font-mono ${progressStatusClass(progress.status)}`}>{progressStatusLabel(progress.status)}</span>
-                            <span className="min-w-0 break-words text-zinc-300">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
+                            <span className="min-w-0 break-words text-[#f0f0f0]">{progress.proxyName ? `${progress.proxyName}: ` : ''}{progress.message}</span>
                           </div>
                         ))}
                       </div>
                     )}
                     {chainResult && (
-                      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-xs leading-5 text-zinc-200">
+                      <div className="border border-emerald-400/30 bg-emerald-400/10 p-3 text-xs leading-5 text-[#f0f0f0]">
                         <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-100"><Route size={15} />{chainResult.route}</div>
                         {chainResult.sshChecks.map((check) => (
-                          <div key={`${check.host}:${check.port}`} className="text-zinc-400">{check.host}:{check.port} - {check.message}</div>
+                          <div key={`${check.host}:${check.port}`} className="text-[#8b9bb4]">{check.host}:{check.port} - {check.message}</div>
                         ))}
                       </div>
                     )}
                     {chainSetupResult && (
-                      <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm leading-6 text-zinc-200">
+                      <div className="border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm leading-6 text-[#f0f0f0]">
                         <div className="font-semibold text-emerald-100">Связка настроена и локальный proxy запущен</div>
-                        <div className="mt-2">Терминал: {chainSetupResult.entryProxy.type} proxy, host <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.host}</span>, port <span className="font-mono text-zinc-100">{chainSetupResult.entryProxy.port}</span>. Логин и пароль пустые.</div>
+                        <div className="mt-2">Терминал: {chainSetupResult.entryProxy.type} proxy, host <span className="font-mono text-[#f0f0f0]">{chainSetupResult.entryProxy.host}</span>, port <span className="font-mono text-[#f0f0f0]">{chainSetupResult.entryProxy.port}</span>. Логин и пароль пустые.</div>
                       </div>
                     )}
                   </div>
                 )}
                 {step.id === 'test-clip' && <Button className="mt-5" onClick={onCreateTestClip}>Создать тестовый клип</Button>}
-                {(step.id === 'obs-websocket' || step.id === 'folders') && <Button className="mt-5" onClick={saveVideoSettings} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить этот шаг'}</Button>}
+                {(step.id === 'recording-source' || step.id === 'folders') && <Button className="mt-5" onClick={saveVideoSettings} disabled={saving}>{saving ? 'Сохраняем...' : 'Сохранить этот шаг'}</Button>}
                 {step.id === 'proxy-server' && <Button className="mt-5" onClick={saveProxyServers} disabled={saving}><Server size={16} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить серверы и маршрут'}</Button>}
               </section>
-              <aside className="hidden rounded-[24px] border border-violet-400/20 bg-violet-500/10 p-4 xl:block">
-                <div className="text-sm font-semibold text-violet-100">Что получится после шага</div>
-                <p className="mt-3 text-sm leading-6 text-zinc-300">{resultText()}</p>
+              <aside className="hidden border border-[#56b5d5]/30 bg-[#56b5d5]/10 p-4 xl:block">
+                <div className="text-sm font-semibold uppercase tracking-[0.08em] text-cyan-100">Что получится после шага</div>
+                <p className="mt-3 text-sm leading-6 text-[#f0f0f0]">{resultText()}</p>
                 {mode === 'proxy' && settings?.proxies.length ? (
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-zinc-400">
-                    <div className="font-semibold text-zinc-200">Сейчас сохранено</div>
+                  <div className="mt-4 border border-[#1c2b3a] bg-[#07111c] p-3 text-xs leading-5 text-[#8b9bb4]">
+                    <div className="font-semibold text-[#f0f0f0]">Сейчас сохранено</div>
                     {settings.proxies.slice(0, 4).map((proxy) => (
                       <div key={proxy.id}>{proxy.name || proxy.server}{proxy.nextProxyId ? ` -> ${proxyName(settings, proxy.nextProxyId)}` : ''}</div>
                     ))}
@@ -1001,14 +990,14 @@ export const SetupWizard = ({ mode, open, settings, obsMessage, clipMessage, onC
             </div>
           </div>
           {statusMessage && (
-            <div className="max-h-24 overflow-auto border-t border-violet-400/20 bg-violet-400/10 px-4 py-3 text-sm leading-5 text-violet-100 sm:px-6">
+            <div className="max-h-24 overflow-auto border-t border-[#56b5d5]/30 bg-[#56b5d5]/10 px-4 py-3 text-sm leading-5 text-cyan-100 sm:px-6" role="status">
               {statusMessage}
             </div>
           )}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1c2b3a] p-4 sm:p-6">
             <Button variant="ghost" onClick={previous} disabled={stepIndex === 0}><ArrowLeft size={16} className="mr-2" />Назад</Button>
             <div className="ml-auto flex flex-wrap justify-end gap-2">
-              {step.id === 'obs-replay' && <Button onClick={() => void runVideoHealthCheck()} disabled={checkingVideo}>{checkingVideo ? 'Проверяем...' : 'Проверить видео'}</Button>}
+              {step.id === 'recording-buffer' && <Button onClick={() => void runVideoHealthCheck()} disabled={checkingVideo}>{checkingVideo ? 'Проверяем...' : 'Проверить видео'}</Button>}
               {stepIndex === steps.length - 1 ? <Button onClick={onClose}>Закрыть мастер</Button> : <Button onClick={next}>Дальше<ArrowRight size={16} className="ml-2" /></Button>}
             </div>
           </div>

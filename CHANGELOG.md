@@ -6,6 +6,26 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-14
+
+### Added
+
+- Added a compact always-on-top recording widget with live status, start/stop controls, a global `Ctrl/Cmd+Shift+F9` shortcut, and drag support across its non-interactive surface.
+- Added persistent Classic and Engineering Blueprint interface themes. Classic remains the default, and the recording widget follows the selected theme.
+
+### Changed
+
+- Reworked the interface and setup flow around the built-in window and display recorder, with improved contrast in the Classic theme.
+- Replaced the old OBS connection flow with automatic migration to the built-in recorder and removed OBS-specific settings, services, and dependencies.
+- Rebuilt the video health check so it waits for a fresh recording segment from the current session and reports progress or a useful failure directly in the main window.
+- Recording enabled state now persists between launches and stays synchronized between the dashboard, widget, and global shortcut.
+
+### Fixed
+
+- Fixed long manual recordings being exported at roughly twice the requested duration because buffer padding was counted twice.
+- Prevented recording controls from stopping protected active trades, free recordings, or clip processing, and hardened recording IPC so only the main window can invoke capture operations.
+- Fixed the Classic theme retaining Blueprint component styling and improved muted-text readability on the purple background.
+
 ## [0.5.2] - 2026-08-07
 
 ### Fixed

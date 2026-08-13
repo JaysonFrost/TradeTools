@@ -11,9 +11,6 @@ type KeychainAdapterModule = KeychainAdapter | {
 }
 
 export type SecretStore = {
-  setObsPassword: (password: string) => Promise<void>
-  getObsPassword: () => Promise<string | undefined>
-  clearObsPassword: () => Promise<boolean>
   setTmmApiKey: (apiKey: string) => Promise<void>
   getTmmApiKey: () => Promise<string | undefined>
   clearTmmApiKey: () => Promise<boolean>
@@ -29,7 +26,6 @@ const serviceName = 'TradeTools'
 const legacyTradeCutServiceName = 'TradeCut'
 const legacyServiceName = ['Trade', 'Clipper'].join(' ')
 const keychainServiceNames = [serviceName, legacyTradeCutServiceName, legacyServiceName]
-const obsPasswordAccount = 'obs-websocket-password'
 const tmmApiKeyAccount = 'tmm-api-key'
 const proxyPasswordAccount = (proxyId: string): string => `proxy-password:${proxyId}`
 const proxyRuntimeEntryUuidAccount = 'proxy-runtime-entry-uuid'
@@ -64,15 +60,6 @@ export const createSecretStore = (adapterModule: KeychainAdapterModule = keytar)
   }
 
   return {
-    async setObsPassword(password) {
-      await adapter.setPassword(serviceName, obsPasswordAccount, password)
-    },
-    async getObsPassword() {
-      return getPassword(obsPasswordAccount)
-    },
-    clearObsPassword() {
-      return deletePassword(obsPasswordAccount)
-    },
     async setTmmApiKey(apiKey) {
       await adapter.setPassword(serviceName, tmmApiKeyAccount, apiKey)
     },

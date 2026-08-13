@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
+import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, recorderStatusHasFreshSegments, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
 import {
   browserCaptureFrameRate,
@@ -21,6 +21,39 @@ describe('windowRecorderService', () => {
     firstVideoPacketSeconds = 0,
     maxVideoPacketGapSeconds = 0.05
   ) => ({ firstVideoPacketSeconds, videoDurationSeconds, maxVideoPacketGapSeconds })
+
+  it('requires fresh segments from every selected source for a successful health check', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    const nowMs = 100_000
+    const status = {
+      enabled: true,
+      active: true,
+      mode: 'window' as const,
+      backend: 'ffmpeg' as const,
+      sourceId: '',
+      sourceName: '',
+      segmentCount: 2,
+      bufferedSeconds: 2,
+      lastSegmentAtMs: nowMs - 1_000,
+      message: 'Запись активна',
+      sources: [
+        { sourceId: 'screen:1', sourceName: 'Экран 1', segmentCount: 1, bufferedSeconds: 2, lastSegmentAtMs: nowMs - 1_000 },
+        { sourceId: 'screen:2', sourceName: 'Экран 2', segmentCount: 0, bufferedSeconds: 0, lastSegmentAtMs: 0 }
+      ]
+    }
+
+    const checkStartedAtMs = nowMs - 2_000
+
+    expect(recorderStatusHasFreshSegments(status, settings, checkStartedAtMs, nowMs)).toBe(false)
+    status.sources[1] = { sourceId: 'screen:2', sourceName: 'Экран 2', segmentCount: 1, bufferedSeconds: 2, lastSegmentAtMs: nowMs - 1_000 }
+    expect(recorderStatusHasFreshSegments(status, settings, checkStartedAtMs, nowMs)).toBe(true)
+    status.active = false
+    expect(recorderStatusHasFreshSegments(status, settings, checkStartedAtMs, nowMs)).toBe(false)
+    status.active = true
+    expect(recorderStatusHasFreshSegments(status, settings, nowMs - 500, nowMs)).toBe(false)
+    status.sources[1]!.lastSegmentAtMs = nowMs - 60_000
+    expect(recorderStatusHasFreshSegments(status, settings, checkStartedAtMs, nowMs)).toBe(false)
+  })
 
   it('records only the explicitly selected window even when a terminal is auto-detected', () => {
     const settings = createDefaultSettings('C:/TradeTools')
@@ -1495,7 +1528,7 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('maxHeight: 1440')
     expect(serviceSource).toContain('fallbackRequired')
     expect(controllerSource).toContain('recording.start()')
-    expect(controllerSource).toContain('recording.stop()')
+    expect(controllerSource).toContain('recording.stopEngine()')
     expect(controllerSource).toContain('fallbackRequired')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:start'")
     expect(appSource).toContain("ipcMain.handle('recording:start'")
@@ -1587,12 +1620,15 @@ describe('windowRecorderService', () => {
   it('marks free recording stopped before waiting for export segments so Finish never looks like Pause', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const finishStart = serviceSource.indexOf('const finishFreeRecording = async')
     const finishSource = serviceSource.slice(finishStart, serviceSource.indexOf('const getWindowRecorderStatus', finishStart))
 
     expect(finishSource.indexOf('freeRecording = undefined')).toBeGreaterThan(-1)
     expect(finishSource.indexOf('freeRecording = undefined')).toBeLessThan(finishSource.indexOf('waitForSegmentsUntil(settings, targetEndMs'))
     expect(finishSource).toContain('freeRecordingExportProtectedSinceMs')
+    expect(serviceSource).toContain('exporting: freeRecordingExportProtectedSinceMs > 0')
+    expect(appSource).toContain('freeRecording.exporting')
     expect(dashboardSource).toContain("active: false, paused: false, message: 'Сохраняем свободную запись...'")
   })
 })

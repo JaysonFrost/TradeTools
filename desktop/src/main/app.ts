@@ -2,13 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
-import { createObsService } from './services/obs/obsService'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
-import { createWindowRecorderService, type WindowCaptureSource, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
+import { createWindowRecorderService, recorderStatusHasFreshSegments, type WindowCaptureSource, type WindowRecorderStatus, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
 import { preferTerminalSourcesForSymbol, recordingSourceMatchesTarget } from './services/recording/terminalWindowSelection'
 import { selectedWindowTradeTarget } from './services/recording/tradeCaptureTargetSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
@@ -29,6 +28,7 @@ import { listAvailableVideoEncoders } from './services/video/videoEncoderDevices
 import { defaultLocalProxyPort } from '../shared/defaults'
 import { createAppLogService } from './services/logging/appLogService'
 import { acquireAppDataInstanceLock } from './services/appDataInstanceLock'
+import { recordingToggleAccelerator, type RecordingControlStatus } from '../shared/recordingControl'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -40,7 +40,6 @@ const isAllowedDevUrl = (url: string): boolean => {
 }
 
 const getIconPath = (): string => join(__dirname, '../../build/icon.png')
-const obsReplayEnsureIntervalMs = 30_000
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const windowsAppUserModelId = 'com.tradetools.desktop'
@@ -75,8 +74,10 @@ const ownsAppInstance = ownsElectronAppInstance && appDataInstanceLock.acquired
 if (!ownsAppInstance) app.exit(0)
 process.on('exit', appDataInstanceLock.release)
 
+let mainWindow: BrowserWindow | undefined
+let recordingWidgetWindow: BrowserWindow | undefined
+
 app.on('second-instance', () => {
-  const mainWindow = BrowserWindow.getAllWindows()[0]
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -262,7 +263,6 @@ const windowsNotificationsDisabledMessage = 'Уведомления Windows вы
 
 const extractSettingsPatch = (input: SettingsUpdateInput): PartialSettings => {
   const {
-    obsPassword: _obsPassword,
     expectedRecordingSourceRevision: _expectedRecordingSourceRevision,
     ...patch
   } = input
@@ -816,11 +816,7 @@ const applyLaunchAtLogin = (settings: AppSettings): void => {
   applyWindowsProxyRuntimeAutostart(settings)
 }
 
-const applyAlwaysOnTop = (settings: AppSettings): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.setAlwaysOnTop(settings.system.alwaysOnTop)
-  }
-}
+const applyAlwaysOnTop = (settings: AppSettings): void => mainWindow?.setAlwaysOnTop(settings.system.alwaysOnTop)
 
 let keepProxyRunningAfterClose = false
 
@@ -829,12 +825,13 @@ const applyProxyQuitPreference = (settings: AppSettings): void => {
 }
 
 const createMainWindow = (): BrowserWindow => {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
   const window = new BrowserWindow({
     width: 1440,
-    height: 1120,
-    minWidth: 1180,
-    minHeight: 860,
-    backgroundColor: '#08090A',
+    height: 960,
+    minWidth: 820,
+    minHeight: 640,
+    backgroundColor: '#0b1623',
     title: 'TradeTools',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     icon: getIconPath(),
@@ -844,6 +841,11 @@ const createMainWindow = (): BrowserWindow => {
       contextIsolation: true,
       nodeIntegration: false
     }
+  })
+  mainWindow = window
+  window.on('closed', () => {
+    mainWindow = undefined
+    if (recordingWidgetWindow && !recordingWidgetWindow.isDestroyed()) recordingWidgetWindow.close()
   })
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -858,6 +860,61 @@ const createMainWindow = (): BrowserWindow => {
   return window
 }
 
+const createRecordingWidgetWindow = (): BrowserWindow => {
+  if (recordingWidgetWindow && !recordingWidgetWindow.isDestroyed()) return recordingWidgetWindow
+  const workArea = electronScreen.getPrimaryDisplay().workArea
+  const width = 320
+  const height = 116
+  const window = new BrowserWindow({
+    width,
+    height,
+    x: workArea.x + workArea.width - width - 20,
+    y: workArea.y + workArea.height - height - 20,
+    useContentSize: true,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    backgroundColor: '#0b1623',
+    title: 'TradeTools Recording',
+    icon: getIconPath(),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+  recordingWidgetWindow = window
+  window.setContentProtection(true)
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  window.once('ready-to-show', () => window.showInactive())
+  window.on('closed', () => { recordingWidgetWindow = undefined })
+
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL && isAllowedDevUrl(process.env.ELECTRON_RENDERER_URL)) {
+    const url = new URL(process.env.ELECTRON_RENDERER_URL)
+    url.searchParams.set('window', 'recording-widget')
+    void window.loadURL(url.toString())
+  } else {
+    void window.loadFile(join(__dirname, '../renderer/index.html'), { query: { window: 'recording-widget' } })
+  }
+
+  return window
+}
+
+const showRecordingWidget = (): void => {
+  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed()) {
+    createRecordingWidgetWindow()
+    return
+  }
+  recordingWidgetWindow.setAlwaysOnTop(true)
+  recordingWidgetWindow.showInactive()
+}
+
 app.whenReady().then(() => {
   if (!ownsAppInstance) return
 
@@ -865,10 +922,6 @@ app.whenReady().then(() => {
   const appLog = createAppLogService({ appDataDir: app.getPath('userData') })
   const settingsStore = createSettingsStore(app.getPath('userData'))
   const secretStore = createSecretStore()
-  const obsService = createObsService({
-    getSettings: () => settingsStore.load(),
-    getPassword: () => secretStore.getObsPassword()
-  })
   const windowRecorderService = createWindowRecorderService({
     appDataDir: app.getPath('userData'),
     isWindowSourceAvailable: isCurrentWindowSourceAvailable,
@@ -882,9 +935,7 @@ app.whenReady().then(() => {
   })
   const clipPipeline = createTradeClipPipeline({
     getSettings: () => settingsStore.load(),
-    saveReplayBuffer: (input) => input.settings.recording.mode === 'window'
-      ? windowRecorderService.saveReplayBuffer(input)
-      : obsService.testReplaySave(),
+    saveReplayBuffer: (input) => windowRecorderService.saveReplayBuffer(input),
     findTmmTradeUrl: async (trade) => {
       const apiKey = await secretStore.getTmmApiKey()
       return apiKey ? findTmmTradeUrl({ apiKey, trade }) : undefined
@@ -1033,7 +1084,7 @@ app.whenReady().then(() => {
   }
 
   const focusMainWindow = () => {
-    const window = BrowserWindow.getAllWindows()[0]
+    const window = mainWindow ?? createMainWindow()
     if (!window) return
     if (window.isMinimized()) window.restore()
     window.show()
@@ -1041,16 +1092,12 @@ app.whenReady().then(() => {
   }
 
   const notifyWindowRecordingNeeded = () => {
-    const windows = BrowserWindow.getAllWindows()
-    const targets = windows.length > 0 ? windows : [createMainWindow()]
-
-    for (const window of targets) {
-      const send = () => window.webContents.send('recording:ensure-window')
-      if (window.webContents.isLoading()) {
-        window.webContents.once('did-finish-load', send)
-      } else {
-        send()
-      }
+    const window = mainWindow ?? createMainWindow()
+    const send = () => window.webContents.send('recording:ensure-window')
+    if (window.webContents.isLoading()) {
+      window.webContents.once('did-finish-load', send)
+    } else {
+      send()
     }
   }
 
@@ -1401,9 +1448,7 @@ app.whenReady().then(() => {
   ): Promise<ClipQueueItem | void> => {
     const title = `${trade.symbol} ${trade.side}${targetSuffix(options.captureTarget)}`
     const settings = await settingsStore.load()
-    const protectedSinceMs = settings.recording.mode === 'window'
-      ? Math.max(1, trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
-      : 0
+    const protectedSinceMs = Math.max(1, trade.entryTimeMs - settings.clip.paddingBeforeSeconds * 1000 - 5_000)
     const queuedAtMs = Date.now()
     let resolveCompletion: ((clip: ClipQueueItem) => void) | undefined
     let rejectCompletion: ((error: unknown) => void) | undefined
@@ -1420,7 +1465,7 @@ app.whenReady().then(() => {
       title,
       queuedAtMs,
       protectedSinceMs,
-      parallelSafe: settings.recording.mode === 'window',
+      parallelSafe: true,
       settingsSnapshot: settings,
       paddingAfterSeconds: settings.clip.paddingAfterSeconds,
       captureTarget: options.captureTarget,
@@ -1453,9 +1498,7 @@ app.whenReady().then(() => {
   ): Promise<ClipQueueItem | void> => {
     const settings = await settingsStore.load()
     const title = `Буфер TradeTools${targetSuffix(options.captureTarget)}`
-    const protectedSinceMs = settings.recording.mode === 'window'
-      ? Math.max(1, options.requestedAtMs - settings.clip.replayBufferSeconds * 1000 - 5_000)
-      : 0
+    const protectedSinceMs = Math.max(1, options.requestedAtMs - settings.clip.replayBufferSeconds * 1000 - 5_000)
     const queuedAtMs = Date.now()
     let resolveCompletion: ((clip: ClipQueueItem) => void) | undefined
     let rejectCompletion: ((error: unknown) => void) | undefined
@@ -1473,7 +1516,7 @@ app.whenReady().then(() => {
       title,
       queuedAtMs,
       protectedSinceMs,
-      parallelSafe: settings.recording.mode === 'window',
+      parallelSafe: true,
       settingsSnapshot: settings,
       abortController: new AbortController(),
       cancelled: false,
@@ -1549,7 +1592,6 @@ app.whenReady().then(() => {
   }
 
   const selectClipRenderTargets = (settings: AppSettings, preferredTarget?: CaptureTargetRef): Array<CaptureTargetRef | undefined> => {
-    if (settings.recording.mode !== 'window') return [undefined]
     if (preferredTarget) return [preferredTarget]
 
     const targets = configuredCaptureTargets(settings)
@@ -1567,28 +1609,121 @@ app.whenReady().then(() => {
 
   const selectManualBufferTargets = (settings: AppSettings): Array<CaptureTargetRef | undefined> => {
     const targets = selectClipRenderTargets(settings)
-    if (settings.recording.mode === 'window' && settings.recording.sourceType === 'screen' && targets.length === 0) {
+    if (settings.recording.sourceType === 'screen' && targets.length === 0) {
       throw new Error('Выберите хотя бы один монитор в настройках записи.')
     }
     return targets
   }
 
-  let lastObsReplayEnsureAtMs = 0
-  let obsReplayBufferReady = false
   let backgroundWindowRecordingEnabled = true
   let backgroundWindowRecordingStartedAtMs = 0
   let nativeRecordingStartedAtMs = 0
   const browserRecordingStartedBySourceId = new Map<string, WindowRecordingStartedInput>()
   const knownTerminalRecordingTargetIds = new Set<string>()
+  let recordingControlStatus: RecordingControlStatus = {
+    enabled: true,
+    operation: 'idle',
+    active: false,
+    protected: false,
+    hotkey: recordingToggleAccelerator,
+    hotkeyAvailable: true,
+    message: 'Запускаем фоновую запись'
+  }
+  let recordingControlQueue = Promise.resolve(recordingControlStatus)
+  let recordingControlShuttingDown = false
+  let recordingGateRevision = 0
+  let freeRecordingStartPending = false
 
-  const ensureObsReplayBufferActive = async (force = false): Promise<boolean> => {
-    const checkedAtMs = Date.now()
-    if (!force && obsReplayBufferReady && checkedAtMs - lastObsReplayEnsureAtMs < obsReplayEnsureIntervalMs) return true
+  const recordingProtectionReason = async (): Promise<string | undefined> => {
+    if (freeRecordingStartPending) return 'Запускается свободная запись'
+    let activeTradeCount = terminalTradeWatcher.getStatus().activeTradeCount
+    if (activeTradeCount > 0) return `Идёт сделка, позиций: ${activeTradeCount}`
+    const freeRecording = await windowRecorderService.getFreeRecordingStatus(await settingsStore.load())
+    if (freeRecording.active) return 'Идёт свободная запись'
+    if (freeRecording.exporting) return 'Сохраняется свободная запись'
+    if (freeRecordingStartPending) return 'Запускается свободная запись'
+    activeTradeCount = terminalTradeWatcher.getStatus().activeTradeCount
+    if (activeTradeCount > 0) return `Идёт сделка, позиций: ${activeTradeCount}`
+    if (watcherProtectedSinceMs > 0 || activeClipRenderJobs.size > 0 || clipRenderQueue.length > 0) return 'Сохраняется клип'
+    return undefined
+  }
 
-    lastObsReplayEnsureAtMs = checkedAtMs
-    const status = await obsService.ensureReplayBufferActive()
-    obsReplayBufferReady = status.connected && status.replayBufferActive
-    return obsReplayBufferReady
+  const broadcastRecordingControlStatus = (): RecordingControlStatus => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('recording:control-status', recordingControlStatus)
+    }
+    return recordingControlStatus
+  }
+
+  const updateRecordingControlStatus = (patch: Partial<RecordingControlStatus>): RecordingControlStatus => {
+    recordingControlStatus = { ...recordingControlStatus, ...patch }
+    mainWindow?.webContents.setBackgroundThrottling(!recordingControlStatus.enabled)
+    return broadcastRecordingControlStatus()
+  }
+
+  const setBackgroundRecordingEnabled = (enabled: boolean): Promise<RecordingControlStatus> => {
+    if (recordingControlShuttingDown) return Promise.resolve(recordingControlStatus)
+    recordingControlQueue = recordingControlQueue.then(async () => {
+      if (recordingControlShuttingDown) return recordingControlStatus
+      if (recordingControlStatus.enabled === enabled && recordingControlStatus.operation === 'idle') return recordingControlStatus
+      if (!enabled) {
+        const protectionReason = await recordingProtectionReason()
+        if (protectionReason) {
+          return updateRecordingControlStatus({
+            protected: true,
+            protectionReason,
+            operation: 'idle',
+            lastError: undefined,
+            message: `${protectionReason}. Остановить запись можно после завершения.`
+          })
+        }
+      }
+
+      const previousEnabled = recordingControlStatus.enabled
+      // Close the start gate synchronously after the final protection check.
+      // The watcher re-checks this transition immediately before registering a trade.
+      recordingGateRevision += 1
+      backgroundWindowRecordingEnabled = enabled
+      updateRecordingControlStatus({
+        enabled,
+        operation: enabled ? 'starting' : 'stopping',
+        protected: false,
+        protectionReason: undefined,
+        lastError: undefined,
+        message: enabled ? 'Запускаем фоновую запись' : 'Останавливаем фоновую запись'
+      })
+      try {
+        await settingsStore.update({ system: { backgroundRecordingEnabled: enabled } })
+        if (!enabled) {
+          nativeRecordingStartedAtMs = 0
+          browserRecordingStartedBySourceId.clear()
+          refreshBackgroundRecordingStartedAtMs()
+          await windowRecorderService.stop()
+        }
+      } catch (error) {
+        backgroundWindowRecordingEnabled = previousEnabled
+        return updateRecordingControlStatus({
+          enabled: previousEnabled,
+          operation: 'idle',
+          lastError: getErrorMessage(error),
+          message: getErrorMessage(error)
+        })
+      }
+
+      // The main renderer owns browser MediaRecorder and reacts to this broadcast.
+      const settled = updateRecordingControlStatus({
+        active: enabled ? recordingControlStatus.active : false,
+        operation: 'idle',
+        message: enabled ? 'Фоновая запись включена' : 'Фоновая запись остановлена'
+      })
+      if (enabled) notifyWindowRecordingNeeded()
+      return settled
+    }).catch((error) => updateRecordingControlStatus({
+      operation: 'idle',
+      lastError: getErrorMessage(error),
+      message: getErrorMessage(error)
+    }))
+    return recordingControlQueue
   }
 
   const browserRecordingStartedAtMs = (target?: CaptureTargetRef): number => {
@@ -1607,12 +1742,11 @@ app.whenReady().then(() => {
   const ensureVideoRecordingReady = async (
     event: TerminalPositionEvent,
     recordingTarget?: CaptureTargetRef,
-    force = false
+    _force = false
   ): Promise<boolean> => {
+    const gateRevision = recordingGateRevision
     const settings = await settingsStore.load()
-    if (settings.recording.mode === 'obs') {
-      return ensureObsReplayBufferActive(force)
-    }
+    if (gateRevision !== recordingGateRevision || recordingControlShuttingDown) return false
     if (!backgroundWindowRecordingEnabled) return false
     if (settings.recording.sourceType === 'window' && !recordingTarget) {
       notifyWindowRecordingNeeded()
@@ -1624,6 +1758,7 @@ app.whenReady().then(() => {
     if (browserStartedAtMs > 0) return browserStartedAtMs <= requiredStartMs
 
     const status = await windowRecorderService.getStatus(settings)
+    if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) return false
     if (status.active && status.backend === 'ffmpeg' && !status.fallbackRequired) {
       return nativeRecordingStartedAtMs > 0 && nativeRecordingStartedAtMs <= requiredStartMs
     }
@@ -1632,6 +1767,10 @@ app.whenReady().then(() => {
     if (status.fallbackRequired) return false
 
     const started = await windowRecorderService.start(settings)
+    if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
+      await windowRecorderService.stop()
+      return false
+    }
     if (!started.active || started.fallbackRequired || started.backend !== 'ffmpeg') return false
     if (!nativeRecordingStartedAtMs) {
       nativeRecordingStartedAtMs = Date.now()
@@ -1642,7 +1781,6 @@ app.whenReady().then(() => {
 
   const resolveTerminalRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
     const settings = await settingsStore.load()
-    if (settings.recording.mode !== 'window') return undefined
     if (settings.recording.sourceType === 'screen') return undefined
 
     const configuredTarget = selectedWindowTradeTarget(settings, event.symbol)
@@ -1706,6 +1844,7 @@ app.whenReady().then(() => {
     getSettings: () => settingsStore.load(),
     getRecordingStartedAtMs: () => backgroundWindowRecordingStartedAtMs,
     ensureVideoRecordingReady,
+    getRecordingGateRevision: () => recordingGateRevision,
     protectSince: setWatcherProtectedSince,
     createClipForClosedTrade: queueClipForClosedTrade,
     resolveRecordingTarget: resolveTerminalRecordingTarget,
@@ -1773,6 +1912,9 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.handle('app:get-version', () => app.getVersion())
+  ipcMain.handle('app:show-main-window', () => focusMainWindow())
+  ipcMain.handle('app:show-recording-widget', () => showRecordingWidget())
+  ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.hide())
   ipcMain.handle('logs:get', () => appLog.getSnapshot())
   ipcMain.handle('logs:show-file', async () => {
     await appLog.info('diagnostics', 'Log file requested')
@@ -1808,20 +1950,8 @@ app.whenReady().then(() => {
     return { apiKeyConfigured: false }
   })
   ipcMain.handle('settings:update', async (_event, input: SettingsUpdateInput) => {
-    const obsPassword = input.obsPassword?.trim()
     const expectedRecordingSourceRevision = input.expectedRecordingSourceRevision
-    let patch = extractSettingsPatch(input)
-
-    if (obsPassword) {
-      await secretStore.setObsPassword(obsPassword)
-      patch = {
-        ...patch,
-        obs: {
-          ...(input.obs ?? {}),
-          passwordConfigured: true
-        }
-      }
-    }
+    const patch = extractSettingsPatch(input)
 
     let updatedSettings = expectedRecordingSourceRevision
       ? await settingsStore.updateIf(
@@ -1830,38 +1960,155 @@ app.whenReady().then(() => {
         )
       : await settingsStore.update(patch)
     if (patch.proxies) updatedSettings = await clearProxyRuntimeConfig()
+    if (
+      typeof patch.system?.backgroundRecordingEnabled === 'boolean'
+      && patch.system.backgroundRecordingEnabled !== recordingControlStatus.enabled
+    ) {
+      updatedSettings = await settingsStore.update({
+        system: { backgroundRecordingEnabled: recordingControlStatus.enabled }
+      })
+    }
     applyLaunchAtLogin(updatedSettings)
     applyAlwaysOnTop(updatedSettings)
     applyProxyQuitPreference(updatedSettings)
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('settings:changed', updatedSettings)
+    }
 
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
     return updatedSettings
   })
-  ipcMain.handle('obs:get-status', () => obsService.getStatus())
-  ipcMain.handle('obs:test-replay-save', () => obsService.testReplaySave())
-  ipcMain.handle('recording:list-window-sources', async (_event, forceRefresh = false) => {
+  ipcMain.handle('recording:list-window-sources', async (event, forceRefresh = false) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Источники записи доступны только главному окну')
     return listWindowCaptureSources(forceRefresh === true)
   })
-  ipcMain.handle('recording:list-video-encoders', async () => listAvailableVideoEncoders())
-  ipcMain.handle('recording:get-status', async () => windowRecorderService.getStatus(await settingsStore.load()))
-  ipcMain.handle('recording:free-status', async () => windowRecorderService.getFreeRecordingStatus(await settingsStore.load()))
-  ipcMain.handle('recording:start', async () => {
-    backgroundWindowRecordingEnabled = true
-    const started = await windowRecorderService.start(await settingsStore.load())
+  ipcMain.handle('recording:list-video-encoders', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Кодировщики доступны только главному окну')
+    return listAvailableVideoEncoders()
+  })
+  ipcMain.handle('recording:get-control-status', async (event) => {
+    if (event.sender !== mainWindow?.webContents && event.sender !== recordingWidgetWindow?.webContents) {
+      throw new Error('Статус записи доступен только окнам TradeTools')
+    }
+    const protectionReason = await recordingProtectionReason()
+    return updateRecordingControlStatus({
+      protected: Boolean(protectionReason),
+      protectionReason
+    })
+  })
+  ipcMain.handle('recording:set-enabled', (event, enabled: boolean) => {
+    if (event.sender !== mainWindow?.webContents && event.sender !== recordingWidgetWindow?.webContents) {
+      throw new Error('Управлять записью могут только окна TradeTools')
+    }
+    if (typeof enabled !== 'boolean') throw new Error('Некорректное состояние записи')
+    return setBackgroundRecordingEnabled(enabled)
+  })
+  ipcMain.handle('recording:report-status', (event, status: WindowRecorderStatus) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Статус записи принимается только от главного окна')
+    if (!status || typeof status.active !== 'boolean' || typeof status.message !== 'string') {
+      throw new Error('Некорректный статус записи')
+    }
+    if (!recordingControlStatus.enabled) return recordingControlStatus
+    return updateRecordingControlStatus({
+      active: status.active,
+      operation: 'idle',
+      lastError: status.fallbackRequired && !status.active ? status.message : undefined,
+      message: status.message
+    })
+  })
+  ipcMain.handle('recording:get-status', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Статус движка доступен только главному окну')
+    return windowRecorderService.getStatus(await settingsStore.load())
+  })
+  ipcMain.handle('recording:check', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Проверить запись может только главное окно')
+
+    const gateRevision = recordingGateRevision
+    const checkStartedAtMs = Date.now()
+    let settings = await settingsStore.load()
+    let status = await windowRecorderService.getStatus(settings)
+    if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
+      return {
+        ...status,
+        active: false,
+        message: 'Фоновая запись выключена. Сначала включите её.'
+      }
+    }
+    if (gateRevision !== recordingGateRevision) {
+      return { ...status, active: false, message: 'Состояние записи изменилось. Запустите проверку ещё раз.' }
+    }
+    if (recorderStatusHasFreshSegments(status, settings, checkStartedAtMs)) return { ...status, active: true }
+
+    notifyWindowRecordingNeeded()
+    const deadlineMs = Date.now() + Math.min(13_000, Math.max(4_000, settings.recording.segmentSeconds * 1_000 + 3_000))
+    while (
+      Date.now() < deadlineMs &&
+      gateRevision === recordingGateRevision &&
+      backgroundWindowRecordingEnabled &&
+      !recordingControlShuttingDown
+    ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 500))
+      if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) break
+      settings = await settingsStore.load()
+      if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) break
+      status = await windowRecorderService.getStatus(settings)
+      if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) break
+      if (recorderStatusHasFreshSegments(status, settings, checkStartedAtMs)) return { ...status, active: true }
+    }
+
+    if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
+      return { ...status, active: false, message: 'Фоновая запись выключена. Сначала включите её.' }
+    }
+    if (gateRevision !== recordingGateRevision) {
+      return { ...status, active: false, message: 'Состояние записи изменилось. Запустите проверку ещё раз.' }
+    }
+    return {
+      ...status,
+      active: false,
+      message: settings.recording.sourceType === 'window' && !settings.recording.windowSourceId
+        ? 'Окно терминала не найдено. Откройте терминал или выберите источник записи.'
+        : status.fallbackRequired || !status.active
+          ? status.message || 'Запись не запустилась. Проверьте выбранный источник.'
+          : 'Новый видеосегмент не появился. Проверьте выбранный источник записи.'
+    }
+  })
+  ipcMain.handle('recording:free-status', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Статус свободной записи доступен только главному окну')
+    return windowRecorderService.getFreeRecordingStatus(await settingsStore.load())
+  })
+  ipcMain.handle('recording:start', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Запустить движок может только главное окно')
+    if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) return windowRecorderService.getStatus(await settingsStore.load())
+    const gateRevision = recordingGateRevision
+    const settings = await settingsStore.load()
+    if (gateRevision !== recordingGateRevision) return windowRecorderService.getStatus(settings)
+    const started = await windowRecorderService.start(settings)
+    if (gateRevision !== recordingGateRevision || !backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
+      await windowRecorderService.stop()
+      return windowRecorderService.getStatus(settings)
+    }
     if (started.active && started.backend === 'ffmpeg' && !started.fallbackRequired && !nativeRecordingStartedAtMs) {
       nativeRecordingStartedAtMs = Date.now()
+      refreshBackgroundRecordingStartedAtMs()
+    } else {
+      nativeRecordingStartedAtMs = 0
       refreshBackgroundRecordingStartedAtMs()
     }
     return started
   })
-  ipcMain.handle('recording:clear-cache', async () => {
+  ipcMain.handle('recording:clear-cache', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Очистить кэш может только главное окно')
     const settings = await settingsStore.load()
     const result = await windowRecorderService.clearCache(settings)
-    if (backgroundWindowRecordingEnabled && settings.recording.mode === 'window') {
+    if (backgroundWindowRecordingEnabled) {
       nativeRecordingStartedAtMs = 0
       browserRecordingStartedBySourceId.clear()
       refreshBackgroundRecordingStartedAtMs()
       const started = await windowRecorderService.start(settings)
+      if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
+        await windowRecorderService.stop()
+        return result
+      }
       if (started.active && started.backend === 'ffmpeg' && !started.fallbackRequired) {
         nativeRecordingStartedAtMs = Date.now()
         refreshBackgroundRecordingStartedAtMs()
@@ -1871,22 +2118,40 @@ app.whenReady().then(() => {
     }
     return result
   })
-  ipcMain.handle('recording:free-start', async () => windowRecorderService.startFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:free-pause', async () => windowRecorderService.pauseFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:free-resume', async () => windowRecorderService.resumeFreeRecording(await settingsStore.load()))
-  ipcMain.handle('recording:free-finish', async () => {
+  ipcMain.handle('recording:free-start', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Свободную запись запускает только главное окно')
+    if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) throw new Error('Сначала включите фоновую запись')
+    freeRecordingStartPending = true
+    try {
+      const settings = await settingsStore.load()
+      if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) throw new Error('Сначала включите фоновую запись')
+      return await windowRecorderService.startFreeRecording(settings)
+    } finally {
+      freeRecordingStartPending = false
+    }
+  })
+  ipcMain.handle('recording:free-pause', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Свободной записью управляет только главное окно')
+    return windowRecorderService.pauseFreeRecording(await settingsStore.load())
+  })
+  ipcMain.handle('recording:free-resume', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Свободной записью управляет только главное окно')
+    return windowRecorderService.resumeFreeRecording(await settingsStore.load())
+  })
+  ipcMain.handle('recording:free-finish', async (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Свободную запись завершает только главное окно')
     const result = await windowRecorderService.finishFreeRecording(await settingsStore.load())
     await clipPipeline.addFreeRecordingToQueue(result)
     return result
   })
-  ipcMain.handle('recording:stop', async () => {
-    backgroundWindowRecordingEnabled = false
+  ipcMain.handle('recording:stop-engine', (event) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Остановить движок может только главное окно')
     nativeRecordingStartedAtMs = 0
-    browserRecordingStartedBySourceId.clear()
     refreshBackgroundRecordingStartedAtMs()
     return windowRecorderService.stop()
   })
-  ipcMain.handle('recording:browser-started', (_event, input: WindowRecordingStartedInput) => {
+  ipcMain.handle('recording:browser-started', (event, input: WindowRecordingStartedInput) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Подтвердить запись может только главное окно')
     if (!backgroundWindowRecordingEnabled) return
 
     const sourceId = asString(input?.sourceId)
@@ -1910,7 +2175,8 @@ app.whenReady().then(() => {
     }
     refreshBackgroundRecordingStartedAtMs()
   })
-  ipcMain.handle('recording:browser-stopped', (_event, input: WindowRecordingStoppedInput) => {
+  ipcMain.handle('recording:browser-stopped', (event, input: WindowRecordingStoppedInput) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Остановку записи подтверждает только главное окно')
     const sourceId = asString(input?.sourceId)
     const captureEpochId = asString(input?.captureEpochId)
     const current = browserRecordingStartedBySourceId.get(sourceId)
@@ -1918,9 +2184,10 @@ app.whenReady().then(() => {
     browserRecordingStartedBySourceId.delete(sourceId)
     refreshBackgroundRecordingStartedAtMs()
   })
-  ipcMain.handle('recording:append-segment', async (_event, input: WindowRecordingSegmentInput) => (
-    windowRecorderService.appendSegment(input, await settingsStore.load())
-  ))
+  ipcMain.handle('recording:append-segment', async (event, input: WindowRecordingSegmentInput) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('Сегменты записи принимает только главное окно')
+    return windowRecorderService.appendSegment(input, await settingsStore.load())
+  })
   ipcMain.handle('clipboard:write-text', (_event, text: string) => {
     if (typeof text !== 'string') throw new Error('Некорректный текст для буфера обмена')
     clipboard.writeText(text)
@@ -2266,10 +2533,23 @@ app.whenReady().then(() => {
   })
   const startApp = async (): Promise<void> => {
     const settings = await settingsStore.load()
+    backgroundWindowRecordingEnabled = settings.system.backgroundRecordingEnabled
+    recordingControlStatus.enabled = backgroundWindowRecordingEnabled
+    recordingControlStatus.message = backgroundWindowRecordingEnabled ? 'Запускаем фоновую запись' : 'Фоновая запись остановлена'
     applyLaunchAtLogin(settings)
-    applyAlwaysOnTop(settings)
     applyProxyQuitPreference(settings)
     createMainWindow()
+    applyAlwaysOnTop(settings)
+    createRecordingWidgetWindow()
+    const hotkeyRegistered = globalShortcut.register(recordingToggleAccelerator, () => {
+      void setBackgroundRecordingEnabled(!recordingControlStatus.enabled)
+    })
+    recordingControlStatus.hotkeyAvailable = hotkeyRegistered
+    if (!hotkeyRegistered) {
+      recordingControlStatus.message = 'Глобальный хоткей занят другим приложением'
+    }
+    mainWindow?.webContents.setBackgroundThrottling(!recordingControlStatus.enabled)
+    broadcastRecordingControlStatus()
     appUpdateService.startBackgroundCheck()
     terminalTradeWatcher.start()
     void secretStore.getTmmApiKey()
@@ -2301,14 +2581,17 @@ app.whenReady().then(() => {
       event.preventDefault()
       if (gracefulQuitStarted) return
       gracefulQuitStarted = true
+      recordingControlShuttingDown = true
+      recordingGateRevision += 1
       terminalTradeWatcher.stop()
       stopProxyRuntimeWatchdog()
+      globalShortcut.unregisterAll()
       if (vpnBypassMonitor) vpnBypassMonitor.stop()
       cancelClipRender()
-      void Promise.allSettled([
+      void recordingControlQueue.catch(() => undefined).then(() => Promise.allSettled([
         waitForClipRenderIdle(30_000),
         windowRecorderService.stop()
-      ]).finally(() => {
+      ])).finally(() => {
         gracefulQuitFinished = true
         app.quit()
       })
@@ -2319,10 +2602,11 @@ app.whenReady().then(() => {
   setInterval(() => void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error)), proxyPaymentReminderIntervalMs)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       createMainWindow()
       void settingsStore.load().then(applyAlwaysOnTop)
     }
+    showRecordingWidget()
   })
 })
 

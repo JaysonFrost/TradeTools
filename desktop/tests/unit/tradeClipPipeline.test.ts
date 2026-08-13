@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 import { createDefaultSettings } from '../../src/main/services/settings/settings'
-import { createTradeClipPipeline, waitForFfmpegProcessExit } from '../../src/main/services/trades/tradeClipPipeline'
+import { createTradeClipPipeline, type SaveReplayBufferInput, waitForFfmpegProcessExit } from '../../src/main/services/trades/tradeClipPipeline'
 import { createSimulatedClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import { buildClipOutputPaths } from '../../src/main/services/video/clipPaths'
 import { calculateFfmpegRenderThreads } from '../../src/main/services/video/ffmpegCommand'
@@ -14,9 +14,9 @@ const legacyVideoProviderKey = ['you', 'tube'].join('')
 const legacyPublishMethodPrefix = ['upload', 'Clip', 'To'].join('')
 
 describe('tradeClipPipeline', () => {
-  it('saves OBS replay, trims it into the dated clip folder, and writes metadata json', async () => {
+  it('trims a built-in replay into the dated clip folder and writes metadata json', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-'))
-    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-obs-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-built-in-'))
     const replayPath = join(replayDir, 'Replay 2026-05-13 03-51-12.mp4')
     await writeFile(replayPath, 'fake video')
 
@@ -39,17 +39,11 @@ describe('tradeClipPipeline', () => {
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
-          replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
+          replayBufferSeconds: 600,
           outputDir: dataDir
-        },
-        obs: {
-          host: '127.0.0.1',
-          port: 4455,
-          passwordConfigured: true
         }
       }),
-      saveReplayBuffer: vi.fn(async () => ({ ok: true, message: 'OBS Replay Buffer сохранён', requestedAtMs })),
+      saveReplayBuffer: vi.fn(async () => ({ ok: true, message: 'Встроенный replay сохранён', requestedAtMs, replayPath })),
       runFfmpeg,
       getVideoDurationSeconds,
       findTmmTradeUrl: vi.fn(async () => 'https://tradermake.money/app2/account/my-trades/42'),
@@ -140,7 +134,7 @@ describe('tradeClipPipeline', () => {
     expect(source).toContain('videoEncoder: settings.recording.videoEncoder')
   })
 
-  it('uses the exact replay path returned by OBS instead of rescanning the configured folder', async () => {
+  it('uses the exact replay path returned by the built-in recorder', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-exact-path-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-empty-replays-'))
     const actualReplayDir = await mkdtemp(join(tmpdir(), 'TradeTools-actual-replays-'))
@@ -158,14 +152,13 @@ describe('tradeClipPipeline', () => {
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
-          replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
+          replayBufferSeconds: 600,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -179,9 +172,9 @@ describe('tradeClipPipeline', () => {
     expect(runFfmpeg.mock.calls[0][0].at(-1)).toContain(`${clip.videoPath}.tmp-`)
   })
 
-  it('removes the consumed OBS replay after the final clip is written', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-remove-obs-replay-'))
-    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-remove-obs-replay-'))
+  it('removes a prepared built-in replay after the final clip is written', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-data-remove-built-in-replay-'))
+    const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-remove-built-in-replay-'))
     const replayPath = join(replayDir, 'Replay 2026-05-13 08-30-00.mp4')
     await writeFile(replayPath, 'fake video')
     const saveTimeMs = Date.parse('2026-05-13T08:30:00.000Z')
@@ -190,23 +183,19 @@ describe('tradeClipPipeline', () => {
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...defaultSettings,
-        recording: {
-          ...defaultSettings.recording,
-          mode: 'obs'
-        },
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
-          replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
+          replayBufferSeconds: 600,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
-        replayPath
+        replayPath,
+        readyClip: true
       })),
       runFfmpeg: vi.fn(async (args: string[]) => {
         await writeFile(args.at(-1) ?? '', 'trimmed video')
@@ -235,13 +224,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -274,13 +262,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -315,13 +302,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -397,13 +383,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -438,13 +423,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -482,13 +466,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -604,7 +587,6 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: dataDir,
           outputDir: dataDir
         }
       }),
@@ -632,13 +614,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -651,7 +632,7 @@ describe('tradeClipPipeline', () => {
       exitTimeMs: Date.parse('2026-05-13T10:21:00.000Z')
     }
 
-    await expect(pipeline.createClipForClosedTrade(staleTrade)).rejects.toThrow('Сделка не попадает в окно OBS Replay Buffer')
+    await expect(pipeline.createClipForClosedTrade(staleTrade)).rejects.toThrow('Сделка не попадает в сохранённый буфер записи')
   })
 
   it('rejects ffmpeg output when the rendered clip duration is too short', async () => {
@@ -669,13 +650,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -703,13 +683,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 0,
           paddingAfterSeconds: 0,
           replayBufferSeconds: 60,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -731,7 +710,7 @@ describe('tradeClipPipeline', () => {
     })
   })
 
-  it('rejects low-FPS OBS replays before rendering a broken clip', async () => {
+  it('rejects low-FPS built-in replays before rendering a broken clip', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-'))
     const replayDir = await mkdtemp(join(tmpdir(), 'TradeTools-low-fps-replays-'))
     const replayPath = join(replayDir, 'Replay 2026-05-13 12-30-00.mp4')
@@ -743,21 +722,16 @@ describe('tradeClipPipeline', () => {
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...createDefaultSettings(dataDir),
-        recording: {
-          ...createDefaultSettings(dataDir).recording,
-          mode: 'obs'
-        },
         clip: {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -768,7 +742,7 @@ describe('tradeClipPipeline', () => {
       }))
     })
 
-    await expect(pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))).rejects.toThrow('OBS replay-файл содержит только 2.7 fps')
+    await expect(pipeline.createClipForClosedTrade(createSimulatedClosedTrade(saveTimeMs))).rejects.toThrow('Встроенный replay-файл содержит только 2.7 fps')
     expect(runFfmpeg).not.toHaveBeenCalled()
   })
 
@@ -799,7 +773,6 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 600,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
@@ -935,6 +908,13 @@ describe('tradeClipPipeline', () => {
     await writeFile(replayPath, 'manual buffer clip')
     await import('node:fs/promises').then(({ utimes }) => utimes(replayPath, new Date(requestedAtMs), new Date(requestedAtMs)))
     const defaultSettings = createDefaultSettings(dataDir)
+    const saveReplayBuffer = vi.fn(async (_input: SaveReplayBufferInput) => ({
+      ok: true as const,
+      message: 'Встроенный replay сохранён',
+      requestedAtMs,
+      replayPath,
+      readyClip: true
+    }))
     const pipeline = createTradeClipPipeline({
       getSettings: async () => ({
         ...defaultSettings,
@@ -948,19 +928,15 @@ describe('tradeClipPipeline', () => {
         },
         clip: {
           ...defaultSettings.clip,
-          replayBufferSeconds: 60,
+          paddingBeforeSeconds: 600,
+          paddingAfterSeconds: 120,
+          replayBufferSeconds: 600,
           outputDir: dataDir
         }
       }),
-      saveReplayBuffer: vi.fn(async () => ({
-        ok: true,
-        message: 'Встроенный replay сохранён',
-        requestedAtMs,
-        replayPath,
-        readyClip: true
-      })),
+      saveReplayBuffer,
       getVideoDetails: vi.fn(async () => ({
-        durationSeconds: 60,
+        durationSeconds: 600,
         averageFrameRate: 30
       })),
       now: () => requestedAtMs
@@ -972,7 +948,21 @@ describe('tradeClipPipeline', () => {
     expect(clip.title).toContain('Экран 2')
     expect(clip.title).not.toContain('BTC')
     expect(clip.symbol).toBe('BUFFER')
+    expect(saveReplayBuffer).toHaveBeenCalledWith(expect.objectContaining({
+      settings: expect.objectContaining({
+        clip: expect.objectContaining({
+          paddingBeforeSeconds: 0,
+          paddingAfterSeconds: 0,
+          replayBufferSeconds: 600
+        })
+      }),
+      trade: expect.objectContaining({
+        entryTimeMs: requestedAtMs - 600_000,
+        exitTimeMs: requestedAtMs
+      })
+    }))
     const metadata = JSON.parse(await readFile(clip.metadataPath, 'utf8'))
+    expect(metadata.outputDurationSeconds).toBe(600)
     expect(metadata.trade).toMatchObject({
       exchange: 'TradeTools',
       marketType: 'Manual buffer',
@@ -1007,13 +997,12 @@ describe('tradeClipPipeline', () => {
           paddingBeforeSeconds: 3,
           paddingAfterSeconds: 5,
           replayBufferSeconds: 1800,
-          replaySourceDir: replayDir,
           outputDir: dataDir
         }
       }),
       saveReplayBuffer: vi.fn(async () => ({
         ok: true,
-        message: 'OBS Replay Buffer сохранён, свежий файл найден',
+        message: 'Встроенный replay сохранён',
         requestedAtMs: saveTimeMs,
         replayPath
       })),
@@ -1168,7 +1157,7 @@ describe('tradeClipPipeline', () => {
 
   it('has a clear commit point before deleting the consumed replay', async () => {
     const source = await readFile(resolve('src/main/services/trades/tradeClipPipeline.ts'), 'utf8')
-    const replayCleanupStart = source.indexOf("if ((settings.recording.mode === 'obs' || readyClip)")
+    const replayCleanupStart = source.indexOf('if (readyClip && resolve(replayPath)')
     const successfulReturn = source.indexOf('return item', replayCleanupStart)
     const replayCleanup = source.slice(replayCleanupStart, successfulReturn)
 
@@ -1249,7 +1238,7 @@ describe('tradeClipPipeline', () => {
     snapshot.clip.paddingBeforeSeconds = 3
     snapshot.clip.paddingAfterSeconds = 5
     const liveSettings = createDefaultSettings(dataDir)
-    liveSettings.recording.mode = 'obs'
+    liveSettings.clip.outputDir = join(dataDir, 'live-settings-must-not-be-used')
     const getSettings = vi.fn(async () => liveSettings)
     const saveReplayBuffer = vi.fn(async () => ({
       ok: true as const,

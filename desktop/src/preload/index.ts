@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { ObsStatus, ObsTestReplayResult } from '../main/services/obs/obsService'
 import type { NetworkEnvironmentSnapshot } from '../main/services/proxies/networkEnvironment'
 import type { VpnBypassRouteResult, VpnBypassStatus } from '../main/services/proxies/vpnBypassRoutes'
 import type { AppSettings, LocalProxyType, ProxyRecord, SettingsUpdateInput } from '../main/services/settings/settings'
@@ -9,6 +8,7 @@ import type { AppUpdateStatus } from '../main/services/updates/appUpdateService'
 import type { FreeRecordingFinishResult, FreeRecordingStatus, VideoCacheClearResult, WindowCaptureSource, WindowRecorderStatus, WindowRecordingSegmentInput, WindowRecordingStartedInput, WindowRecordingStoppedInput } from '../main/services/recording/windowRecorderService'
 import type { AppLogSnapshot } from '../main/services/logging/appLogService'
 import type { VideoEncoderOption } from '../main/services/video/videoEncoderDevices'
+import type { RecordingControlStatus } from '../shared/recordingControl'
 
 export type ProxySaveInput = {
   id?: string
@@ -75,18 +75,26 @@ export type SystemNotificationResult = {
   message: string
 }
 
-export type { VpnBypassRouteResult, VpnBypassStatus }
+export type { RecordingControlStatus, VpnBypassRouteResult, VpnBypassStatus }
 
 const api = {
   app: {
-    getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version')
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
+    showMainWindow: (): Promise<void> => ipcRenderer.invoke('app:show-main-window'),
+    showRecordingWidget: (): Promise<void> => ipcRenderer.invoke('app:show-recording-widget'),
+    closeRecordingWidget: (): Promise<void> => ipcRenderer.invoke('app:close-recording-widget')
   },
   dialog: {
     selectDirectory: (defaultPath?: string): Promise<string | undefined> => ipcRenderer.invoke('dialog:select-directory', defaultPath)
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-    update: (patch: SettingsUpdateInput): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch)
+    update: (patch: SettingsUpdateInput): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch),
+    onChanged: (callback: (settings: AppSettings) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, settings: AppSettings) => callback(settings)
+      ipcRenderer.on('settings:changed', listener)
+      return () => ipcRenderer.removeListener('settings:changed', listener)
+    }
   },
   tmm: {
     getStatus: (): Promise<{ apiKeyConfigured: boolean }> => ipcRenderer.invoke('tmm:get-status'),
@@ -146,22 +154,22 @@ const api = {
       return () => ipcRenderer.removeListener('proxies:setup-chain-progress', listener)
     }
   },
-  obs: {
-    getStatus: (): Promise<ObsStatus> => ipcRenderer.invoke('obs:get-status'),
-    testReplaySave: (): Promise<ObsTestReplayResult> => ipcRenderer.invoke('obs:test-replay-save')
-  },
   recording: {
     listWindowSources: (forceRefresh = false): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources', forceRefresh),
     listVideoEncoders: (): Promise<VideoEncoderOption[]> => ipcRenderer.invoke('recording:list-video-encoders'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
+    check: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:check'),
+    getControlStatus: (): Promise<RecordingControlStatus> => ipcRenderer.invoke('recording:get-control-status'),
     getFreeStatus: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-status'),
+    setEnabled: (enabled: boolean): Promise<RecordingControlStatus> => ipcRenderer.invoke('recording:set-enabled', enabled),
+    reportStatus: (status: WindowRecorderStatus): Promise<void> => ipcRenderer.invoke('recording:report-status', status),
     start: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:start'),
     startFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-start'),
     pauseFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-pause'),
     resumeFree: (): Promise<FreeRecordingStatus> => ipcRenderer.invoke('recording:free-resume'),
     finishFree: (): Promise<FreeRecordingFinishResult> => ipcRenderer.invoke('recording:free-finish'),
     clearCache: (): Promise<VideoCacheClearResult> => ipcRenderer.invoke('recording:clear-cache'),
-    stop: (): Promise<void> => ipcRenderer.invoke('recording:stop'),
+    stopEngine: (): Promise<void> => ipcRenderer.invoke('recording:stop-engine'),
     browserStarted: (input: WindowRecordingStartedInput): Promise<void> => ipcRenderer.invoke('recording:browser-started', input),
     browserStopped: (input: WindowRecordingStoppedInput): Promise<void> => ipcRenderer.invoke('recording:browser-stopped', input),
     appendSegment: (input: WindowRecordingSegmentInput): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:append-segment', input),
@@ -169,6 +177,11 @@ const api = {
       const listener = () => callback()
       ipcRenderer.on('recording:ensure-window', listener)
       return () => ipcRenderer.removeListener('recording:ensure-window', listener)
+    },
+    onControlStatus: (callback: (status: RecordingControlStatus) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, status: RecordingControlStatus) => callback(status)
+      ipcRenderer.on('recording:control-status', listener)
+      return () => ipcRenderer.removeListener('recording:control-status', listener)
     }
   },
   terminalTrade: {

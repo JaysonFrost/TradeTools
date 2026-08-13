@@ -57,7 +57,7 @@ describe('window source list refresh', () => {
   })
 
   it('keeps the panel refresh path list-only so an async response cannot autosave a source', async () => {
-    const source = await readFile(resolve('src/renderer/components/settings/ObsSettingsPanel.tsx'), 'utf8')
+    const source = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
     const refreshStart = source.indexOf('const refreshWindowSources = async')
     const refreshEnd = source.indexOf('\n  useEffect(() => {', refreshStart)
     const refreshSource = source.slice(refreshStart, refreshEnd)

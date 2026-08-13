@@ -4,7 +4,7 @@ export const selectedWindowTradeTarget = (
   settings: AppSettings,
   symbol: string
 ): CaptureTargetRef | undefined => {
-  if (settings.recording.mode !== 'window' || settings.recording.sourceType !== 'window') return undefined
+  if (settings.recording.sourceType !== 'window') return undefined
 
   const selectedId = settings.recording.windowSourceId
   const selectedName = settings.recording.windowSourceName

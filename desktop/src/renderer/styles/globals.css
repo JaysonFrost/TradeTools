@@ -1,45 +1,335 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+}
 
 html, body, #root { width: 100%; height: 100%; min-height: 0; margin: 0; }
 
 body {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background:
-    radial-gradient(circle at 15% 0%, rgba(113, 50, 245, 0.28), transparent 34rem),
-    radial-gradient(circle at 90% 15%, rgba(139, 92, 246, 0.18), transparent 30rem),
-    linear-gradient(135deg, #08090a 0%, #0b0b13 48%, #08090a 100%);
+  font-family: "JetBrains Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  text-rendering: geometricPrecision;
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(86, 181, 213, 0.06) 1px, transparent 1px),
+    linear-gradient(rgba(86, 181, 213, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px, 32px 32px, 8px 8px, 8px 8px;
   color: var(--text);
   overflow: hidden;
 }
 
-button, input, select { font: inherit; }
+html[data-window='recording-widget'] body {
+  background-color: var(--bg);
+  background-size: 16px 16px, 16px 16px, 8px 8px, 8px 8px;
+}
+
+::selection {
+  background: var(--action);
+  color: var(--bg);
+}
+
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+}
+
 select {
   color-scheme: dark;
-  background-color: rgba(0, 0, 0, 0.28);
+  background-color: var(--panel-strong);
 }
 
 select option {
-  background-color: #111218;
-  color: #f7f8f8;
+  background-color: var(--panel-strong);
+  color: var(--text);
 }
 
 .app-scroll {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   -webkit-overflow-scrolling: touch;
+  scrollbar-color: var(--line) var(--panel-strong);
+  scrollbar-width: thin;
+}
+
+.app-scroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.app-scroll::-webkit-scrollbar-track {
+  background: var(--panel-strong);
+}
+
+.app-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid var(--panel-strong);
+  background: var(--line);
 }
 
 .glass-panel {
   background: var(--panel);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-card);
+}
+
+.blueprint-frame {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  background-color: var(--panel);
+  box-shadow: var(--shadow-card);
+}
+
+.blueprint-frame::before,
+.blueprint-frame::after {
+  position: absolute;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  content: "";
+}
+
+.blueprint-frame::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--action);
+  border-left: 2px solid var(--action);
+}
+
+.blueprint-frame::after {
+  right: -1px;
+  bottom: -1px;
+  border-right: 2px solid var(--line);
+  border-bottom: 2px solid var(--line);
+}
+
+.blueprint-label {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1rem;
+  text-transform: uppercase;
+}
+
+.blueprint-rule {
+  border-color: var(--border-strong);
+}
+
+.mono { font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace; }
+
+html[data-interface-theme='classic'] * {
+  border-radius: revert !important;
+}
+
+html[data-interface-theme='classic'] body {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(113, 50, 245, 0.28), transparent 34rem),
+    radial-gradient(circle at 90% 15%, rgba(139, 92, 246, 0.18), transparent 30rem),
+    linear-gradient(135deg, #08090a 0%, #0b0b13 48%, #08090a 100%);
+}
+
+html[data-interface-theme='classic'] .blueprint-frame {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-interface-theme='classic'] .blueprint-frame::before,
+html[data-interface-theme='classic'] .blueprint-frame::after {
+  display: none;
+}
+
+html[data-interface-theme='classic'] .glass-panel {
   backdrop-filter: blur(24px);
 }
 
-.mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+html[data-interface-theme='classic'] .blueprint-frame > main {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+html[data-interface-theme='classic'] .blueprint-frame > main,
+html[data-interface-theme='classic'] .blueprint-frame > main > .app-scroll,
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] {
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+html[data-interface-theme='classic'] .classic-rounded {
+  border-radius: var(--radius-card) !important;
+}
+
+html[data-interface-theme='classic'] .classic-control {
+  border-radius: var(--radius-control) !important;
+}
+
+html[data-interface-theme='classic'] [class~='border'],
+html[data-interface-theme='classic'] input,
+html[data-interface-theme='classic'] select,
+html[data-interface-theme='classic'] textarea {
+  border-radius: var(--radius-control) !important;
+}
+
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] > section,
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] > details {
+  border-radius: var(--radius-card) !important;
+}
+
+/* The blueprint palette is encoded in Tailwind utility classes across feature panels.
+   Keep the shared markup, but neutralize those utilities when the classic skin is active. */
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+  font-family: inherit !important;
+}
+
+html[data-interface-theme='classic'] .blueprint-frame,
+html[data-interface-theme='classic'] .blueprint-frame > main,
+html[data-interface-theme='classic'] .blueprint-frame > main > .app-scroll,
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'],
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] > section,
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] details,
+html[data-interface-theme='classic'] [data-theme='engineering-blueprint'] .border {
+  border-color: var(--border) !important;
+}
+
+html[data-interface-theme='classic'] [class*='bg-[#0b1623'],
+html[data-interface-theme='classic'] [class*='bg-[#0d1d2b'],
+html[data-interface-theme='classic'] [class*='bg-[#0d1b2a'],
+html[data-interface-theme='classic'] [class*='bg-[#102131'],
+html[data-interface-theme='classic'] [class*='bg-[#102435'],
+html[data-interface-theme='classic'] [class*='bg-[#0e1e2c'],
+html[data-interface-theme='classic'] [class*='bg-[#091522'],
+html[data-interface-theme='classic'] [class*='bg-[#07111c'],
+html[data-interface-theme='classic'] [class*='bg-[#07101a'] {
+  background-color: var(--panel-strong) !important;
+}
+
+html[data-interface-theme='classic'] [class*='bg-[#1c2b3a'],
+html[data-interface-theme='classic'] [class*='bg-[#122536'],
+html[data-interface-theme='classic'] [class*='bg-[#132739'],
+html[data-interface-theme='classic'] [class*='bg-[#142739'] {
+  background-color: var(--elevated) !important;
+}
+
+html[data-interface-theme='classic'] [class*='border-[#56b5d5'],
+html[data-interface-theme='classic'] [class*='border-cyan-'],
+html[data-interface-theme='classic'] [class*='border-[#294155'],
+html[data-interface-theme='classic'] [class*='border-[#41566b'],
+html[data-interface-theme='classic'] [class*='border-[#1c2b3a'],
+html[data-interface-theme='classic'] [class*='border-[#8b9bb4'] {
+  border-color: var(--border) !important;
+}
+
+html[data-interface-theme='classic'] [class*='border-[#ff9f30'],
+html[data-interface-theme='classic'] [class*='border-orange-'],
+html[data-interface-theme='classic'] [class*='border-amber-'],
+html[data-interface-theme='classic'] [class*='focus:border-[#ff9f30'],
+html[data-interface-theme='classic'] [class*='focus:border-orange-'] {
+  border-color: var(--border-strong) !important;
+}
+
+html[data-interface-theme='classic'] [class*='bg-[#56b5d5'],
+html[data-interface-theme='classic'] [class*='bg-cyan-'] {
+  background-color: rgba(113, 50, 245, 0.12) !important;
+}
+
+html[data-interface-theme='classic'] [class*='bg-[#ff9f30'],
+html[data-interface-theme='classic'] [class*='bg-orange-'] {
+  background-color: var(--action) !important;
+  color: #fff !important;
+}
+
+html[data-interface-theme='classic'] [class*='hover:bg-[#e68c22]']:hover,
+html[data-interface-theme='classic'] [class*='hover:bg-[#e88f27]']:hover,
+html[data-interface-theme='classic'] [class*='hover:bg-orange-']:hover {
+  background-color: var(--action-hover) !important;
+}
+
+html[data-interface-theme='classic'] [class*='hover:bg-[#56b5d5]']:hover,
+html[data-interface-theme='classic'] [class*='hover:bg-cyan-']:hover {
+  background-color: rgba(139, 92, 246, 0.2) !important;
+}
+
+html[data-interface-theme='classic'] [class*='hover:border-[#56b5d5]']:hover,
+html[data-interface-theme='classic'] [class*='hover:border-cyan-']:hover {
+  border-color: var(--border-strong) !important;
+}
+
+html[data-interface-theme='classic'] [class*='text-[#56b5d5'],
+html[data-interface-theme='classic'] [class*='text-cyan-'],
+html[data-interface-theme='classic'] [class*='text-[#b9edff'],
+html[data-interface-theme='classic'] [class*='text-[#bcecff'],
+html[data-interface-theme='classic'] [class*='text-[#d6f4ff'] {
+  color: #c4b5fd !important;
+}
+
+html[data-interface-theme='classic'] [class*='text-[#ff9f30'],
+html[data-interface-theme='classic'] [class*='text-[#ffb45f'],
+html[data-interface-theme='classic'] [class*='text-[#ffc27a'],
+html[data-interface-theme='classic'] [class*='text-orange-'],
+html[data-interface-theme='classic'] [class*='text-amber-'] {
+  color: #c4b5fd !important;
+}
+
+html[data-interface-theme='classic'] [class*='text-[#8b9bb4'],
+html[data-interface-theme='classic'] [class*='text-[#5e748c'],
+html[data-interface-theme='classic'] [class*='text-[#b7c4d2'],
+html[data-interface-theme='classic'] [class*='text-[#b9c6d8'],
+html[data-interface-theme='classic'] [class*='text-[#c7d2df'],
+html[data-interface-theme='classic'] [class*='text-[#d6e0ee'] {
+  color: var(--text-muted) !important;
+}
+
+html[data-interface-theme='classic'] [class*='text-[#f0f0f0'] {
+  color: var(--text) !important;
+}
+
+html[data-interface-theme='classic'] [class*='shadow-[inset'],
+html[data-interface-theme='classic'] [class*='shadow-[3px_3px_0'] {
+  box-shadow: none !important;
+}
+
+html[data-interface-theme='classic'] [class*='font-mono'],
+html[data-interface-theme='classic'] .mono {
+  font-family: inherit !important;
+}
+
+html[data-interface-theme='classic'] [class*='uppercase'] {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+html[data-interface-theme='classic'] :where(button, input, select, textarea, a):focus-visible {
+  outline-color: var(--violet);
+}
+
+html[data-interface-theme='classic'] .blueprint-label,
+html[data-interface-theme='classic'] [data-classic-hide] {
+  display: none !important;
+}
+
+html[data-interface-theme='classic'] .classic-rounded {
+  border-radius: var(--radius-card) !important;
+}
+
+html[data-interface-theme='classic'] .classic-control {
+  border-radius: var(--radius-control) !important;
+}

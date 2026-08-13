@@ -11,9 +11,8 @@ export type SystemSettingsPanelProps = {
   onSaved: (settings: AppSettings) => void
 }
 
-const inputClass = 'mt-1 w-full rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60'
-
-type SystemSettingsDraft = AppSettings['system']
+const inputClass = 'mt-1 w-full border border-[#1c2b3a] bg-[#07111c] px-3 py-2 font-mono text-sm text-[#f0f0f0] outline-none transition-colors duration-150 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/30 focus:ring-offset-2 focus:ring-offset-[#0b1623]'
+const toggleCardClass = 'flex items-start gap-3 border border-[#1c2b3a] bg-[#07111c] p-4 font-mono text-sm text-[#8b9bb4] transition-colors duration-150 hover:border-cyan-400/30'
 
 export const SystemSettingsPanel = ({ settings, onSaved }: SystemSettingsPanelProps) => {
   const [launchAtLogin, setLaunchAtLogin] = useState(false)
@@ -35,9 +34,10 @@ export const SystemSettingsPanel = ({ settings, onSaved }: SystemSettingsPanelPr
     setPaymentReminderDaysBefore(String(settings.system.paymentReminderDaysBefore))
   }, [settings])
 
-  const buildDraft = (patch: Partial<SystemSettingsDraft> = {}): SystemSettingsDraft => ({
+  const buildDraft = (patch: Partial<AppSettings['system']> = {}): Partial<AppSettings['system']> => ({
     launchAtLogin,
     alwaysOnTop,
+    backgroundRecordingEnabled: settings?.system.backgroundRecordingEnabled ?? true,
     keepProxyRunningAfterClose,
     proxyPaymentNotificationsEnabled,
     clipSuccessNotificationsEnabled: settings?.system.clipSuccessNotificationsEnabled ?? true,
@@ -47,7 +47,7 @@ export const SystemSettingsPanel = ({ settings, onSaved }: SystemSettingsPanelPr
     ...patch
   })
 
-  const saveDraft = async (draft: SystemSettingsDraft, successMessage = 'Системные настройки сохранены'): Promise<boolean> => {
+  const saveDraft = async (draft: Partial<AppSettings['system']>, successMessage = 'Системные настройки сохранены'): Promise<boolean> => {
     setSaving(true)
     setMessage('')
     setMessageTone('success')
@@ -116,56 +116,57 @@ export const SystemSettingsPanel = ({ settings, onSaved }: SystemSettingsPanelPr
   }
 
   return (
-    <Card>
+    <Card className="rounded-none border-[#1c2b3a] bg-[#0b1623] font-mono shadow-none backdrop-blur-none">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em]">Прокси-уведомления</h2>
-          <p className="mt-1 text-sm text-zinc-500">Автозапуск TradeTools, закрепление окна и системные напоминания о сроках оплаты серверов.</p>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300">SYS.CONFIG // NOTIFICATIONS</div>
+          <h2 className="m-0 text-xl font-semibold tracking-[-0.03em] text-[#f0f0f0]">Прокси-уведомления</h2>
+          <p className="mt-1 text-sm text-[#8b9bb4]">Автозапуск TradeTools, закрепление окна и системные напоминания о сроках оплаты серверов.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="ghost" onClick={() => void checkUpdates()} disabled={checkingUpdates}>
-            <RefreshCw size={17} className={`mr-2 ${checkingUpdates ? 'animate-spin' : ''}`} />{checkingUpdates ? 'Проверяем...' : 'Проверить обновления'}
+            <RefreshCw size={17} className="mr-2" />{checkingUpdates ? 'Проверяем...' : 'Проверить обновления'}
           </Button>
           <Button onClick={save} disabled={saving}><Save size={17} className="mr-2" />{saving ? 'Сохраняем...' : 'Сохранить'}</Button>
         </div>
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr_220px]">
-        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-          <input className="mt-1 h-4 w-4 accent-violet-500" checked={launchAtLogin} disabled={saving} onChange={(event) => void toggleLaunchAtLogin(event.target.checked)} type="checkbox" />
+        <label className={toggleCardClass}>
+          <input className="mt-1 h-4 w-4 accent-orange-400" checked={launchAtLogin} disabled={saving} onChange={(event) => void toggleLaunchAtLogin(event.target.checked)} type="checkbox" />
           <span>
-            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Power size={16} />Автозапуск</span>
-            <span className="mt-1 block text-xs leading-5 text-zinc-500">TradeTools будет стартовать при входе в систему.</span>
+            <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Power className="text-cyan-300" size={16} />Автозапуск</span>
+            <span className="mt-1 block text-xs leading-5 text-[#8b9bb4]">TradeTools будет стартовать при входе в систему.</span>
           </span>
         </label>
-        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-          <input className="mt-1 h-4 w-4 accent-violet-500" checked={alwaysOnTop} disabled={saving} onChange={(event) => void toggleAlwaysOnTop(event.target.checked)} type="checkbox" />
+        <label className={toggleCardClass}>
+          <input className="mt-1 h-4 w-4 accent-orange-400" checked={alwaysOnTop} disabled={saving} onChange={(event) => void toggleAlwaysOnTop(event.target.checked)} type="checkbox" />
           <span>
-            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Pin size={16} />Поверх окон</span>
-            <span className="mt-1 block text-xs leading-5 text-zinc-500">Окно TradeTools будет оставаться выше других приложений.</span>
+            <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Pin className="text-cyan-300" size={16} />Поверх окон</span>
+            <span className="mt-1 block text-xs leading-5 text-[#8b9bb4]">Окно TradeTools будет оставаться выше других приложений.</span>
           </span>
         </label>
-        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-          <input className="mt-1 h-4 w-4 accent-violet-500" checked={proxyPaymentNotificationsEnabled} disabled={saving} onChange={(event) => void toggleProxyPaymentNotifications(event.target.checked)} type="checkbox" />
+        <label className={toggleCardClass}>
+          <input className="mt-1 h-4 w-4 accent-orange-400" checked={proxyPaymentNotificationsEnabled} disabled={saving} onChange={(event) => void toggleProxyPaymentNotifications(event.target.checked)} type="checkbox" />
           <span>
-            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Bell size={16} />Оплата серверов</span>
-            <span className="mt-1 block text-xs leading-5 text-zinc-500">Напоминания по датам оплаты из хранилища прокси.</span>
+            <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Bell className="text-cyan-300" size={16} />Оплата серверов</span>
+            <span className="mt-1 block text-xs leading-5 text-[#8b9bb4]">Напоминания по датам оплаты из хранилища прокси.</span>
           </span>
         </label>
-        <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-zinc-300">
-          <input className="mt-1 h-4 w-4 accent-violet-500" checked={keepProxyRunningAfterClose} disabled={saving} onChange={(event) => void toggleKeepProxyRunningAfterClose(event.target.checked)} type="checkbox" />
+        <label className={toggleCardClass}>
+          <input className="mt-1 h-4 w-4 accent-orange-400" checked={keepProxyRunningAfterClose} disabled={saving} onChange={(event) => void toggleKeepProxyRunningAfterClose(event.target.checked)} type="checkbox" />
           <span>
-            <span className="flex items-center gap-2 font-semibold text-zinc-100"><Network size={16} />Оставлять proxy после закрытия</span>
-            <span className="mt-1 block text-xs leading-5 text-zinc-500">Следующий запуск переиспользует текущий локальный Xray вместо нового процесса.</span>
+            <span className="flex items-center gap-2 font-semibold text-[#f0f0f0]"><Network className="text-cyan-300" size={16} />Оставлять proxy после закрытия</span>
+            <span className="mt-1 block text-xs leading-5 text-[#8b9bb4]">Следующий запуск переиспользует текущий локальный Xray вместо нового процесса.</span>
           </span>
         </label>
-        <label className="text-xs font-medium text-zinc-500">
+        <label className="text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]">
           Напоминать за дней
           <input className={inputClass} value={paymentReminderDaysBefore} onChange={(event) => setPaymentReminderDaysBefore(event.target.value)} inputMode="numeric" />
         </label>
       </div>
 
-      {message && <p className={`mt-4 text-sm ${messageTone === 'warning' ? 'text-amber-300' : 'text-emerald-300'}`}>{message}</p>}
+      {message && <p className={`mt-4 border px-3 py-2 text-sm ${messageTone === 'warning' ? 'border-orange-400/30 bg-orange-400/10 text-orange-200' : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300'}`} role="status">{message}</p>}
     </Card>
   )
 }

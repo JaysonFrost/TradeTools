@@ -37,8 +37,10 @@ describe('settings', () => {
     })
     expect(settings.clip.outputDir).toBe(join('/Users/igor/Library/Application Support/TradeTools', 'clips'))
     expect(settings.system).toEqual({
+      interfaceTheme: 'classic',
       launchAtLogin: false,
       alwaysOnTop: false,
+      backgroundRecordingEnabled: true,
       keepProxyRunningAfterClose: false,
       proxyPaymentNotificationsEnabled: true,
       clipSuccessNotificationsEnabled: true,
@@ -158,6 +160,16 @@ describe('settings', () => {
       systemAudioEnabled: true,
       microphoneEnabled: false
     })
+  })
+
+  it('migrates legacy OBS recording settings to the built-in recorder', () => {
+    const settings = normalizeSettings({
+      recording: { mode: 'obs' },
+      obs: { host: '192.0.2.1', port: 4455, passwordConfigured: true }
+    } as never, '/app-data')
+
+    expect(settings.recording.mode).toBe('window')
+    expect(settings).not.toHaveProperty('obs')
   })
 
   it('normalizes explicit GPU encoder devices and falls back to auto GPU', () => {
@@ -280,8 +292,10 @@ describe('settings', () => {
     }, '/app-data')
 
     expect(settings.system).toEqual({
+      interfaceTheme: 'classic',
       launchAtLogin: true,
       alwaysOnTop: true,
+      backgroundRecordingEnabled: true,
       keepProxyRunningAfterClose: true,
       proxyPaymentNotificationsEnabled: false,
       clipSuccessNotificationsEnabled: false,
@@ -300,6 +314,11 @@ describe('settings', () => {
       notes: 'paid monthly'
     }])
     expect(JSON.stringify(settings)).not.toContain('proxy-password')
+  })
+
+  it('keeps only the supported persisted interface themes', () => {
+    expect(normalizeSettings({ system: { interfaceTheme: 'classic' } }, '/app-data').system.interfaceTheme).toBe('classic')
+    expect(normalizeSettings({ system: { interfaceTheme: 'something-else' as never } }, '/app-data').system.interfaceTheme).toBe('classic')
   })
 
   it('uses root as the default SSH login for proxy records', () => {

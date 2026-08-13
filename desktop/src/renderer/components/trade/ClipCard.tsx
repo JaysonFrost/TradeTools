@@ -132,12 +132,12 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
   }
 
   return (
-    <Card className="rounded-2xl p-3">
+    <Card className={`rounded-none border bg-[#0b1623] p-3 shadow-none backdrop-blur-none ${selected ? 'border-orange-400/60' : 'border-[#1c2b3a]'}`}>
       <div className="flex gap-3">
         {onSelectedChange && (
           <label className="flex h-16 shrink-0 cursor-pointer items-center px-1" title="Выбрать клип">
             <input
-              className="h-4 w-4 cursor-pointer accent-violet-500"
+              className="h-4 w-4 cursor-pointer accent-orange-400"
               checked={selected}
               onChange={(event) => onSelectedChange(event.target.checked)}
               aria-label="Выбрать клип"
@@ -147,7 +147,7 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
         )}
         <button
           type="button"
-          className="flex h-16 w-24 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-white/10 bg-gradient-to-br from-violet-600/40 to-black transition hover:border-violet-300/40 hover:bg-violet-500/10"
+          className="flex h-16 w-24 shrink-0 cursor-pointer items-center justify-center border border-cyan-400/25 bg-[#07111c] text-cyan-200 transition-colors duration-150 hover:border-cyan-300/60 hover:bg-cyan-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b1623] disabled:cursor-wait disabled:opacity-60"
           onClick={() => void openPreview()}
           disabled={previewing}
           title="Открыть предпросмотр"
@@ -157,14 +157,14 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="m-0 truncate text-sm font-semibold">{clip.title}</h3>
+            <h3 className="m-0 truncate font-mono text-sm font-semibold text-[#f0f0f0]">{clip.title}</h3>
           </div>
-          <p className="mono mt-1 truncate text-[11px] text-zinc-500">{formatDuration(clip.durationSeconds)} • {clip.fileName}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-[#8b9bb4]">{formatDuration(clip.durationSeconds)} // {clip.fileName}</p>
           <div className="mt-2">
             {editingFileName ? (
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
-                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/20 px-2 py-1.5 text-xs text-zinc-100 outline-none transition focus:border-violet-400/60"
+                  className="min-w-0 flex-1 border border-[#1c2b3a] bg-[#07111c] px-2 py-1.5 font-mono text-xs text-[#f0f0f0] outline-none transition-colors duration-150 focus:border-orange-400 focus:ring-2 focus:ring-orange-400/30 focus:ring-offset-2 focus:ring-offset-[#0b1623]"
                   value={fileNameInput}
                   onChange={(event) => setFileNameInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -174,10 +174,10 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
                   aria-label="Имя файла клипа"
                 />
                 <div className="flex gap-2">
-                  <Button variant="ghost" className="min-h-8 rounded-lg px-2 py-1 text-xs" onClick={() => void saveFileName()} disabled={renaming}>
+                  <Button variant="ghost" className="min-h-8 rounded-none px-2 py-1 font-mono text-xs" onClick={() => void saveFileName()} disabled={renaming}>
                     <Check size={14} className="mr-1" />{renaming ? 'Сохраняем...' : 'Сохранить'}
                   </Button>
-                  <Button variant="ghost" className="min-h-8 rounded-lg px-2 py-1 text-xs" onClick={cancelRename} disabled={renaming}>
+                  <Button variant="ghost" className="min-h-8 rounded-none px-2 py-1 font-mono text-xs" onClick={cancelRename} disabled={renaming}>
                     <X size={14} className="mr-1" />Отмена
                   </Button>
                 </div>
@@ -187,22 +187,22 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
             )}
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <Button variant="ghost" className="min-h-7 rounded-md border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-100 hover:bg-violet-500/20" onClick={() => void openPreview()} disabled={previewing}><Play size={13} className="mr-1" />{previewing ? 'Открываем...' : 'Смотреть'}</Button>
+            <Button variant="ghost" className="min-h-7 rounded-none border-cyan-400/25 bg-cyan-400/10 px-2 py-1 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/15" onClick={() => void openPreview()} disabled={previewing}><Play size={13} className="mr-1" />{previewing ? 'Открываем...' : 'Смотреть'}</Button>
             <Button
               variant="ghost"
-              className="min-h-7 rounded-md border-sky-400/20 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-100 hover:bg-sky-500/20 disabled:text-zinc-500"
+              className="min-h-7 rounded-none border-cyan-400/25 bg-cyan-400/10 px-2 py-1 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/15 disabled:text-[#8b9bb4]"
               onClick={() => void openTmmTrade()}
               disabled={!clip.tmmTradeUrl}
               title={clip.tmmTradeUrl ? 'Открыть эту сделку в дневнике TraderMake.Money' : 'Для этого клипа сделка в TMM пока не найдена'}
             >
               <ExternalLink size={13} className="mr-1" />{clip.tmmTradeUrl ? 'Открыть сделку в TMM' : 'Сделка TMM не найдена'}
             </Button>
-            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={() => void showInFolder()}><FolderOpen size={13} className="mr-1" />В папке</Button>
-            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={startRename}><Pencil size={13} className="mr-1" />Переименовать</Button>
-            <Button variant="ghost" className="min-h-7 rounded-md px-2 py-1 text-[11px]" onClick={() => void copyManualText(clip.title, 'Название скопировано')}><Copy size={13} className="mr-1" />Скопировать</Button>
+            <Button variant="ghost" className="min-h-7 rounded-none px-2 py-1 font-mono text-[11px]" onClick={() => void showInFolder()}><FolderOpen size={13} className="mr-1" />В папке</Button>
+            <Button variant="ghost" className="min-h-7 rounded-none px-2 py-1 font-mono text-[11px]" onClick={startRename}><Pencil size={13} className="mr-1" />Переименовать</Button>
+            <Button variant="ghost" className="min-h-7 rounded-none px-2 py-1 font-mono text-[11px]" onClick={() => void copyManualText(clip.title, 'Название скопировано')}><Copy size={13} className="mr-1" />Скопировать</Button>
             <Button
               variant="ghost"
-              className="min-h-7 rounded-md border-red-500/25 px-2 py-1 text-[11px] text-red-100 hover:bg-red-500/15"
+              className="min-h-7 rounded-none border-red-500/30 px-2 py-1 font-mono text-[11px] text-red-200 hover:bg-red-500/15"
               onClick={() => void deleteFromQueue()}
               disabled={deleting || deletingFile}
             >
@@ -210,16 +210,16 @@ export const ClipCard = ({ clip, selected = false, onSelectedChange, onDeleted, 
             </Button>
             <Button
               variant="ghost"
-              className="min-h-7 rounded-md border-red-500/30 px-2 py-1 text-[11px] text-red-100 hover:bg-red-500/15"
+              className="min-h-7 rounded-none border-red-500/30 px-2 py-1 font-mono text-[11px] text-red-200 hover:bg-red-500/15"
               onClick={() => void deleteFile()}
               disabled={deleting || deletingFile}
             >
               <Trash2 size={13} className="mr-1" />{deletingFile ? 'Удаляем...' : 'Удалить видео с диска'}
             </Button>
           </div>
-          {previewMessage && <p className="mt-2 text-xs text-amber-200">{previewMessage}</p>}
-          {deleteMessage && <p className="mt-2 text-xs text-amber-200">{deleteMessage}</p>}
-          {manualMessage && <p className="mt-2 text-xs text-zinc-300">{manualMessage}</p>}
+          {previewMessage && <p className="mt-2 text-xs text-[#ff9f30]" role="alert">{previewMessage}</p>}
+          {deleteMessage && <p className="mt-2 text-xs text-[#ff9f30]" role="alert">{deleteMessage}</p>}
+          {manualMessage && <p className="mt-2 font-mono text-xs text-cyan-100">{manualMessage}</p>}
         </div>
       </div>
     </Card>

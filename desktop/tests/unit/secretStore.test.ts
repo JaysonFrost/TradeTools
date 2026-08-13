@@ -11,30 +11,13 @@ const legacyServiceName = ['Trade', 'Clipper'].join(' ')
 const legacyAuthProvider = ['Goo', 'gle', ['O', 'Auth'].join('')].join('')
 
 describe('secretStore', () => {
-  it('stores OBS password under a stable service and account', async () => {
-    const adapter = createAdapter()
-    const store = createSecretStore(adapter)
-
-    await store.setObsPassword('secret')
-
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password', 'secret')
-  })
-
   it('uses the default export when keytar is loaded as an ESM namespace', async () => {
     const adapter = createAdapter()
     const store = createSecretStore({ default: adapter } as unknown as KeychainAdapter)
 
-    await store.setObsPassword('secret')
+    await store.setTmmApiKey('secret')
 
-    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password', 'secret')
-  })
-
-  it('reads OBS password without exposing it through settings JSON', async () => {
-    const adapter = createAdapter()
-    const store = createSecretStore(adapter)
-
-    await expect(store.getObsPassword()).resolves.toBe('secret')
-    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
+    expect(adapter.setPassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key', 'secret')
   })
 
   it('can read existing secrets saved under the previous keychain service', async () => {
@@ -44,9 +27,9 @@ describe('secretStore', () => {
       .mockResolvedValueOnce('legacy-secret')
     const store = createSecretStore(adapter)
 
-    await expect(store.getObsPassword()).resolves.toBe('legacy-secret')
-    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
-    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'obs-websocket-password')
+    await expect(store.getTmmApiKey()).resolves.toBe('legacy-secret')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key')
+    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'tmm-api-key')
   })
 
   it('can read existing secrets saved under the oldest keychain service', async () => {
@@ -57,18 +40,10 @@ describe('secretStore', () => {
       .mockResolvedValueOnce('legacy-secret')
     const store = createSecretStore(adapter)
 
-    await expect(store.getObsPassword()).resolves.toBe('legacy-secret')
-    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
-    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'obs-websocket-password')
-    expect(adapter.getPassword).toHaveBeenCalledWith(legacyServiceName, 'obs-websocket-password')
-  })
-
-  it('clears OBS password', async () => {
-    const adapter = createAdapter()
-    const store = createSecretStore(adapter)
-
-    await expect(store.clearObsPassword()).resolves.toBe(true)
-    expect(adapter.deletePassword).toHaveBeenCalledWith('TradeTools', 'obs-websocket-password')
+    await expect(store.getTmmApiKey()).resolves.toBe('legacy-secret')
+    expect(adapter.getPassword).toHaveBeenCalledWith('TradeTools', 'tmm-api-key')
+    expect(adapter.getPassword).toHaveBeenCalledWith(legacyTradeCutServiceName, 'tmm-api-key')
+    expect(adapter.getPassword).toHaveBeenCalledWith(legacyServiceName, 'tmm-api-key')
   })
 
   it('stores the TMM API key in keychain instead of settings', async () => {

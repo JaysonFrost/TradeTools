@@ -5,13 +5,14 @@ describe('setupWizardSteps', () => {
   it('guides the user through video setup in order', () => {
     expect(videoSetupWizardSteps.map((step) => step.id)).toEqual([
       'video-welcome',
-      'obs-websocket',
-      'obs-replay',
+      'recording-source',
+      'recording-buffer',
       'folders',
       'test-clip',
       'video-done'
     ])
     expect(videoSetupWizardSteps[0].actions).toContain('Включим встроенную запись окна или экрана открытого терминала без API')
+    expect(JSON.stringify(videoSetupWizardSteps)).not.toContain('OBS')
     expect(videoSetupWizardSteps.map((step) => step.id)).not.toContain('trade-source')
     expect(setupWizardSteps).toBe(videoSetupWizardSteps)
   })
