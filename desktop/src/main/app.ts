@@ -28,7 +28,8 @@ import { listAvailableVideoEncoders } from './services/video/videoEncoderDevices
 import { defaultLocalProxyPort } from '../shared/defaults'
 import { createAppLogService } from './services/logging/appLogService'
 import { acquireAppDataInstanceLock } from './services/appDataInstanceLock'
-import { recordingToggleAccelerator, type RecordingControlStatus } from '../shared/recordingControl'
+import { recordingBufferSaveAccelerator, recordingToggleAccelerator, type RecordingControlStatus } from '../shared/recordingControl'
+import { getRecordingWidgetPlacement } from './recordingWidgetPlacement'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -862,14 +863,12 @@ const createMainWindow = (): BrowserWindow => {
 
 const createRecordingWidgetWindow = (): BrowserWindow => {
   if (recordingWidgetWindow && !recordingWidgetWindow.isDestroyed()) return recordingWidgetWindow
-  const workArea = electronScreen.getPrimaryDisplay().workArea
-  const width = 320
-  const height = 116
+  const { width, height, x, y } = getRecordingWidgetPlacement(electronScreen.getPrimaryDisplay(), process.platform === 'win32')
   const window = new BrowserWindow({
     width,
     height,
-    x: workArea.x + workArea.width - width - 20,
-    y: workArea.y + workArea.height - height - 20,
+    x,
+    y,
     useContentSize: true,
     frame: false,
     resizable: false,
@@ -906,13 +905,22 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
   return window
 }
 
+const repositionRecordingWidgetWindow = (): void => {
+  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed()) return
+  const display = electronScreen.getDisplayMatching(recordingWidgetWindow.getBounds())
+  recordingWidgetWindow.setBounds(getRecordingWidgetPlacement(
+    display,
+    process.platform === 'win32' && recordingWidgetWindow.isAlwaysOnTop()
+  ))
+}
+
 const showRecordingWidget = (): void => {
   if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed()) {
     createRecordingWidgetWindow()
     return
   }
-  recordingWidgetWindow.setAlwaysOnTop(true)
-  recordingWidgetWindow.showInactive()
+  if (recordingWidgetWindow.isAlwaysOnTop()) recordingWidgetWindow.showInactive()
+  else recordingWidgetWindow.show()
 }
 
 app.whenReady().then(() => {
@@ -1497,6 +1505,7 @@ app.whenReady().then(() => {
     options: { waitForCompletion: boolean, requestedAtMs: number, captureTarget?: CaptureTargetRef }
   ): Promise<ClipQueueItem | void> => {
     const settings = await settingsStore.load()
+    if (recordingControlShuttingDown) throw new Error('Приложение завершает работу')
     const title = `Буфер TradeTools${targetSuffix(options.captureTarget)}`
     const protectedSinceMs = Math.max(1, options.requestedAtMs - settings.clip.replayBufferSeconds * 1000 - 5_000)
     const queuedAtMs = Date.now()
@@ -1615,6 +1624,34 @@ app.whenReady().then(() => {
     return targets
   }
 
+  let recordingBufferSavePromise: Promise<ClipQueueItem[]> | undefined
+  const saveLatestRecordingBuffer = (): Promise<ClipQueueItem[]> => {
+    if (recordingBufferSavePromise) return recordingBufferSavePromise
+
+    const savePromise = recordingControlQueue.then(async () => {
+      if (recordingControlShuttingDown || !recordingControlStatus.enabled) throw new Error('Фоновая запись остановлена')
+      const settings = await settingsStore.load()
+      if (recordingControlShuttingDown) throw new Error('Приложение завершает работу')
+      const requestedAtMs = Date.now()
+      const results = await Promise.allSettled(selectManualBufferTargets(settings).map((captureTarget) => enqueueManualBufferRender({
+        waitForCompletion: true,
+        requestedAtMs,
+        captureTarget
+      })))
+      const firstFailure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (firstFailure) throw firstFailure.reason
+      return results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : [])
+    })
+    recordingBufferSavePromise = savePromise
+    void savePromise.finally(() => {
+      if (recordingBufferSavePromise === savePromise) recordingBufferSavePromise = undefined
+    }).catch(() => undefined)
+    return savePromise
+  }
+
+  let recordingToggleHotkeyBusy = false
+  let bufferHotkeySaving = false
+
   let backgroundWindowRecordingEnabled = true
   let backgroundWindowRecordingStartedAtMs = 0
   let nativeRecordingStartedAtMs = 0
@@ -1627,6 +1664,8 @@ app.whenReady().then(() => {
     protected: false,
     hotkey: recordingToggleAccelerator,
     hotkeyAvailable: true,
+    bufferHotkey: recordingBufferSaveAccelerator,
+    bufferHotkeyAvailable: true,
     message: 'Запускаем фоновую запись'
   }
   let recordingControlQueue = Promise.resolve(recordingControlStatus)
@@ -1635,6 +1674,7 @@ app.whenReady().then(() => {
   let freeRecordingStartPending = false
 
   const recordingProtectionReason = async (): Promise<string | undefined> => {
+    if (recordingBufferSavePromise) return 'Сохраняется буфер'
     if (freeRecordingStartPending) return 'Запускается свободная запись'
     let activeTradeCount = terminalTradeWatcher.getStatus().activeTradeCount
     if (activeTradeCount > 0) return `Идёт сделка, позиций: ${activeTradeCount}`
@@ -1914,6 +1954,16 @@ app.whenReady().then(() => {
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:show-main-window', () => focusMainWindow())
   ipcMain.handle('app:show-recording-widget', () => showRecordingWidget())
+  ipcMain.handle('app:get-recording-widget-always-on-top', (event) => {
+    if (event.sender !== recordingWidgetWindow?.webContents) throw new Error('Состояние закрепления доступно только виджету записи')
+    return recordingWidgetWindow.isAlwaysOnTop()
+  })
+  ipcMain.handle('app:toggle-recording-widget-always-on-top', (event) => {
+    if (event.sender !== recordingWidgetWindow?.webContents) throw new Error('Закреплением может управлять только виджет записи')
+    recordingWidgetWindow.setAlwaysOnTop(!recordingWidgetWindow.isAlwaysOnTop())
+    repositionRecordingWidgetWindow()
+    return recordingWidgetWindow.isAlwaysOnTop()
+  })
   ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.hide())
   ipcMain.handle('logs:get', () => appLog.getSnapshot())
   ipcMain.handle('logs:show-file', async () => {
@@ -2482,17 +2532,7 @@ app.whenReady().then(() => {
   ipcMain.handle('terminal-trade:get-status', () => terminalTradeWatcher.getStatus())
   ipcMain.handle('clips:list-pending', () => clipPipeline.listPendingClips())
   ipcMain.handle('clips:get-processing-status', () => currentClipProcessingStatus())
-  ipcMain.handle('clips:create-buffer', async () => {
-    const settings = await settingsStore.load()
-    const requestedAtMs = Date.now()
-    const targets = selectManualBufferTargets(settings)
-    const clips = await Promise.all(targets.map((target) => enqueueManualBufferRender({
-      waitForCompletion: true,
-      requestedAtMs,
-      captureTarget: target
-    })))
-    return clips.filter((clip): clip is ClipQueueItem => clip !== undefined)
-  })
+  ipcMain.handle('clips:create-buffer', () => saveLatestRecordingBuffer())
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
     const [clip] = await Promise.all(selectManualBufferTargets(settings).map((target) => enqueueManualBufferRender({
@@ -2541,12 +2581,32 @@ app.whenReady().then(() => {
     createMainWindow()
     applyAlwaysOnTop(settings)
     createRecordingWidgetWindow()
+    electronScreen.on('display-metrics-changed', repositionRecordingWidgetWindow)
+    electronScreen.on('display-removed', repositionRecordingWidgetWindow)
     const hotkeyRegistered = globalShortcut.register(recordingToggleAccelerator, () => {
+      if (recordingToggleHotkeyBusy) return
+      recordingToggleHotkeyBusy = true
       void setBackgroundRecordingEnabled(!recordingControlStatus.enabled)
+        .finally(() => { recordingToggleHotkeyBusy = false })
+    })
+    const bufferHotkeyRegistered = globalShortcut.register(recordingBufferSaveAccelerator, () => {
+      if (bufferHotkeySaving) return
+      bufferHotkeySaving = true
+      void saveLatestRecordingBuffer()
+        .catch((error) => {
+          const message = getErrorMessage(error)
+          void appLog.error('clip-queue', 'Buffer hotkey failed', error)
+          showSystemNotification({ title: 'TradeTools', body: `Не удалось сохранить последний буфер: ${message}` })
+        })
+        .finally(() => { bufferHotkeySaving = false })
     })
     recordingControlStatus.hotkeyAvailable = hotkeyRegistered
+    recordingControlStatus.bufferHotkeyAvailable = bufferHotkeyRegistered
     if (!hotkeyRegistered) {
       recordingControlStatus.message = 'Глобальный хоткей занят другим приложением'
+    }
+    if (!bufferHotkeyRegistered) {
+      void appLog.warn('clip-queue', 'Buffer hotkey is unavailable', { accelerator: recordingBufferSaveAccelerator })
     }
     mainWindow?.webContents.setBackgroundThrottling(!recordingControlStatus.enabled)
     broadcastRecordingControlStatus()
@@ -2587,8 +2647,10 @@ app.whenReady().then(() => {
       stopProxyRuntimeWatchdog()
       globalShortcut.unregisterAll()
       if (vpnBypassMonitor) vpnBypassMonitor.stop()
+      const pendingBufferSave = recordingBufferSavePromise
       cancelClipRender()
       void recordingControlQueue.catch(() => undefined).then(() => Promise.allSettled([
+        pendingBufferSave?.catch(() => undefined) ?? Promise.resolve(),
         waitForClipRenderIdle(30_000),
         windowRecorderService.stop()
       ])).finally(() => {

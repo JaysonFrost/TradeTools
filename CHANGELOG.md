@@ -6,6 +6,27 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-19
+
+### Added
+
+- Added one-click saving of the latest recording buffer from the compact widget and a global `Ctrl/Cmd+Shift+F10` shortcut for moments missed outside a trade.
+- Added a pin control that switches the widget between always-on-top taskbar placement and normal placement above the work area.
+- Added clear buffer-saving feedback and an accurate unavailable-hotkey state when another application owns the shortcut.
+
+### Changed
+
+- Reduced the recording widget to a compact single-row panel sized to the Windows taskbar, while keeping recording, buffer, pin, open, and close controls available.
+- Repositioned the widget after taskbar, display-metric, or monitor changes and reserved space for the Windows notification area.
+- Multi-monitor buffer saves now run as one coordinated operation with a shared request time.
+
+### Fixed
+
+- Prevented overlapping widget, dashboard, and hotkey requests from creating duplicate buffer renders.
+- Prevented overlapping recording-toggle operations and blocked recording shutdown while the latest buffer is being saved.
+- Prevented buffer-save jobs from racing with application shutdown, including partial multi-monitor failures and already-started saves during graceful quit.
+- Kept the widget pin state synchronized after reload or reopen.
+
 ## [0.6.0] - 2026-08-14
 
 ### Added

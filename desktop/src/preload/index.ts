@@ -82,6 +82,8 @@ const api = {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:get-version'),
     showMainWindow: (): Promise<void> => ipcRenderer.invoke('app:show-main-window'),
     showRecordingWidget: (): Promise<void> => ipcRenderer.invoke('app:show-recording-widget'),
+    getRecordingWidgetAlwaysOnTop: (): Promise<boolean> => ipcRenderer.invoke('app:get-recording-widget-always-on-top'),
+    toggleRecordingWidgetAlwaysOnTop: (): Promise<boolean> => ipcRenderer.invoke('app:toggle-recording-widget-always-on-top'),
     closeRecordingWidget: (): Promise<void> => ipcRenderer.invoke('app:close-recording-widget')
   },
   dialog: {

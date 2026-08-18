@@ -9,6 +9,8 @@ const idleStatus = (patch: Partial<RecordingControlStatus> = {}): RecordingContr
   protected: false,
   hotkey: 'CommandOrControl+Shift+F9',
   hotkeyAvailable: true,
+  bufferHotkey: 'CommandOrControl+Shift+F10',
+  bufferHotkeyAvailable: true,
   message: 'Встроенная запись активна',
   ...patch
 })

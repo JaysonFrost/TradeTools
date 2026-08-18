@@ -1,6 +1,6 @@
-import { ExternalLink, GripHorizontal, Play, Square, X } from 'lucide-react'
+import { Check, ExternalLink, GripHorizontal, LoaderCircle, Pin, PinOff, Play, Save, Square, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { recordingToggleAccelerator, type RecordingControlStatus } from '../../../shared/recordingControl'
+import { recordingBufferSaveAccelerator, recordingToggleAccelerator, type RecordingControlStatus } from '../../../shared/recordingControl'
 import { applyInterfaceTheme, rememberInterfaceTheme } from '../../lib/interfaceTheme'
 import { getRecordingWidgetViewState, type RecordingWidgetTone } from '../../lib/recordingWidgetState'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -21,6 +21,8 @@ const initialStatus: RecordingControlStatus = {
   protected: false,
   hotkey: recordingToggleAccelerator,
   hotkeyAvailable: true,
+  bufferHotkey: recordingBufferSaveAccelerator,
+  bufferHotkeyAvailable: true,
   message: 'Получаем состояние записи...'
 }
 
@@ -30,10 +32,16 @@ const displayHotkey = (hotkey: string): string => hotkey
 
 const dragRegionStyle = { WebkitAppRegion: 'drag' } as React.CSSProperties
 const noDragRegionStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+const compactButtonClass = 'flex h-7 w-7 shrink-0 items-center justify-center border bg-[var(--panel-strong)] disabled:cursor-not-allowed disabled:opacity-50'
 
 export const RecordingWidget = () => {
   const [status, setStatus] = useState<RecordingControlStatus>(initialStatus)
   const [loading, setLoading] = useState(true)
+  const [pinned, setPinned] = useState(true)
+  const [savingBuffer, setSavingBuffer] = useState(false)
+  const [bufferFeedback, setBufferFeedback] = useState('')
+  const [bufferFailed, setBufferFailed] = useState(false)
+  const [pinError, setPinError] = useState('')
 
   useEffect(() => {
     const api = getTradeToolsApi()
@@ -54,6 +62,10 @@ export const RecordingWidget = () => {
         }))
         setLoading(false)
       })
+
+    void api.app.getRecordingWidgetAlwaysOnTop()
+      .then(setPinned)
+      .catch((error) => setPinError(error instanceof Error ? error.message : 'Не удалось получить состояние закрепления'))
 
     return unsubscribe
   }, [])
@@ -97,64 +109,112 @@ export const RecordingWidget = () => {
     }
   }
 
+  const saveLatestBuffer = async () => {
+    if (savingBuffer || !status.enabled) return
+    setSavingBuffer(true)
+    setBufferFailed(false)
+    setBufferFeedback('Сохраняем последний буфер')
+    try {
+      const clips = await getTradeToolsApi().clips.createBuffer()
+      setBufferFeedback(clips.length > 1 ? `Сохранено буферов: ${clips.length}` : 'Последний буфер сохранён')
+    } catch (error) {
+      setBufferFailed(true)
+      setBufferFeedback(error instanceof Error ? error.message : 'Не удалось сохранить последний буфер')
+    } finally {
+      setSavingBuffer(false)
+    }
+  }
+
+  const togglePinned = async () => {
+    try {
+      setPinned(await getTradeToolsApi().app.toggleRecordingWidgetAlwaysOnTop())
+      setPinError('')
+    } catch (error) {
+      setPinError(error instanceof Error ? error.message : 'Не удалось изменить закрепление')
+    }
+  }
+
   const actionClass = status.enabled
     ? 'border-[var(--danger)] bg-[rgba(255,93,115,0.12)] text-[var(--danger)] hover:bg-[rgba(255,93,115,0.2)]'
     : 'border-[var(--action)] bg-[var(--action)] text-[var(--bg)] hover:bg-[var(--action-hover)]'
+  const bufferLabel = bufferFeedback || 'Сохранить последний буфер'
+  const bufferHotkeyLabel = status.bufferHotkeyAvailable ? displayHotkey(status.bufferHotkey) : 'хоткей занят'
+  const pinLabel = pinError || (pinned ? 'Открепить от остальных окон' : 'Закрепить поверх окон')
 
   return (
     <main
       style={dragRegionStyle}
-      className="blueprint-frame flex h-full w-full flex-col overflow-hidden bg-[var(--bg)] text-[var(--text)]"
+      className="blueprint-frame flex h-full w-full items-center gap-1 overflow-hidden bg-[var(--bg)] px-1.5 text-[var(--text)]"
     >
-      <div className="h-0.5 bg-[var(--action)]" />
-      <header className="flex h-8 items-center gap-2 border-b border-[var(--border)] px-3">
-        <GripHorizontal size={14} className="shrink-0 text-[var(--text-muted)]" aria-hidden="true" />
-        <span className="mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--line)]">TradeTools // REC</span>
-        <span className="ml-auto mono text-[10px] text-[var(--text-muted)]">{status.hotkeyAvailable ? displayHotkey(status.hotkey) : 'Хоткей занят'}</span>
+      <GripHorizontal size={14} className="shrink-0 text-[var(--text-muted)]" aria-hidden="true" />
+
+      <div className="flex min-w-0 flex-1 items-center gap-2 px-1" aria-live="polite" aria-atomic="true" title={view.detail}>
+        <span className={`h-2.5 w-2.5 shrink-0 ${tone.dot}`} aria-hidden="true" />
+        <span className={`truncate text-[10px] font-bold uppercase tracking-[0.06em] ${tone.eyebrow}`}>{view.title}</span>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
-          className="flex h-6 w-6 items-center justify-center border border-transparent text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
           style={noDragRegionStyle}
+          className={`${compactButtonClass} ${actionClass}`}
+          onClick={() => void toggleRecording()}
+          disabled={busy}
+          aria-label={`${view.actionLabel} фоновую запись`}
+          title={`${view.actionLabel} фоновую запись (${status.hotkeyAvailable ? displayHotkey(status.hotkey) : 'хоткей занят'})`}
+        >
+          {status.enabled ? <Square size={13} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          style={noDragRegionStyle}
+          className={`${compactButtonClass} ${bufferFailed ? 'border-[var(--danger)] text-[var(--danger)]' : bufferFeedback && !savingBuffer ? 'border-[var(--success)] text-[var(--success)]' : 'border-[var(--border)] text-[var(--line)] hover:border-[var(--line)] hover:text-[var(--text)]'}`}
+          onClick={() => void saveLatestBuffer()}
+          disabled={!status.enabled || savingBuffer}
+          aria-label="Сохранить последний буфер"
+          title={`${bufferLabel} (${bufferHotkeyLabel})`}
+        >
+          {savingBuffer
+            ? <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
+            : bufferFailed
+              ? <TriangleAlert size={15} aria-hidden="true" />
+              : bufferFeedback
+                ? <Check size={15} aria-hidden="true" />
+                : <Save size={15} aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          style={noDragRegionStyle}
+          className={`${compactButtonClass} ${pinError ? 'border-[var(--danger)] text-[var(--danger)]' : pinned ? 'border-[var(--action)] text-[var(--action)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--line)] hover:text-[var(--text)]'}`}
+          onClick={() => void togglePinned()}
+          aria-label={pinLabel}
+          aria-pressed={pinned}
+          title={pinLabel}
+        >
+          {pinned ? <Pin size={14} aria-hidden="true" /> : <PinOff size={14} aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          style={noDragRegionStyle}
+          className={`${compactButtonClass} border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--line)] hover:text-[var(--text)]`}
+          onClick={() => void getTradeToolsApi().app.showMainWindow()}
+          aria-label="Открыть TradeTools"
+          title="Открыть TradeTools"
+        >
+          <ExternalLink size={14} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          style={noDragRegionStyle}
+          className={`${compactButtonClass} border-transparent text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]`}
           onClick={() => void getTradeToolsApi().app.closeRecordingWidget()}
           aria-label="Закрыть виджет записи"
+          title="Закрыть виджет"
         >
           <X size={14} aria-hidden="true" />
         </button>
-      </header>
-
-      <section className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5">
-        <div className="min-w-0" aria-live="polite" aria-atomic="true">
-          <div className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 shrink-0 ${tone.dot}`} aria-hidden="true" />
-            <span className={`truncate text-xs font-bold uppercase tracking-[0.08em] ${tone.eyebrow}`}>{view.title}</span>
-          </div>
-          <p className="mt-1 truncate pl-[18px] text-[10px] leading-4 text-[var(--text-muted)]" title={view.detail}>{view.detail}</p>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            style={noDragRegionStyle}
-            className={`inline-flex h-9 min-w-[104px] items-center justify-center border px-3 text-xs font-bold uppercase tracking-[0.04em] disabled:cursor-not-allowed disabled:opacity-50 ${actionClass}`}
-            onClick={() => void toggleRecording()}
-            disabled={busy}
-            aria-label={`${view.actionLabel} фоновую запись`}
-          >
-            {status.enabled ? <Square size={14} className="mr-1.5" aria-hidden="true" /> : <Play size={14} className="mr-1.5" aria-hidden="true" />}
-            {loading ? 'Подождите...' : view.actionLabel}
-          </button>
-          <button
-            type="button"
-            style={noDragRegionStyle}
-            className="flex h-9 w-9 items-center justify-center border border-[var(--border)] bg-[var(--panel-strong)] text-[var(--text-muted)] hover:border-[var(--line)] hover:text-[var(--text)]"
-            onClick={() => void getTradeToolsApi().app.showMainWindow()}
-            aria-label="Открыть TradeTools"
-            title="Открыть TradeTools"
-          >
-            <ExternalLink size={15} aria-hidden="true" />
-          </button>
-        </div>
-      </section>
+      </div>
+      <span className="sr-only" aria-live="polite">{bufferFeedback}</span>
     </main>
   )
 }
