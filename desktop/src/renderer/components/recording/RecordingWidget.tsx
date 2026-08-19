@@ -32,7 +32,8 @@ const displayHotkey = (hotkey: string): string => hotkey
 
 const dragRegionStyle = { WebkitAppRegion: 'drag' } as React.CSSProperties
 const noDragRegionStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
-const compactButtonClass = 'flex h-7 w-7 shrink-0 items-center justify-center border bg-[var(--panel-strong)] disabled:cursor-not-allowed disabled:opacity-50'
+const compactButtonClass = 'flex h-7 w-7 shrink-0 items-center justify-center border bg-[var(--panel-strong)] disabled:cursor-not-allowed disabled:brightness-75'
+const compactIconClass = 'text-[#f7fbff]'
 
 export const RecordingWidget = () => {
   const [status, setStatus] = useState<RecordingControlStatus>(initialStatus)
@@ -146,7 +147,7 @@ export const RecordingWidget = () => {
       style={dragRegionStyle}
       className="blueprint-frame flex h-full w-full items-center gap-1 overflow-hidden bg-[var(--bg)] px-1.5 text-[var(--text)]"
     >
-      <GripHorizontal size={14} className="shrink-0 text-[var(--text-muted)]" aria-hidden="true" />
+      <GripHorizontal size={14} className={`shrink-0 ${compactIconClass}`} aria-hidden="true" />
 
       <div className="flex min-w-0 flex-1 items-center gap-2 px-1" aria-live="polite" aria-atomic="true" title={view.detail}>
         <span className={`h-2.5 w-2.5 shrink-0 ${tone.dot}`} aria-hidden="true" />
@@ -175,12 +176,12 @@ export const RecordingWidget = () => {
           title={`${bufferLabel} (${bufferHotkeyLabel})`}
         >
           {savingBuffer
-            ? <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
+            ? <LoaderCircle size={15} className={`animate-spin ${compactIconClass}`} aria-hidden="true" />
             : bufferFailed
-              ? <TriangleAlert size={15} aria-hidden="true" />
+              ? <TriangleAlert size={15} className={compactIconClass} aria-hidden="true" />
               : bufferFeedback
-                ? <Check size={15} aria-hidden="true" />
-                : <Save size={15} aria-hidden="true" />}
+                ? <Check size={15} className={compactIconClass} aria-hidden="true" />
+                : <Save size={15} className={compactIconClass} aria-hidden="true" />}
         </button>
         <button
           type="button"
@@ -191,27 +192,27 @@ export const RecordingWidget = () => {
           aria-pressed={pinned}
           title={pinLabel}
         >
-          {pinned ? <Pin size={14} aria-hidden="true" /> : <PinOff size={14} aria-hidden="true" />}
+          {pinned ? <Pin size={14} className={compactIconClass} aria-hidden="true" /> : <PinOff size={14} className={compactIconClass} aria-hidden="true" />}
         </button>
         <button
           type="button"
           style={noDragRegionStyle}
-          className={`${compactButtonClass} border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--line)] hover:text-[var(--text)]`}
+          className={`${compactButtonClass} border-[var(--border)] text-[#f7fbff] hover:border-[var(--line)] hover:text-[#ffffff]`}
           onClick={() => void getTradeToolsApi().app.showMainWindow()}
           aria-label="Открыть TradeTools"
           title="Открыть TradeTools"
         >
-          <ExternalLink size={14} aria-hidden="true" />
+          <ExternalLink size={14} className={compactIconClass} aria-hidden="true" />
         </button>
         <button
           type="button"
           style={noDragRegionStyle}
-          className={`${compactButtonClass} border-transparent text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]`}
+          className={`${compactButtonClass} border-transparent text-[#f7fbff] hover:border-[var(--border-strong)] hover:text-[#ffffff]`}
           onClick={() => void getTradeToolsApi().app.closeRecordingWidget()}
           aria-label="Закрыть виджет записи"
           title="Закрыть виджет"
         >
-          <X size={14} aria-hidden="true" />
+          <X size={14} className={compactIconClass} aria-hidden="true" />
         </button>
       </div>
       <span className="sr-only" aria-live="polite">{bufferFeedback}</span>

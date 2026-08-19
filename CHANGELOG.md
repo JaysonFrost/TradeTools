@@ -6,6 +6,15 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-19
+
+### Fixed
+
+- Improved mini-widget icon contrast so controls remain readable against the compact dark panel, including disabled buffer actions.
+- Kept the compact taskbar-sized layout while placing the widget above the work area.
+- Reasserted the pinned widget's Windows z-order after taskbar clicks so it cannot fall behind the taskbar.
+- Moved the widget above the taskbar and made the dashboard show action restore its position before displaying it.
+
 ## [0.6.2] - 2026-08-19
 
 ### Fixed

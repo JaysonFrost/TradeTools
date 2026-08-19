@@ -455,6 +455,19 @@ describe('main app lifecycle', () => {
     expect(source).toContain('globalShortcut.unregisterAll()')
   })
 
+  it('reasserts the pinned widget above the taskbar after z-order changes', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const widgetSource = source.slice(source.indexOf('const createRecordingWidgetWindow'), source.indexOf('const repositionRecordingWidgetWindow'))
+
+    expect(source).toContain('const keepRecordingWidgetOnTop')
+    expect(source).toContain("recordingWidgetWindow.setAlwaysOnTop(true, 'pop-up-menu')")
+    expect(source).toContain('recordingWidgetWindow.moveTop()')
+    expect(widgetSource).toContain("window.on('blur', keepRecordingWidgetOnTop)")
+    expect((source.match(/keepRecordingWidgetOnTop\(\)/g) ?? []).length).toBeGreaterThanOrEqual(4)
+    const showSource = source.slice(source.indexOf('const showRecordingWidget'), source.indexOf('app.whenReady'))
+    expect(showSource).toContain('repositionRecordingWidgetWindow()')
+  })
+
   it('owns recording intent in main and separates it from engine cleanup', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')

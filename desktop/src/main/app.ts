@@ -78,6 +78,12 @@ process.on('exit', appDataInstanceLock.release)
 let mainWindow: BrowserWindow | undefined
 let recordingWidgetWindow: BrowserWindow | undefined
 
+const keepRecordingWidgetOnTop = (): void => {
+  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isAlwaysOnTop()) return
+  recordingWidgetWindow.setAlwaysOnTop(true, 'pop-up-menu')
+  recordingWidgetWindow.moveTop()
+}
+
 app.on('second-instance', () => {
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -888,6 +894,8 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
     }
   })
   recordingWidgetWindow = window
+  keepRecordingWidgetOnTop()
+  window.on('blur', keepRecordingWidgetOnTop)
   window.setContentProtection(true)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -911,6 +919,7 @@ const repositionRecordingWidgetWindow = (): void => {
     display,
     process.platform === 'win32' && recordingWidgetWindow.isAlwaysOnTop()
   ))
+  keepRecordingWidgetOnTop()
 }
 
 const showRecordingWidget = (): void => {
@@ -918,8 +927,11 @@ const showRecordingWidget = (): void => {
     createRecordingWidgetWindow()
     return
   }
-  if (recordingWidgetWindow.isAlwaysOnTop()) recordingWidgetWindow.showInactive()
-  else recordingWidgetWindow.show()
+  repositionRecordingWidgetWindow()
+  if (recordingWidgetWindow.isAlwaysOnTop()) {
+    recordingWidgetWindow.showInactive()
+    keepRecordingWidgetOnTop()
+  } else recordingWidgetWindow.show()
 }
 
 app.whenReady().then(() => {
@@ -1961,6 +1973,7 @@ app.whenReady().then(() => {
     if (event.sender !== recordingWidgetWindow?.webContents) throw new Error('Закреплением может управлять только виджет записи')
     recordingWidgetWindow.setAlwaysOnTop(!recordingWidgetWindow.isAlwaysOnTop())
     repositionRecordingWidgetWindow()
+    keepRecordingWidgetOnTop()
     return recordingWidgetWindow.isAlwaysOnTop()
   })
   ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.hide())
