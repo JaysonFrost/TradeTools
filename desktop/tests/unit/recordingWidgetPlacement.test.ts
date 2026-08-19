@@ -2,19 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { getRecordingWidgetPlacement } from '../../src/main/recordingWidgetPlacement'
 
 describe('recording widget placement', () => {
-  it('fits inside a bottom taskbar while leaving a small vertical gap', () => {
+  it('keeps the widget above a bottom taskbar so it remains visible', () => {
     const display = {
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       workArea: { x: 0, y: 0, width: 1920, height: 1032 }
     }
 
-    expect(getRecordingWidgetPlacement(display, true)).toEqual({ x: 1280, y: 1034, width: 320, height: 44 })
-    expect(getRecordingWidgetPlacement(display, false)).toEqual({ x: 1280, y: 980, width: 320, height: 44 })
+    expect(getRecordingWidgetPlacement(display, true)).toEqual({ x: 1280, y: 980, width: 320, height: 44 })
 
     expect(getRecordingWidgetPlacement({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       workArea: { x: 0, y: 0, width: 1920, height: 1044 }
-    }, true)).toEqual({ x: 1280, y: 1044, width: 320, height: 36 })
+    }, true)).toEqual({ x: 1280, y: 1000, width: 320, height: 36 })
   })
 
   it('sits above the work area when the taskbar is hidden or vertical', () => {

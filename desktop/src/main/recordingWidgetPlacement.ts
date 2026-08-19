@@ -10,7 +10,7 @@ const fallbackHeight = 48
 const edgeGap = 8
 const taskbarSystemAreaReserve = 320
 
-export const getRecordingWidgetPlacement = (display: DisplayLike, overlapBottomTaskbar: boolean): RectangleLike => {
+export const getRecordingWidgetPlacement = (display: DisplayLike, _alwaysOnTop: boolean): RectangleLike => {
   const boundsBottom = display.bounds.y + display.bounds.height
   const workAreaBottom = display.workArea.y + display.workArea.height
   const bottomTaskbarHeight = Math.max(0, boundsBottom - workAreaBottom)
@@ -23,9 +23,7 @@ export const getRecordingWidgetPlacement = (display: DisplayLike, overlapBottomT
     display.workArea.x + edgeGap,
     display.workArea.x + display.workArea.width - widgetWidth - taskbarSystemAreaReserve
   )
-  const y = hasBottomTaskbar && overlapBottomTaskbar
-    ? workAreaBottom + Math.floor((bottomTaskbarHeight - height) / 2)
-    : workAreaBottom - height - edgeGap
+  const y = workAreaBottom - height - edgeGap
 
   return { x, y, width: widgetWidth, height }
 }

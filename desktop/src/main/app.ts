@@ -876,7 +876,7 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
     fullscreenable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    show: false,
+    show: true,
     backgroundColor: '#0b1623',
     title: 'TradeTools Recording',
     icon: getIconPath(),
@@ -891,7 +891,6 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
   window.setContentProtection(true)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
-  window.once('ready-to-show', () => window.showInactive())
   window.on('closed', () => { recordingWidgetWindow = undefined })
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL && isAllowedDevUrl(process.env.ELECTRON_RENDERER_URL)) {

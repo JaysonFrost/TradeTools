@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-08-19
+
+### Fixed
+
+- Fixed the recording mini-widget being placed inside the Windows taskbar and becoming visually unavailable in the release build.
+- The widget now stays immediately above the taskbar and is created as a visible window at startup, while the always-on-top pin behavior remains available.
+
 ## [0.6.1] - 2026-08-19
 
 ### Added
