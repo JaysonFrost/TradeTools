@@ -315,6 +315,8 @@ describe('Dashboard layout', () => {
     expect(widgetSource).toContain('status.bufferHotkeyAvailable')
     expect(widgetSource).toContain('aria-label="Сохранить последний буфер"')
     expect(widgetSource).toContain('Закрепить поверх окон')
+    expect(widgetSource).toContain('!bg-[var(--action)] text-[var(--action-foreground)]')
+    expect(widgetSource).not.toContain('bg-[var(--action)] text-[var(--bg)]')
     expect(widgetSource).toContain("const compactIconClass = 'text-[#f7fbff]")
     expect(widgetSource).toContain('disabled:brightness-75')
     expect(widgetSource).not.toContain('disabled:opacity-50')

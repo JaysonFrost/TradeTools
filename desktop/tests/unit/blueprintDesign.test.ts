@@ -59,6 +59,8 @@ describe('visual system', () => {
     expect(shell).toContain('applyInterfaceTheme(interfaceTheme)')
     expect(tokens).toContain("html[data-interface-theme='classic']")
     expect(tokens).toContain('--text-muted: #9298af')
+    expect(tokens).toContain('--action-foreground: #0b1623')
+    expect(tokens).toContain('--action-foreground: #f7f8f8')
     expect(globals).toContain("html[data-interface-theme='classic'] body")
     expect(globals).toContain("[class*='border-[#56b5d5']")
     expect(globals).toContain("[class*='bg-[#0d1d2b']")

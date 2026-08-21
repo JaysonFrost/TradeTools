@@ -12,6 +12,7 @@
   --grid-line: #1c2b3a;
   --line: #56b5d5;
   --action: #ff9f30;
+  --action-foreground: #0b1623;
   --action-hover: #e88a1f;
   --success: #00ff9d;
   --danger: #ff5d73;
@@ -38,6 +39,7 @@ html[data-interface-theme='classic'] {
   --grid-line: transparent;
   --line: #8b5cf6;
   --action: #7132f5;
+  --action-foreground: #f7f8f8;
   --action-hover: #8b5cf6;
   --success: #10b981;
   --danger: #f43f5e;

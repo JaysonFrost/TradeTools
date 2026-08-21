@@ -79,7 +79,7 @@ let mainWindow: BrowserWindow | undefined
 let recordingWidgetWindow: BrowserWindow | undefined
 
 const keepRecordingWidgetOnTop = (): void => {
-  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isAlwaysOnTop()) return
+  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isVisible() || !recordingWidgetWindow.isAlwaysOnTop()) return
   recordingWidgetWindow.setAlwaysOnTop(true, 'pop-up-menu')
   recordingWidgetWindow.moveTop()
 }
@@ -895,7 +895,6 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
   })
   recordingWidgetWindow = window
   keepRecordingWidgetOnTop()
-  window.on('blur', keepRecordingWidgetOnTop)
   window.setContentProtection(true)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
@@ -1976,7 +1975,7 @@ app.whenReady().then(() => {
     keepRecordingWidgetOnTop()
     return recordingWidgetWindow.isAlwaysOnTop()
   })
-  ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.hide())
+  ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.close())
   ipcMain.handle('logs:get', () => appLog.getSnapshot())
   ipcMain.handle('logs:show-file', async () => {
     await appLog.info('diagnostics', 'Log file requested')

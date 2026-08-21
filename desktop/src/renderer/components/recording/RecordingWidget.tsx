@@ -137,7 +137,7 @@ export const RecordingWidget = () => {
 
   const actionClass = status.enabled
     ? 'border-[var(--danger)] bg-[rgba(255,93,115,0.12)] text-[var(--danger)] hover:bg-[rgba(255,93,115,0.2)]'
-    : 'border-[var(--action)] bg-[var(--action)] text-[var(--bg)] hover:bg-[var(--action-hover)]'
+    : 'border-[var(--action)] !bg-[var(--action)] text-[var(--action-foreground)] hover:!bg-[var(--action-hover)]'
   const bufferLabel = bufferFeedback || 'Сохранить последний буфер'
   const bufferHotkeyLabel = status.bufferHotkeyAvailable ? displayHotkey(status.bufferHotkey) : 'хоткей занят'
   const pinLabel = pinError || (pinned ? 'Открепить от остальных окон' : 'Закрепить поверх окон')
