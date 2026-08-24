@@ -175,6 +175,26 @@ describe('main app lifecycle', () => {
     expect(source).not.toContain("filter((source) => source.name.trim().length > 0)")
   })
 
+  it('uses Electron monitor labels for screen capture source names while preserving source ids', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const mapperSource = source.slice(
+      source.indexOf('const toWindowCaptureSource ='),
+      source.indexOf('const cachedWindowMetadataMaps =')
+    )
+    const listSource = source.slice(
+      source.indexOf('const listWindowCaptureSources ='),
+      source.indexOf('const toCaptureTargetRef =')
+    )
+
+    expect(mapperSource).toContain("displayLabels.get(displayId)")
+    expect(mapperSource).toContain('displayLabel && displayLabel !== sourceName')
+    expect(mapperSource).toContain('id: source.id')
+    expect(mapperSource).toContain('displayId,')
+    expect(listSource).toContain('electronScreen.getAllDisplays()')
+    expect(listSource).toContain('String(display.id), display.label.trim()')
+    expect(listSource).toContain('toWindowCaptureSource(source, windowProcessIds, windowBounds, displayLabels)')
+  })
+
   it('caches desktop capture source scans because they are expensive in the Electron browser process', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

@@ -438,7 +438,8 @@ const resolveWindowDisplayId = (source: DesktopCaptureSource, windowBounds: Map<
 const toWindowCaptureSource = (
   source: DesktopCaptureSource,
   windowProcessIds = new Map<string, number>(),
-  windowBounds = new Map<string, WindowBounds>()
+  windowBounds = new Map<string, WindowBounds>(),
+  displayLabels = new Map<string, string>()
 ): WindowCaptureSource => {
   const type = source.id.startsWith('screen:') ? 'screen' : 'window'
   const fallbackName = type === 'screen' ? `Экран ${source.display_id || source.id}` : `Окно ${source.id}`
@@ -446,10 +447,12 @@ const toWindowCaptureSource = (
   const bounds = windowBounds.get(windowId)
   const processId = type === 'window' ? windowProcessIds.get(windowId) : undefined
   const displayId = source.display_id || (type === 'window' ? resolveWindowDisplayId(source, windowBounds) : '')
+  const sourceName = source.name.trim() || fallbackName
+  const displayLabel = type === 'screen' ? displayLabels.get(displayId) : undefined
 
   return {
     id: source.id,
-    name: source.name.trim() || fallbackName,
+    name: displayLabel && displayLabel !== sourceName ? `${displayLabel} (${sourceName})` : sourceName,
     displayId,
     type,
     ...(processId ? { processId } : {}),
@@ -548,7 +551,12 @@ const listWindowCaptureSources = async (forceRefresh = false): Promise<WindowCap
   const sources = await listDesktopCaptureSources()
   const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
   const { windowProcessIds, windowBounds } = cachedWindowMetadataMaps(windowIds)
-  const mappedSources = sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds))
+  const displayLabels = new Map(
+    electronScreen.getAllDisplays()
+      .map((display) => [String(display.id), display.label.trim()] as const)
+      .filter(([, label]) => Boolean(label))
+  )
+  const mappedSources = sources.map((source) => toWindowCaptureSource(source, windowProcessIds, windowBounds, displayLabels))
   windowCaptureSourcesCache = {
     loadedAtMs: Date.now(),
     sources: mappedSources
