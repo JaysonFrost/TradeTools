@@ -6,6 +6,17 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-24
+
+### Added
+
+- Screen capture sources now show the system monitor name, while retaining the screen number to distinguish identical monitors.
+
+### Fixed
+
+- Fixed the Classic theme mini-widget play control blending into its background.
+- Fixed mini-widget controls becoming unresponsive after interaction and the widget reappearing after it was closed.
+
 ## [0.6.3] - 2026-08-19
 
 ### Fixed
