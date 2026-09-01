@@ -6,6 +6,7 @@ import type { TerminalTradeRecordingStatus } from '../../main/services/trades/te
 import type { ClipProcessingStatus, ClipQueueItem } from '../../main/services/trades/tradeClipPipeline'
 import type { AppLogSnapshot } from '../../main/services/logging/appLogService'
 import type { RecordingControlStatus } from '../../shared/recordingControl'
+import { supportedTerminalLabels } from '../../shared/supportedTerminalWindows'
 import { IntegrationStatusCard } from '../components/integrations/IntegrationStatusCard'
 import { TopBar } from '../components/layout/TopBar'
 import { SetupWizard } from '../components/setup/SetupWizard'
@@ -155,13 +156,11 @@ const RecordingStatusPanel = ({
   const targetSeconds = Math.max(1, Math.round(settings?.clip.replayBufferSeconds ?? 1))
   const bufferedSeconds = Math.min(targetSeconds, Math.max(0, Math.round(windowRecorder?.bufferedSeconds ?? 0)))
   const progressPercent = Math.min(100, Math.max(0, bufferedSeconds / targetSeconds * 100))
-  const sourceName = windowRecorder?.sourceName || settings?.recording.windowSourceName || settings?.recording.windowSourceId || 'Источник не выбран'
+  const sourceName = windowRecorder?.sourceName || (settings?.recording.sourceType === 'screen'
+    ? settings.recording.windowSourceName || settings.recording.windowSourceId || 'Источник не выбран'
+    : 'Автовыбор терминала')
   const hasActiveTrade = terminalTrade.active
-  const detectedTerminalNames = terminalTrade.availableSources.map((source) => ({
-    tigertrade: 'TigerTrade',
-    vataga: 'Vataga',
-    metascalp: 'MetaScalp'
-  })[source])
+  const detectedTerminalNames = terminalTrade.availableSources.map((source) => supportedTerminalLabels[source])
   const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
   const activeTradeSummary = `${terminalTrade.activeTradeCount} поз.`
   const showStatusBadge = !backgroundRecordingEnabled || hasActiveTrade
@@ -620,7 +619,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
     startedAtMs: 0,
-    message: 'Автоматически ждём сделки Vataga, TigerTrade или MetaScalp',
+    message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX или MetaScalp',
     source: 'multi-terminal',
     availableSources: [],
     activeTradeCount: 0

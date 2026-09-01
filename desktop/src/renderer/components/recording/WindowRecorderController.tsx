@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { AppSettings } from '../../../main/services/settings/settings'
 import { recordingSourceRevision } from '../../../shared/recordingSourceRevision'
+import { isSupportedTerminalWindowName } from '../../../shared/supportedTerminalWindows'
 import type { WindowCaptureSource, WindowRecorderStatus } from '../../../main/services/recording/windowRecorderService'
 import { terminalTitleMatchesTicker } from '../../../main/services/recording/terminalWindowSelection'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
@@ -39,6 +40,7 @@ type BrowserRecorderSession = {
   browserVideoStream?: BrowserVideoStream
   recordingStream?: RecordingStream
   optionalAudioCaptureStarted?: boolean
+  stopPromise?: Promise<void>
   stopping: boolean
   dead: boolean
 }
@@ -104,18 +106,13 @@ const targetNeedsSync = (source: WindowCaptureSource, target: AppSettings['recor
 )
 
 export const resolveRecordingTargets = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource[] => {
+  if (settings.recording.sourceType === 'window') return findAutoRecordedTerminalSources(sources)
+
   const configuredTargets = settings.recording.captureTargets
     .map((target) => sources.find((source) => sourceMatchesTarget(source, target)))
     .filter((source): source is WindowCaptureSource => source !== undefined)
 
   const selectedSource = resolveSource(sources, settings)
-  if (settings.recording.sourceType === 'window') {
-    if (selectedSource) return [selectedSource]
-    if (settings.recording.windowSourceId || settings.recording.windowSourceName) return []
-    if (configuredTargets.length > 0) return configuredTargets
-    return findAutoRecordedTerminalSources(sources)
-  }
-
   const candidates = [...configuredTargets, ...(selectedSource ? [selectedSource] : [])]
   const sourceIds = new Set<string>()
   const uniqueTargets = candidates.filter((source) => {
@@ -127,31 +124,21 @@ export const resolveRecordingTargets = (sources: WindowCaptureSource[], settings
   return uniqueTargets
 }
 
-const isSavedWindowSourceMissing = (settings: AppSettings, source: WindowCaptureSource | undefined): boolean => (
-  settings.recording.sourceType === 'window' &&
-  Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName) &&
-  !source
-)
-
-export const hasConfiguredRecordingSource = (settings: AppSettings): boolean => Boolean(
-  settings.recording.windowSourceId ||
-  settings.recording.windowSourceName ||
-  settings.recording.captureTargets.length > 0
-)
+export const hasConfiguredRecordingSource = (settings: AppSettings): boolean => {
+  if (settings.recording.sourceType === 'window') return false
+  return Boolean(
+    settings.recording.windowSourceId ||
+    settings.recording.windowSourceName ||
+    settings.recording.captureTargets.length > 0
+  )
+}
 
 export const sourceMatchesConfiguredRecording = (
   source: WindowCaptureSource,
   settings: AppSettings
 ): boolean => {
   if (source.type !== settings.recording.sourceType) return false
-  if (source.type === 'screen') {
-    return settings.recording.captureTargets.some((target) => sourceMatchesTarget(source, target))
-  }
-  if (settings.recording.windowSourceId || settings.recording.windowSourceName) {
-    return source.id === settings.recording.windowSourceId ||
-      Boolean(settings.recording.windowSourceName) && source.name === settings.recording.windowSourceName
-  }
-
+  if (source.type === 'window') return isSupportedTerminalWindowName(source.name)
   return settings.recording.captureTargets.some((target) => sourceMatchesTarget(source, target))
 }
 
@@ -264,8 +251,8 @@ const createLocalStatus = (settings: AppSettings, message: string, active = fals
   active,
   mode: settings.recording.mode,
   backend: 'browser',
-  sourceId: settings.recording.windowSourceId,
-  sourceName: settings.recording.windowSourceName,
+  sourceId: settings.recording.sourceType === 'window' ? '' : settings.recording.windowSourceId,
+  sourceName: settings.recording.sourceType === 'window' ? '' : settings.recording.windowSourceName,
   segmentCount: 0,
   bufferedSeconds: 0,
   lastSegmentAtMs: 0,
@@ -395,10 +382,10 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       !session.dead && (session.stream?.getVideoTracks().some(browserVideoTrackIsUsable) ?? false)
     )
 
-    const stopBrowserRecorder = (session: BrowserRecorderSession) => {
-      if (session.stopping) return
+    const stopBrowserRecorder = (session: BrowserRecorderSession): Promise<void> => {
+      if (session.stopping) return session.stopPromise ?? Promise.resolve()
       session.stopping = true
-      void getTradeToolsApi().recording.browserStopped({
+      session.stopPromise = getTradeToolsApi().recording.browserStopped({
         sourceId: session.source.id,
         captureEpochId: session.captureEpochId
       }).catch(() => undefined)
@@ -422,6 +409,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
       session.stream?.getTracks().forEach((track) => track.stop())
       session.systemAudioStream?.getTracks().forEach((track) => track.stop())
       session.microphoneStream?.getTracks().forEach((track) => track.stop())
+      return session.stopPromise
     }
 
     const cleanup = () => {
@@ -675,11 +663,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         return { currentSettings, targets: [] }
       }
 
-      const source = targets[0] ?? resolveSource(sources, currentSettings)
-      if (targets.length === 0 && isSavedWindowSourceMissing(currentSettings, source)) {
-        return { currentSettings, targets: [] }
-      }
-
       const screenTargetsNeedSync = currentSettings.recording.sourceType === 'screen' && targets.length > 0 && (
         currentSettings.recording.captureTargets.some((target) => {
           if (target.type !== 'screen') return false
@@ -718,18 +701,27 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     const reconcile = async () => {
       const api = getTradeToolsApi()
       const currentSettings = settingsRef.current ?? initialSettings
-      const sources = await api.recording.listWindowSources()
+      const sources = await api.recording.listWindowSources(currentSettings.recording.sourceType === 'window')
       const prepared = await prepareTargets(api, sources)
       const targets = prepared.targets
+      const stoppedRecorders: Promise<void>[] = []
       if (prepared.currentSettings.recording.sourceType === 'window') ensureSourceDiscovery()
       if (hasConfiguredRecordingSource(prepared.currentSettings)) {
         browserRecorders.forEach((session, sourceId) => {
           if (sourceMatchesConfiguredRecording(session.source, prepared.currentSettings)) return
           browserRecorders.delete(sourceId)
-          stopBrowserRecorder(session)
+          stoppedRecorders.push(stopBrowserRecorder(session))
         })
       }
+      const desiredSourceIds = new Set(targets.map((target) => target.id))
+      browserRecorders.forEach((session, sourceId) => {
+        if (!desiredSourceIds.has(sourceId) || !streamIsLive(session)) {
+          browserRecorders.delete(sourceId)
+          stoppedRecorders.push(stopBrowserRecorder(session))
+        }
+      })
       if (targets.length === 0) {
+        await Promise.all(stoppedRecorders)
         const activeSources = [...browserRecorders.values()]
           .filter(streamIsLive)
           .map((session) => session.source)
@@ -769,14 +761,6 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         if (statusPollTimer !== undefined) window.clearInterval(statusPollTimer)
         statusPollTimer = undefined
       }
-
-      const desiredSourceIds = new Set(targets.map((target) => target.id))
-      browserRecorders.forEach((session, sourceId) => {
-        if (!desiredSourceIds.has(sourceId) || !streamIsLive(session)) {
-          browserRecorders.delete(sourceId)
-          stopBrowserRecorder(session)
-        }
-      })
 
       const targetsToStart = targets.filter((target) => !browserRecorders.has(target.id))
       if (targetsToStart.length > 0 && targets.length > 1) {

@@ -5,6 +5,7 @@ import type { AppSettings } from '../../../main/services/settings/settings'
 import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
+import { findAutoRecordedTerminalSources } from '../../lib/windowCaptureSources'
 import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -199,11 +200,8 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     setVideoEncoder(videoEncoderOptions[0]?.id ?? 'cpu')
   }, [videoEncoderOptions, videoEncoder])
 
-  const windowOptions = windowSources.filter((source) => source.type === 'window')
+  const windowOptions = findAutoRecordedTerminalSources(windowSources)
   const screenSources = windowSources.filter((source) => source.type === 'screen')
-  const selectedWindowTemporarilyUnavailable = Boolean(
-    windowSourceId && !windowOptions.some((source) => source.id === windowSourceId)
-  )
   const isCaptureTargetSelected = (source: WindowCaptureSource): boolean => captureTargets.some((target) => sourceMatchesCaptureTarget(source, target))
 
   const toggleScreenCaptureTarget = (source: WindowCaptureSource, checked: boolean) => {
@@ -219,7 +217,9 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     setSaving(true)
     try {
       const api = getTradeToolsApi()
-      const selectedSource = windowSources.find((source) => source.id === windowSourceId)
+      const selectedSource = sourceType === 'window'
+        ? windowOptions.find((source) => source.id === windowSourceId) ?? windowOptions[0]
+        : windowSources.find((source) => source.id === windowSourceId)
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
       const paddingBeforeSeconds = Number.isFinite(parsedPaddingBeforeSeconds) ? parsedPaddingBeforeSeconds : 0
@@ -234,7 +234,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
               const source = windowSources.find((source) => sourceMatchesCaptureTarget(source, target))
               return source ? toCaptureTarget(source) : target
             })
-        : selectedCaptureTarget ? [selectedCaptureTarget] : captureTargets.filter((target) => target.type === 'window')
+        : selectedCaptureTarget ? [selectedCaptureTarget] : []
       const firstCaptureTarget = nextCaptureTargets[0]
       const saveTargetId = sourceType === 'screen'
         ? firstCaptureTarget?.id ?? ''
@@ -244,8 +244,8 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
         recording: {
           mode: 'window',
           sourceType,
-          windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : windowSourceId,
-          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
+          windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? '',
+          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? '',
           captureTargets: nextCaptureTargets,
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId,
@@ -419,7 +419,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
       <div className="mt-5 grid gap-6 xl:grid-cols-2">
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Источник записи</div>
-          <p className={sectionHintClass}>Встроенная запись пишет выбранное окно терминала или выбранные мониторы.</p>
+          <p className={sectionHintClass}>Окна поддержанных терминалов подключаются автоматически. Для записи мониторов выбор остаётся ручным.</p>
           <div className="mt-3 inline-flex items-center border border-cyan-400/50 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
             <Monitor size={16} className="mr-2" />Встроенная запись
           </div>
@@ -455,30 +455,20 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
               </div>
 
               {sourceType === 'window' ? (
-                <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]">
-                  Окно для записи
+                <div>
+                  <div className="text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]">Терминалы для автозаписи</div>
+                  <p className={sectionHintClass}>TradeTools пишет все найденные окна Vataga, TigerTrade, LootX и MetaScalp. Выбирать одно окно не нужно.</p>
                   <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-                    <select
-                      className={`${inputClass.replace('mt-1 ', '')} min-w-0 flex-1 appearance-none`}
-                      value={windowSourceId}
-                      onChange={(event) => {
-                        const source = windowSources.find((candidate) => candidate.id === event.target.value)
-                        setWindowSourceId(event.target.value)
-                        setWindowSourceName(source?.name ?? '')
-                        setCaptureTargets(source ? [toCaptureTarget(source)] : [])
-                      }}
-                    >
-                      <option value="">Выберите окно</option>
-                      {selectedWindowTemporarilyUnavailable && (
-                        <option value={windowSourceId}>{windowSourceName || 'Сохранённое окно'} (временно недоступно)</option>
-                      )}
-                      {windowOptions.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-                    </select>
+                    <div className={`${inputClass.replace('mt-1 ', '')} flex min-w-0 flex-1 flex-wrap items-center gap-2`} aria-label="Найденные терминалы">
+                      {windowOptions.length > 0
+                        ? windowOptions.map((source) => <span key={source.id} className="border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-xs text-cyan-100">{source.name}</span>)
+                        : <span className="text-sm text-[#8b9bb4]">Поддержанные терминалы пока не найдены</span>}
+                    </div>
                     <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>
                       <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}
                     </Button>
                   </div>
-                </label>
+                </div>
               ) : (
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2">

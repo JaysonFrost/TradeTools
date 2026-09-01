@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { open, readdir, stat } from 'node:fs/promises'
+import { open, readFile, readdir, stat } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
+import { supportedTerminalLabels, type SupportedTerminalId } from '../../../shared/supportedTerminalWindows'
 
-export type TerminalTradeSource = 'vataga' | 'tigertrade' | 'metascalp'
+export type TerminalTradeSource = SupportedTerminalId
 
 export type TerminalTradeRecordingStatus = {
   active: boolean
@@ -89,6 +90,45 @@ type MetaScalpSnapshotDiff = {
   initialized: boolean
 }
 
+export type LootxJournalFill = {
+  id: string
+  positionId: string
+  exchange: string
+  symbol: string
+  eventTimeMs: number
+  signedQuantity: number
+  sortIndex: number
+}
+
+export type LootxPositionState = {
+  positionId: string
+  exchange: string
+  symbol: string
+  side: string
+  size: number
+  entryTimeMs: number
+  latestEventAtMs: number
+}
+
+export type LootxJournalSnapshot = {
+  resetTimestampMs: number
+  fills: LootxJournalFill[]
+}
+
+export type LootxJournalCursor = {
+  resetTimestampMs: number
+  seenFillIds: Set<string>
+  positions: Map<string, LootxPositionState>
+  latestEventAtMsByPosition: Map<string, number>
+}
+
+export type LootxJournalAdvance = {
+  cursor: LootxJournalCursor
+  events: TerminalPositionEvent[]
+  openPositions: LootxPositionState[]
+  resetDetected: boolean
+}
+
 const defaultPollIntervalMs = 1_000
 const readChunkSize = 128 * 1024
 const metaScalpPorts = Array.from({ length: 11 }, (_, index) => 17_845 + index)
@@ -109,11 +149,7 @@ type RecentClosedTerminalTrade = {
   rememberedAtMs: number
 }
 
-const sourceDisplayNames: Record<TerminalTradeSource, string> = {
-  vataga: 'Vataga',
-  tigertrade: 'TigerTrade',
-  metascalp: 'MetaScalp'
-}
+const sourceDisplayNames: Record<TerminalTradeSource, string> = supportedTerminalLabels
 
 const normalizeText = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
 
@@ -352,6 +388,230 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
   }
 }
 
+const normalizeLootxExchangeName = (exchangeId: string, connectionTag: string): string => {
+  const exchange = normalizeExchangeName(exchangeId, 'LOOTX')
+  return /:F$/i.test(connectionTag) && exchange.endsWith('F')
+    ? exchange.slice(0, -1) || 'LOOTX'
+    : exchange
+}
+
+const getLootxPositionId = (connectionTag: string, exchangeId: string, symbol: string): string => (
+  `${connectionTag || 'CONNECTION'}:${exchangeId}:${symbol}`.toUpperCase()
+)
+
+export const parseLootxJournalSnapshot = (text: string): LootxJournalSnapshot | undefined => {
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+
+  if (!payload || typeof payload !== 'object') return undefined
+  const resetTimestampMs = parseNumericValue(getField(payload, ['ResetTimestampMs']))
+  const trades = getField(payload, ['Trades'])
+  if (!Number.isFinite(resetTimestampMs) || resetTimestampMs < 0 || !Array.isArray(trades)) return undefined
+
+  const fills: LootxJournalFill[] = []
+  const seenFillIds = new Set<string>()
+  const fallbackOccurrences = new Map<string, number>()
+
+  for (const [sortIndex, trade] of trades.entries()) {
+    if (!trade || typeof trade !== 'object') continue
+
+    const execId = normalizeAnyText(getField(trade, ['ExecId']))
+    if (execId.toUpperCase() === 'SYNTHETIC_SEED') continue
+
+    const instrument = getField(trade, ['Instrument'])
+    const exchangeId = normalizeAnyText(getField(instrument, ['ExchangeId']))
+    const symbol = normalizeTerminalSymbol(getField(instrument, ['Symbol']), '')
+    const connectionTag = normalizeAnyText(getField(trade, ['ConnectionTag']))
+    const eventTimeMs = parseMaybeTime(getField(trade, ['TimestampMs']))
+    const quantityRaw = parseNumericValue(getField(trade, ['QuantityRaw', 'Quantity']))
+    const quantityScaleValue = parseNumericValue(getField(trade, ['QuantityScale']))
+    const quantityScale = Number.isFinite(quantityScaleValue) && quantityScaleValue > 0 ? quantityScaleValue : 1
+    const quantity = Math.abs(quantityRaw / quantityScale)
+    const side = normalizeAnyText(getField(trade, ['Side'])).toLowerCase()
+    const direction = ['bid', 'buy', 'long'].includes(side)
+      ? 1
+      : ['ask', 'sell', 'short'].includes(side)
+        ? -1
+        : 0
+    if (!exchangeId || !symbol || !eventTimeMs || !Number.isFinite(quantity) || isNearlyZero(quantity) || !direction) continue
+
+    const positionId = getLootxPositionId(connectionTag, exchangeId, symbol)
+    const tradeId = normalizeAnyText(getField(trade, ['TradeId']))
+    const usableExecId = execId && execId !== '0' ? execId : ''
+    const usableTradeId = tradeId && tradeId !== '0' ? tradeId : ''
+    let id = usableExecId
+      ? `${positionId}|exec:${usableExecId}`
+      : usableTradeId
+        ? `${positionId}|trade:${usableTradeId}`
+        : ''
+
+    if (!id) {
+      const orderId = normalizeAnyText(getField(trade, ['OrderId']))
+      const cumulativeQuantity = normalizeAnyText(getField(trade, ['CumulativeFilledQtyRaw']))
+      const fallbackBase = `${positionId}|fill:${eventTimeMs}:${orderId}:${side}:${quantityRaw}:${quantityScale}:${cumulativeQuantity}`
+      const occurrence = fallbackOccurrences.get(fallbackBase) ?? 0
+      fallbackOccurrences.set(fallbackBase, occurrence + 1)
+      id = `${fallbackBase}:${occurrence}`
+    }
+
+    const normalizedId = id.toUpperCase()
+    if (seenFillIds.has(normalizedId)) continue
+    seenFillIds.add(normalizedId)
+    fills.push({
+      id: normalizedId,
+      positionId,
+      exchange: normalizeLootxExchangeName(exchangeId, connectionTag),
+      symbol,
+      eventTimeMs,
+      signedQuantity: direction * quantity,
+      sortIndex
+    })
+  }
+
+  fills.sort((left, right) => (
+    left.eventTimeMs - right.eventTimeMs
+    || left.sortIndex - right.sortIndex
+    || left.id.localeCompare(right.id)
+  ))
+  return { resetTimestampMs, fills }
+}
+
+const applyLootxFill = (
+  positions: Map<string, LootxPositionState>,
+  latestEventAtMsByPosition: Map<string, number>,
+  fill: LootxJournalFill
+): TerminalPositionEvent => {
+  const previous = positions.get(fill.positionId)
+  const previousSize = previous?.size ?? 0
+  const rawNextSize = previousSize + fill.signedQuantity
+  const nextSize = isNearlyZero(rawNextSize) ? 0 : rawNextSize
+  const reversed = !isNearlyZero(previousSize)
+    && !isNearlyZero(nextSize)
+    && Math.sign(previousSize) !== Math.sign(nextSize)
+  const entryTimeMs = isNearlyZero(previousSize) || reversed
+    ? fill.eventTimeMs
+    : previous?.entryTimeMs ?? fill.eventTimeMs
+  const side = isNearlyZero(nextSize)
+    ? previous?.side ?? normalizeSideFromSize(fill.signedQuantity)
+    : normalizeSideFromSize(nextSize)
+  const state: LootxPositionState = {
+    positionId: fill.positionId,
+    exchange: fill.exchange,
+    symbol: fill.symbol,
+    side,
+    size: nextSize,
+    entryTimeMs,
+    latestEventAtMs: fill.eventTimeMs
+  }
+  positions.set(fill.positionId, state)
+  latestEventAtMsByPosition.set(fill.positionId, fill.eventTimeMs)
+  return {
+    source: 'lootx',
+    positionId: state.positionId,
+    exchange: state.exchange,
+    symbol: state.symbol,
+    side: state.side,
+    isClosed: isNearlyZero(state.size),
+    eventTimeMs: fill.eventTimeMs,
+    size: state.size
+  }
+}
+
+const buildLootxBaseline = (snapshot: LootxJournalSnapshot): {
+  positions: Map<string, LootxPositionState>
+  latestEventAtMsByPosition: Map<string, number>
+} => {
+  const positions = new Map<string, LootxPositionState>()
+  const latestEventAtMsByPosition = new Map<string, number>()
+  for (const fill of snapshot.fills) applyLootxFill(positions, latestEventAtMsByPosition, fill)
+  return { positions, latestEventAtMsByPosition }
+}
+
+const getOpenLootxPositions = (positions: Map<string, LootxPositionState>): LootxPositionState[] => (
+  [...positions.values()].filter((position) => !isNearlyZero(position.size))
+)
+
+export const advanceLootxJournalSnapshot = (
+  snapshot: LootxJournalSnapshot,
+  previous?: LootxJournalCursor
+): LootxJournalAdvance => {
+  const snapshotFillIds = new Set(snapshot.fills.map((fill) => fill.id))
+  if (!previous) {
+    const baseline = buildLootxBaseline(snapshot)
+    const cursor: LootxJournalCursor = {
+      resetTimestampMs: snapshot.resetTimestampMs,
+      seenFillIds: snapshotFillIds,
+      positions: baseline.positions,
+      latestEventAtMsByPosition: baseline.latestEventAtMsByPosition
+    }
+    return {
+      cursor,
+      events: [],
+      openPositions: getOpenLootxPositions(cursor.positions),
+      resetDetected: false
+    }
+  }
+
+  const resetTimestampChanged = snapshot.resetTimestampMs !== previous.resetTimestampMs
+  const snapshotTruncated = [...previous.seenFillIds].some((fillId) => !snapshotFillIds.has(fillId))
+  if (resetTimestampChanged || snapshotTruncated) {
+    const positions = new Map([...previous.positions].map(([positionId, position]) => [positionId, { ...position }]))
+    const latestEventAtMsByPosition = new Map(previous.latestEventAtMsByPosition)
+    const events: TerminalPositionEvent[] = []
+    for (const fill of snapshot.fills) {
+      if (previous.seenFillIds.has(fill.id)) continue
+      const latestEventAtMs = latestEventAtMsByPosition.get(fill.positionId)
+      if (latestEventAtMs !== undefined && fill.eventTimeMs < latestEventAtMs) continue
+      events.push(applyLootxFill(positions, latestEventAtMsByPosition, fill))
+    }
+
+    const seenFillIds = resetTimestampChanged
+      ? snapshotFillIds
+      : new Set([...previous.seenFillIds, ...snapshotFillIds])
+    const cursor: LootxJournalCursor = {
+      resetTimestampMs: snapshot.resetTimestampMs,
+      seenFillIds,
+      positions,
+      latestEventAtMsByPosition
+    }
+    return {
+      cursor,
+      events,
+      openPositions: getOpenLootxPositions(cursor.positions),
+      resetDetected: true
+    }
+  }
+
+  const seenFillIds = new Set(previous.seenFillIds)
+  const positions = new Map([...previous.positions].map(([positionId, position]) => [positionId, { ...position }]))
+  const latestEventAtMsByPosition = new Map(previous.latestEventAtMsByPosition)
+  const events: TerminalPositionEvent[] = []
+  for (const fill of snapshot.fills) {
+    if (seenFillIds.has(fill.id)) continue
+    seenFillIds.add(fill.id)
+    const latestEventAtMs = latestEventAtMsByPosition.get(fill.positionId)
+    if (latestEventAtMs !== undefined && fill.eventTimeMs < latestEventAtMs) continue
+    events.push(applyLootxFill(positions, latestEventAtMsByPosition, fill))
+  }
+
+  const cursor: LootxJournalCursor = {
+    resetTimestampMs: snapshot.resetTimestampMs,
+    seenFillIds,
+    positions,
+    latestEventAtMsByPosition
+  }
+  return {
+    cursor,
+    events,
+    openPositions: getOpenLootxPositions(cursor.positions),
+    resetDetected: false
+  }
+}
+
 const toPayloadArray = (payload: unknown, nestedKeys: string[]): unknown[] => {
   if (Array.isArray(payload)) return payload
   for (const key of nestedKeys) {
@@ -467,7 +727,7 @@ export const diffMetaScalpPositionSnapshots = (
 export const createIdleTerminalTradeStatus = (): TerminalTradeRecordingStatus => ({
   active: false,
   startedAtMs: 0,
-  message: 'Автоматически ждём сделки Vataga, TigerTrade или MetaScalp',
+  message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX или MetaScalp',
   source: 'multi-terminal',
   availableSources: [],
   activeTradeCount: 0
@@ -495,6 +755,11 @@ export const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => 
 
   const macDataDir = getMacApplicationSupportDir(env)
   return macDataDir ? posix.join(macDataDir, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
+}
+
+export const getLootxJournalPath = (env: NodeJS.ProcessEnv): string | undefined => {
+  const appData = normalizeText(env.APPDATA)
+  return appData ? join(appData, 'TradingTerminal', 'journal.json') : undefined
 }
 
 const getTigerTradeRootDir = (env: NodeJS.ProcessEnv): string | undefined => {
@@ -617,6 +882,7 @@ export const createTerminalTradeWatcher = ({
 }: TerminalTradeWatcherInput): TerminalTradeWatcher => {
   const vatagaLogsDir = getVatagaLogsDir(env)
   const tigerTradeRootDir = getTigerTradeRootDir(env)
+  const lootxJournalPath = getLootxJournalPath(env)
   const tigerTradeExecutionTimes = new Map<string, number>()
   const parseTigerTradeLogLine = (line: string): TerminalPositionEvent | undefined => {
     const execution = parseTigerTradeExecutionEvent(line)
@@ -652,8 +918,11 @@ export const createTerminalTradeWatcher = ({
   const positionTradeKeys = new Map<string, string>()
   const suppressedTradePositions = new Map<string, Set<string>>()
   const suppressedPositionTradeKeys = new Map<string, string>()
+  const suppressedPositionEvents = new Map<string, TerminalPositionEvent>()
   const renderedTradeIds = new Set<string>()
   const recentClosedTrades: RecentClosedTerminalTrade[] = []
+  let lootxCursor: LootxJournalCursor | undefined
+  let lootxAvailable = false
   let metaScalpBaseUrl: string | undefined
   let metaScalpLastProbeAtMs = 0
   let metaScalpKnownOpenPositions = new Map<string, TerminalPositionEvent>()
@@ -691,6 +960,7 @@ export const createTerminalTradeWatcher = ({
       provider.initialized = false
     }
     tigerTradeExecutionTimes.clear()
+    lootxCursor = undefined
   }
 
   const syncRecordingBoundary = (settings: AppSettings) => {
@@ -718,6 +988,7 @@ export const createTerminalTradeWatcher = ({
 
   const availableSources = (): TerminalTradeSource[] => [
     ...providers.filter((provider) => provider.available).map((provider) => provider.source),
+    ...(lootxAvailable ? ['lootx' as const] : []),
     ...(metaScalpAvailable ? ['metascalp' as const] : [])
   ]
 
@@ -735,7 +1006,7 @@ export const createTerminalTradeWatcher = ({
     const names = sources.map((source) => sourceDisplayNames[source])
     const message = names.length
       ? `Автозапись терминалов включена: ${names.join(', ')}`
-      : 'Откройте Vataga, TigerTrade или MetaScalp, TradeTools сам поймает сделки'
+      : 'Откройте Vataga, TigerTrade, LootX или MetaScalp, TradeTools сам поймает сделки'
     if (status.message !== message || !hasSameAvailableSources(sources)) {
       emit({ message, source: 'multi-terminal', availableSources: sources, lastError: undefined })
     }
@@ -755,7 +1026,7 @@ export const createTerminalTradeWatcher = ({
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
   const getTradeKey = (event: TerminalPositionEvent): string => {
-    if (event.source === 'tigertrade') return getPositionKey(event)
+    if (event.source === 'tigertrade' || event.source === 'lootx') return getPositionKey(event)
 
     const sourceScope = event.source === 'vataga'
       ? String(event.processId ?? 'process')
@@ -810,11 +1081,12 @@ export const createTerminalTradeWatcher = ({
     trade.recordingGateRevision === undefined || trade.recordingGateRevision === getRecordingGateRevision?.()
   )
 
-  const suppressOpenPosition = (tradeKey: string, positionKey: string) => {
+  const suppressOpenPosition = (tradeKey: string, positionKey: string, event: TerminalPositionEvent) => {
     const positions = suppressedTradePositions.get(tradeKey) ?? new Set<string>()
     positions.add(positionKey)
     suppressedTradePositions.set(tradeKey, positions)
     suppressedPositionTradeKeys.set(positionKey, tradeKey)
+    suppressedPositionEvents.set(positionKey, { ...event })
   }
 
   const releaseSuppressedPosition = (tradeKey: string, positionKey: string) => {
@@ -823,13 +1095,14 @@ export const createTerminalTradeWatcher = ({
 
     positions.delete(positionKey)
     suppressedPositionTradeKeys.delete(positionKey)
+    suppressedPositionEvents.delete(positionKey)
     if (positions.size === 0) suppressedTradePositions.delete(tradeKey)
   }
 
   const emitBufferWarming = (event: TerminalPositionEvent, sourceName: string) => {
     emit({
       source: event.source,
-      message: `${sourceName}: видеобуфер для ${event.symbol} ещё не набрал отступ до входа, эту сделку пропускаем`,
+      message: `${sourceName}: ждём готовности видеобуфера для ${event.symbol}; клип начнётся с доступного участка`,
       lastEventAtMs: event.eventTimeMs,
       lastError: undefined
     })
@@ -881,6 +1154,8 @@ export const createTerminalTradeWatcher = ({
     event: TerminalPositionEvent,
     sourceName: string
   ): Promise<ClosedTrade | undefined> => {
+    if (event.eventTimeMs <= openTrade.entryTimeMs) return undefined
+
     const closedTrade: ClosedTrade = {
       id: `${openTrade.id}-${openTrade.entryTimeMs}-${event.eventTimeMs}`,
       exchange: openTrade.exchange,
@@ -938,7 +1213,7 @@ export const createTerminalTradeWatcher = ({
     if (!getRecordingStartedAtMs) return false
 
     const recordingStartedAtMs = getRecordingStartedAtMs()
-    return !recordingStartedAtMs || event.eventTimeMs < recordingStartedAtMs
+    return Boolean(recordingStartedAtMs && event.eventTimeMs < recordingStartedAtMs)
   }
 
   const handleTerminalEvent = async (event: TerminalPositionEvent) => {
@@ -951,7 +1226,7 @@ export const createTerminalTradeWatcher = ({
     if (suppressedPositions) {
       if (eventClosesPosition) releaseSuppressedPosition(tradeKey, positionKey)
       else {
-        suppressOpenPosition(tradeKey, positionKey)
+        suppressOpenPosition(tradeKey, positionKey, event)
         emitBufferWarming(event, sourceName)
       }
       return
@@ -973,7 +1248,7 @@ export const createTerminalTradeWatcher = ({
               activeTrades.set(tradeKey, nextTrade)
               positionTradeKeys.set(positionKey, tradeKey)
             } else {
-              suppressOpenPosition(tradeKey, positionKey)
+              suppressOpenPosition(tradeKey, positionKey, event)
             }
             if (closedTrade) emitQueuedClip(event, sourceName, closedTrade)
             if (!nextTrade) {
@@ -995,7 +1270,7 @@ export const createTerminalTradeWatcher = ({
       } else {
         const nextTrade = await prepareOpenTrade(event, tradeKey, positionKey)
         if (!nextTrade || !recordingGateStillOpen(nextTrade)) {
-          suppressOpenPosition(tradeKey, positionKey)
+          suppressOpenPosition(tradeKey, positionKey, event)
           await protectActiveTrades()
           emitBufferWarming(event, sourceName)
           return
@@ -1111,6 +1386,51 @@ export const createTerminalTradeWatcher = ({
     return true
   }
 
+  const replayLootxOpenPositions = (positions: LootxPositionState[]) => {
+    const recordingStartedAtMs = getRecordingStartedAtMs?.()
+    if (!recordingStartedAtMs) return
+
+    for (const position of positions) {
+      enqueueEvent({
+        source: 'lootx',
+        positionId: position.positionId,
+        exchange: position.exchange,
+        symbol: position.symbol,
+        side: position.side,
+        isClosed: false,
+        eventTimeMs: Math.max(position.entryTimeMs, recordingStartedAtMs),
+        size: position.size
+      })
+    }
+  }
+
+  const pollLootxJournal = async (): Promise<boolean> => {
+    if (!lootxJournalPath) {
+      lootxAvailable = false
+      return false
+    }
+
+    let text: string
+    try {
+      text = await readFile(lootxJournalPath, 'utf8')
+    } catch (error) {
+      lootxAvailable = false
+      if (getErrorCode(error) === 'ENOENT') return false
+      throw error
+    }
+
+    lootxAvailable = true
+    const snapshot = parseLootxJournalSnapshot(text)
+    if (!snapshot) return true
+
+    const previousCursor = lootxCursor
+    const advance = advanceLootxJournalSnapshot(snapshot, previousCursor)
+    lootxCursor = advance.cursor
+    if (!previousCursor) replayLootxOpenPositions(advance.openPositions)
+    for (const event of advance.events) enqueueEvent(event)
+    return true
+  }
+
   const discoverMetaScalpBaseUrl = async (): Promise<string | undefined> => {
     if (metaScalpBaseUrl) return metaScalpBaseUrl
 
@@ -1194,10 +1514,26 @@ export const createTerminalTradeWatcher = ({
       const settings = await getSettings()
       if (settings.tradeSource.mode !== 'terminal-window') return
       syncRecordingBoundary(settings)
+      const retryTradeKeys = [...suppressedTradePositions.keys()]
 
       await Promise.all(providers.map((provider) => pollLogProvider(provider)))
+      await pollLootxJournal()
       await pollMetaScalpApi()
       await processing
+      if (!getRecordingStartedAtMs || getRecordingStartedAtMs()) {
+        const retryTimeMs = Date.now()
+        for (const tradeKey of retryTradeKeys) {
+          const positionKeys = [...(suppressedTradePositions.get(tradeKey) ?? [])]
+          const pendingEvents = positionKeys
+            .map((positionKey) => suppressedPositionEvents.get(positionKey))
+            .filter((event): event is TerminalPositionEvent => event !== undefined)
+          if (pendingEvents.length === 0) continue
+
+          for (const positionKey of positionKeys) releaseSuppressedPosition(tradeKey, positionKey)
+          for (const event of pendingEvents) enqueueEvent({ ...event, eventTimeMs: retryTimeMs })
+        }
+        await processing
+      }
       emitAvailabilityStatus()
     } catch (error) {
       emit({
@@ -1221,6 +1557,9 @@ export const createTerminalTradeWatcher = ({
       clearActiveTrades()
       suppressedTradePositions.clear()
       suppressedPositionTradeKeys.clear()
+      suppressedPositionEvents.clear()
+      lootxCursor = undefined
+      lootxAvailable = false
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
       emit({ active: false, startedAtMs: 0, source: 'multi-terminal', availableSources: [], message: 'Автозапись терминалов остановлена' })

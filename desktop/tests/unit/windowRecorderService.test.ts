@@ -55,7 +55,7 @@ describe('windowRecorderService', () => {
     expect(recorderStatusHasFreshSegments(status, settings, checkStartedAtMs, nowMs)).toBe(false)
   })
 
-  it('records only the explicitly selected window even when a terminal is auto-detected', () => {
+  it('ignores a legacy nonterminal window and records only supported terminals', () => {
     const settings = createDefaultSettings('C:/TradeTools')
     settings.recording.sourceType = 'window'
     settings.recording.windowSourceId = 'window:happ'
@@ -70,29 +70,95 @@ describe('windowRecorderService', () => {
       { id: 'window:vataga', name: 'Vataga.terminal', displayId: '', type: 'window' as const }
     ]
 
-    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:happ'])
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:vataga'])
+  })
+
+  it('does not trust a stale terminal id after Windows reuses it for another app', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.windowSourceId = 'window:reused'
+    settings.recording.windowSourceName = 'TigerTrade - BTCUSDT'
+    settings.recording.captureTargets = [{
+      id: 'window:reused',
+      name: 'TigerTrade - BTCUSDT',
+      type: 'window'
+    }]
+    const sources = [
+      { id: 'window:reused', name: 'Happ 3.3.6 (591)', displayId: '', type: 'window' as const },
+      { id: 'window:lootx', name: 'LootX', displayId: '', type: 'window' as const }
+    ]
+
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:lootx'])
   })
 
   it('auto-detects terminals only while no window is configured', () => {
     const settings = createDefaultSettings('C:/TradeTools')
     const sources = [
       { id: 'window:happ', name: 'Happ 2.18.3 (573)', displayId: '', type: 'window' as const },
-      { id: 'window:vataga', name: 'Vataga.terminal', displayId: '', type: 'window' as const }
+      { id: 'window:vataga', name: 'Vataga.terminal', displayId: '', type: 'window' as const },
+      { id: 'window:lootx', name: 'LootX', displayId: '', type: 'window' as const }
     ]
 
-    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:vataga'])
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual(['window:vataga', 'window:lootx'])
   })
 
-  it('treats every persisted source reference as configured before auto-selection', () => {
+  it('uses every live supported terminal when a persisted supported terminal is stale', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.windowSourceId = 'window:stale-tiger'
+    settings.recording.windowSourceName = 'Tiger.com - AKEUSDT'
+    settings.recording.captureTargets = [{
+      id: 'window:stale-tiger',
+      name: 'Tiger.com - AKEUSDT',
+      type: 'window'
+    }]
+    const sources = [
+      { id: 'window:happ', name: 'Happ 3.3.6 (591)', displayId: '', type: 'window' as const },
+      { id: 'window:lootx', name: 'LootX', displayId: '', type: 'window' as const },
+      { id: 'window:metascalp', name: 'MetaScalp - BTCUSDT', displayId: '', type: 'window' as const }
+    ]
+
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual([
+      'window:lootx',
+      'window:metascalp'
+    ])
+  })
+
+  it('keeps recording every supported terminal when the persisted terminal is still open', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.windowSourceId = 'window:tiger'
+    settings.recording.windowSourceName = 'Tiger.com - BTCUSDT'
+    settings.recording.captureTargets = [{
+      id: 'window:tiger',
+      name: 'Tiger.com - BTCUSDT',
+      type: 'window'
+    }]
+    const sources = [
+      { id: 'window:tiger', name: 'Tiger.com - BTCUSDT', displayId: '', type: 'window' as const },
+      { id: 'window:lootx', name: 'LootX', displayId: '', type: 'window' as const }
+    ]
+
+    expect(resolveRecordingTargets(sources, settings).map((source) => source.id)).toEqual([
+      'window:tiger',
+      'window:lootx'
+    ])
+  })
+
+  it('treats every persisted window reference as an automatic-mode legacy hint', () => {
     const settings = createDefaultSettings('C:/TradeTools')
     expect(hasConfiguredRecordingSource(settings)).toBe(false)
 
+    settings.recording.windowSourceId = 'window:tiger'
+    settings.recording.windowSourceName = 'Tiger.com - BTCUSDT'
     settings.recording.captureTargets = [{
-      id: 'window:happ',
-      name: 'Happ 2.18.3 (573)',
+      id: 'window:tiger',
+      name: 'Tiger.com - BTCUSDT',
       type: 'window'
     }]
-    expect(hasConfiguredRecordingSource(settings)).toBe(true)
+    expect(hasConfiguredRecordingSource(settings)).toBe(false)
+
+    settings.recording.windowSourceId = 'window:happ'
+    settings.recording.windowSourceName = 'Happ 2.18.3 (573)'
+    settings.recording.captureTargets = [{ id: 'window:happ', name: 'Happ 2.18.3 (573)', type: 'window' }]
+    expect(hasConfiguredRecordingSource(settings)).toBe(false)
   })
 
   it('preserves real buffer metrics and reports the actually active browser source', () => {
@@ -121,7 +187,7 @@ describe('windowRecorderService', () => {
     })
   })
 
-  it('stops a stale Vataga recorder when HAPP is the explicit selection', () => {
+  it('matches supported terminals and rejects a persisted legacy nonterminal', () => {
     const settings = createDefaultSettings('C:/TradeTools')
     settings.recording.windowSourceId = 'window:happ'
     settings.recording.windowSourceName = 'Happ 2.18.3 (573)'
@@ -131,10 +197,29 @@ describe('windowRecorderService', () => {
       name: 'Happ 2.18.3 (573)',
       displayId: '',
       type: 'window'
-    }, settings)).toBe(true)
+    }, settings)).toBe(false)
     expect(sourceMatchesConfiguredRecording({
       id: 'window:vataga',
       name: 'Vataga.terminal',
+      displayId: '',
+      type: 'window'
+    }, settings)).toBe(true)
+  })
+
+  it('matches every supported terminal while a persisted terminal acts as an automatic hint', () => {
+    const settings = createDefaultSettings('C:/TradeTools')
+    settings.recording.windowSourceId = 'window:stale-tiger'
+    settings.recording.windowSourceName = 'Tiger.com - BTCUSDT'
+
+    expect(sourceMatchesConfiguredRecording({
+      id: 'window:lootx',
+      name: 'LootX',
+      displayId: '',
+      type: 'window'
+    }, settings)).toBe(true)
+    expect(sourceMatchesConfiguredRecording({
+      id: 'window:happ',
+      name: 'Happ 3.3.6 (591)',
       displayId: '',
       type: 'window'
     }, settings)).toBe(false)
@@ -186,7 +271,7 @@ describe('windowRecorderService', () => {
     }
   })
 
-  it('keeps explicit HAPP buffer metrics authoritative over a stale Vataga capture target', async () => {
+  it('ignores legacy nonterminal buffers and reports only supported terminal metrics', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-explicit-source-'))
     const settings = createDefaultSettings(dataDir)
     settings.recording.windowSourceId = 'window:happ'
@@ -225,17 +310,17 @@ describe('windowRecorderService', () => {
 
       expect(status).toMatchObject({
         active: true,
-        sourceId: 'window:happ',
-        sourceName: 'Happ 2.18.3 (573)',
+        sourceId: '',
+        sourceName: '',
         segmentCount: 1,
         bufferedSeconds: 1,
-        lastSegmentAtMs: happEndedAtMs,
+        lastSegmentAtMs: nowMs,
         sources: [{
-          sourceId: 'window:happ',
-          sourceName: 'Happ 2.18.3 (573)',
+          sourceId: 'window:vataga',
+          sourceName: 'Vataga.terminal',
           segmentCount: 1,
           bufferedSeconds: 1,
-          lastSegmentAtMs: happEndedAtMs
+          lastSegmentAtMs: nowMs
         }]
       })
     } finally {
@@ -284,7 +369,7 @@ describe('windowRecorderService', () => {
     }
   }
 
-  const createMissingVatagaWindowFixture = async () => {
+  const createMissingWindowFixture = async (sourceName = 'Vataga.terminal') => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-recorder-'))
     const settings = createDefaultSettings(dataDir)
     const checkedSourceNames: string[] = []
@@ -302,7 +387,7 @@ describe('windowRecorderService', () => {
         mode: 'window' as const,
         sourceType: 'window' as const,
         windowSourceId: 'window:123',
-        windowSourceName: 'Vataga.terminal',
+        windowSourceName: sourceName,
         systemAudioEnabled: false,
         microphoneEnabled: false
       }
@@ -316,35 +401,35 @@ describe('windowRecorderService', () => {
     }
   }
 
-  it('does not start native ffmpeg capture when the saved terminal window is closed', async () => {
-    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+  it('treats a missing persisted terminal as automatic browser capture', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingWindowFixture()
 
     try {
       const status = await service.start(settings)
 
-      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(getCheckedSourceNames()).toEqual([])
       expect(status.active).toBe(false)
       expect(status.fallbackRequired).toBe(true)
-      expect(status.message).toContain('Окно Vataga.terminal не найдено')
-      expect(status.message).not.toContain("Can't find window")
+      expect(status.message).toContain('Окна терминалов пишутся через Chromium')
     } finally {
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
     }
   })
 
-  it('keeps the missing saved window message stable without rechecking windows during status polls', async () => {
-    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingVatagaWindowFixture()
+  it('treats a persisted legacy nonterminal as automatic browser capture', async () => {
+    const { dataDir, service, settings, getCheckedSourceNames } = await createMissingWindowFixture('Happ 2.18.3 (573)')
 
     try {
-      await service.start(settings)
+      const started = await service.start(settings)
       const status = await service.getStatus(settings)
 
-      expect(getCheckedSourceNames()).toEqual(['Vataga.terminal'])
+      expect(getCheckedSourceNames()).toEqual([])
+      expect(started.fallbackRequired).toBe(true)
+      expect(started.message).toContain('Окна терминалов пишутся через Chromium')
       expect(status.active).toBe(false)
-      expect(status.fallbackRequired).toBe(true)
-      expect(status.message).toContain('Окно Vataga.terminal не найдено')
-      expect(status.message).not.toBe('Ждём сегменты от встроенного рекордера')
+      expect(status.fallbackRequired).toBeUndefined()
+      expect(status.message).toContain('TradeTools выберет окно')
     } finally {
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
@@ -434,7 +519,7 @@ describe('windowRecorderService', () => {
     }
   })
 
-  it('matches a replaced window handle by process and symbol without mixing another symbol or process', async () => {
+  it('keeps every live supported terminal buffer available in automatic mode', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-process-'))
     const defaults = createDefaultSettings(dataDir)
     const savedProcessId = 12_345
@@ -495,14 +580,185 @@ describe('windowRecorderService', () => {
 
       const status = await service.getStatus(settings)
 
-      expect(status.segmentCount).toBe(1)
-      expect(status.lastSegmentAtMs).toBe(endedAtMs - 3_000)
-      expect(status.sources).toEqual([expect.objectContaining({
-        sourceId: 'window:old-hwnd',
-        segmentCount: 1,
-        lastSegmentAtMs: endedAtMs - 3_000
-      })])
+      expect(status.segmentCount).toBe(3)
+      expect(status.lastSegmentAtMs).toBe(endedAtMs - 1_000)
+      expect(status.sources).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'window:new-hwnd', segmentCount: 1 }),
+        expect.objectContaining({ sourceId: 'window:same-process-other-symbol', segmentCount: 1 }),
+        expect.objectContaining({ sourceId: 'window:other-process-same-symbol', segmentCount: 1 })
+      ]))
     } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes a stopped terminal from automatic recorder status without deleting its replay buffer', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-active-sources-'))
+    const settings = createDefaultSettings(dataDir)
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const endedAtMs = Date.now()
+
+    try {
+      service.noteBrowserRecordingStarted({
+        sourceId: 'window:lootx',
+        sourceName: 'LootX',
+        captureEpochId: 'lootx-epoch',
+        startedAtMs: endedAtMs - 2_000
+      })
+      service.noteBrowserRecordingStarted({
+        sourceId: 'window:vataga',
+        sourceName: 'Vataga.terminal',
+        captureEpochId: 'vataga-epoch',
+        startedAtMs: endedAtMs - 2_000
+      })
+      await service.appendSegment({
+        sourceId: 'window:lootx',
+        sourceName: 'LootX',
+        sessionId: 'lootx-session',
+        sequence: 0,
+        startedAtMs: endedAtMs - 1_000,
+        endedAtMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      await service.appendSegment({
+        sourceId: 'window:vataga',
+        sourceName: 'Vataga.terminal',
+        sessionId: 'vataga-session',
+        sequence: 0,
+        startedAtMs: endedAtMs - 1_000,
+        endedAtMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      service.noteBrowserRecordingStopped({ sourceId: 'window:lootx', captureEpochId: 'lootx-epoch' })
+      const status = await service.getStatus(settings)
+
+      expect(status.sources).toEqual([
+        expect.objectContaining({ sourceId: 'window:vataga', sourceName: 'Vataga.terminal' })
+      ])
+      expect(status.segmentCount).toBe(1)
+      expect(status.active).toBe(true)
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps duplicate same-named terminal readiness isolated by exact source id', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-duplicate-readiness-'))
+    const settings = createDefaultSettings(dataDir)
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const endedAtMs = Date.now()
+
+    try {
+      service.noteBrowserRecordingStarted({
+        sourceId: 'window:lootx-one',
+        sourceName: 'LootX',
+        captureEpochId: 'lootx-one-epoch',
+        startedAtMs: endedAtMs - 4_000
+      })
+      service.noteBrowserRecordingStarted({
+        sourceId: 'window:lootx-two',
+        sourceName: 'LootX',
+        captureEpochId: 'lootx-two-epoch',
+        startedAtMs: endedAtMs - 2_000
+      })
+      await service.appendSegment({
+        sourceId: 'window:lootx-one',
+        sourceName: 'LootX',
+        sessionId: 'lootx-one-session',
+        sequence: 0,
+        startedAtMs: endedAtMs - 4_000,
+        endedAtMs: endedAtMs - 3_000,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      await service.appendSegment({
+        sourceId: 'window:lootx-two',
+        sourceName: 'LootX',
+        sessionId: 'lootx-two-session',
+        sequence: 0,
+        startedAtMs: endedAtMs - 2_000,
+        endedAtMs: endedAtMs - 1_000,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      const status = await service.getStatus(settings)
+
+      expect(status.sources).toEqual([
+        expect.objectContaining({ sourceId: 'window:lootx-one', segmentCount: 1 }),
+        expect.objectContaining({ sourceId: 'window:lootx-two', segmentCount: 1 })
+      ])
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not concatenate another same-named terminal into an exact-target replay', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-duplicate-export-'))
+    const settings = createDefaultSettings(dataDir)
+    settings.clip.paddingBeforeSeconds = 0
+    settings.clip.paddingAfterSeconds = 0
+    const runFfmpeg = vi.fn(async (args: string[]) => {
+      const outputPath = args.at(-1)
+      if (outputPath) await writeFile(outputPath, 'rendered replay')
+    })
+    const service = createWindowRecorderService({
+      appDataDir: dataDir,
+      probeBrowserSessionMedia: async () => ({ hasAudio: false, ...browserVideoMetadata(10) }),
+      runFfmpeg
+    })
+    const nowMs = Date.now()
+
+    try {
+      await service.appendSegment({
+        sourceId: 'window:lootx-one',
+        sourceName: 'LootX',
+        sessionId: 'lootx-one-session',
+        sequence: 0,
+        startedAtMs: nowMs - 10_000,
+        endedAtMs: nowMs,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+      await service.appendSegment({
+        sourceId: 'window:lootx-two',
+        sourceName: 'LootX',
+        sessionId: 'lootx-two-session',
+        sequence: 0,
+        startedAtMs: nowMs - 10_000,
+        endedAtMs: nowMs + 2_000,
+        mimeType: 'video/webm',
+        data: new ArrayBuffer(1)
+      }, settings)
+
+      const result = await service.saveReplayBuffer({
+        settings,
+        captureTarget: { id: 'window:lootx-one', name: 'LootX', type: 'window' },
+        trade: {
+          id: 'lootx-exact-window',
+          exchange: 'BINANCE',
+          marketType: 'FUTURES',
+          symbol: 'BTCUSDT',
+          side: 'LONG',
+          status: 'closed',
+          entryTimeMs: nowMs - 9_000,
+          exitTimeMs: nowMs - 1_000
+        }
+      })
+
+      expect(result.ok).toBe(true)
+      expect(runFfmpeg).toHaveBeenCalledTimes(1)
+      const ffmpegArgs = runFfmpeg.mock.calls[0]?.[0] ?? []
+      expect(ffmpegArgs.filter((arg) => arg === '-i')).toHaveLength(1)
+      expect(ffmpegArgs).not.toContain('-filter_complex')
+    } finally {
+      vi.restoreAllMocks()
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
     }
@@ -530,7 +786,7 @@ describe('windowRecorderService', () => {
     ])
   })
 
-  it('reports browser recording active when any configured capture target has a fresh segment', async () => {
+  it('reports only supported automatic-terminal segments', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-target-union-'))
     const defaults = createDefaultSettings(dataDir)
     const settings = {
@@ -540,10 +796,7 @@ describe('windowRecorderService', () => {
         mode: 'window' as const,
         windowSourceId: '',
         windowSourceName: '',
-        captureTargets: [
-          { id: 'window:primary', name: 'Primary terminal', type: 'window' as const, processId: 111 },
-          { id: 'window:secondary', name: 'Secondary terminal', type: 'window' as const, processId: 222, symbol: 'ETHUSDT' }
-        ],
+        captureTargets: [],
         saveTargetId: 'window:primary'
       }
     }
@@ -552,8 +805,8 @@ describe('windowRecorderService', () => {
 
     try {
       await service.appendSegment({
-        sourceId: 'window:primary-new-hwnd',
-        sourceName: 'Primary terminal - BTCUSDT',
+        sourceId: 'window:tiger',
+        sourceName: 'TigerTrade - BTCUSDT',
         processId: 111,
         sessionId: 'primary-renamed-session',
         sequence: 0,
@@ -563,8 +816,8 @@ describe('windowRecorderService', () => {
         data: new ArrayBuffer(1)
       }, settings)
       await service.appendSegment({
-        sourceId: 'window:secondary-new-hwnd',
-        sourceName: 'Secondary terminal - ETHUSDT',
+        sourceId: 'window:lootx',
+        sourceName: 'LootX',
         processId: 222,
         sessionId: 'secondary-session',
         sequence: 0,
@@ -588,12 +841,12 @@ describe('windowRecorderService', () => {
       const status = await service.getStatus(settings)
 
       expect(status.active).toBe(true)
-      expect(status.segmentCount).toBe(1)
+      expect(status.segmentCount).toBe(2)
       expect(status.lastSegmentAtMs).toBe(endedAtMs - 1_000)
-      expect(status.sources).toEqual([
-        expect.objectContaining({ sourceId: 'window:primary', segmentCount: 0 }),
-        expect.objectContaining({ sourceId: 'window:secondary', segmentCount: 1 })
-      ])
+      expect(status.sources).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceId: 'window:tiger', segmentCount: 1 }),
+        expect.objectContaining({ sourceId: 'window:lootx', segmentCount: 1 })
+      ]))
     } finally {
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
@@ -1414,8 +1667,7 @@ describe('windowRecorderService', () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
     expect(serviceSource).toContain('captureTarget?: CaptureTargetRef')
-    expect(serviceSource).toContain('targetMatchesSegment')
-    expect(serviceSource).toContain('terminalTitleMatchesTicker(segment.sourceName, captureTarget.symbol)')
+    expect(serviceSource).toContain('recordingSourcesMatchingTarget(availableSegments, captureTarget)')
     expect(controllerSource).toContain('terminalTitleMatchesTicker(source.name, target.symbol)')
     expect(serviceSource).toContain('relevantSegments(settings, captureTarget')
     expect(serviceSource).toContain('waitForSegmentsUntil(settings, replayEndMs, timeoutMs, captureTarget)')
@@ -1443,13 +1695,14 @@ describe('windowRecorderService', () => {
     expect(activeStatusSource).not.toContain('createLocalStatus')
   })
 
-  it('keeps persisted buffer metrics when a saved source temporarily disappears', async () => {
+  it('waits for stopped terminal acknowledgements before publishing the empty-source status', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const missingTargetStart = controllerSource.indexOf('if (targets.length === 0) {')
     const missingTargetEnd = controllerSource.indexOf('      if (sourceRetryTimer', missingTargetStart)
     const missingTargetSource = controllerSource.slice(missingTargetStart, missingTargetEnd)
 
     expect(missingTargetSource).toContain('const status = await api.recording.getStatus()')
+    expect(missingTargetSource).toContain('await Promise.all(stoppedRecorders)')
     expect(missingTargetSource).toContain('mergeBrowserRecorderStatus(status, activeSources, message)')
     expect(missingTargetSource).not.toContain('createLocalStatus')
   })

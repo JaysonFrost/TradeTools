@@ -8,8 +8,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
 import { createWindowRecorderService, recorderStatusHasFreshSegments, type WindowCaptureSource, type WindowRecorderStatus, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
-import { preferTerminalSourcesForSymbol, recordingSourceMatchesTarget } from './services/recording/terminalWindowSelection'
-import { selectedWindowTradeTarget } from './services/recording/tradeCaptureTargetSelection'
+import { recordingSourcesMatchingTarget, selectTerminalWindowSource } from './services/recording/terminalWindowSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
@@ -30,6 +29,7 @@ import { createAppLogService } from './services/logging/appLogService'
 import { acquireAppDataInstanceLock } from './services/appDataInstanceLock'
 import { recordingBufferSaveAccelerator, recordingToggleAccelerator, type RecordingControlStatus } from '../shared/recordingControl'
 import { getRecordingWidgetPlacement } from './recordingWidgetPlacement'
+import { detectSupportedTerminalWindow, isSupportedTerminalWindowName } from '../shared/supportedTerminalWindows'
 
 const isAllowedDevUrl = (url: string): boolean => {
   try {
@@ -589,20 +589,9 @@ const configuredCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => 
     : legacyCaptureTargetFromSettings(settings) ? [legacyCaptureTargetFromSettings(settings)!] : []
 )
 
-const terminalWindowPatterns: Record<TerminalTradeSource, RegExp[]> = {
-  vataga: [/vataga/i, /ватага/i],
-  tigertrade: [/tiger/i, /тигр/i],
-  metascalp: [/metascalp/i, /metatrader/i, /mt4/i, /mt5/i]
-}
-
-const windowContainsPoint = (source: WindowCaptureSource, point: { x: number, y: number }): boolean => {
-  const bounds = source.bounds
-  return Boolean(bounds) &&
-    point.x >= bounds!.x &&
-    point.x < bounds!.x + bounds!.width &&
-    point.y >= bounds!.y &&
-    point.y < bounds!.y + bounds!.height
-}
+const terminalWindowMatchesSource = (name: string, source: TerminalTradeSource): boolean => (
+  detectSupportedTerminalWindow(name) === source
+)
 
 const terminalSourceLog = (source: WindowCaptureSource) => ({
   id: source.id,
@@ -611,32 +600,6 @@ const terminalSourceLog = (source: WindowCaptureSource) => ({
   displayId: source.displayId,
   bounds: source.bounds
 })
-
-const selectTerminalSource = (
-  event: TerminalPositionEvent,
-  terminalSources: WindowCaptureSource[]
-): { source?: WindowCaptureSource, candidates: WindowCaptureSource[], reason: 'process' | 'symbol' | 'cursor' | 'first' | 'ambiguous' | 'none' } => {
-  const processCandidates = event.processId
-    ? terminalSources.filter((candidate) => candidate.processId === event.processId)
-    : []
-  const processScopedCandidates = processCandidates.length > 0 ? processCandidates : terminalSources
-  const candidates = preferTerminalSourcesForSymbol(event.symbol, processScopedCandidates)
-  if (candidates.length === 0) return { candidates, reason: 'none' }
-  if (candidates.length === 1) {
-    const reason = processScopedCandidates.length > candidates.length
-      ? 'symbol'
-      : processCandidates.length > 0
-        ? 'process'
-        : 'first'
-    return { source: candidates[0], candidates, reason }
-  }
-
-  const cursorPoint = electronScreen.getCursorScreenPoint()
-  const cursorSource = candidates.find((candidate) => windowContainsPoint(candidate, cursorPoint))
-  if (cursorSource) return { source: cursorSource, candidates, reason: 'cursor' }
-
-  return { candidates, reason: 'ambiguous' }
-}
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
   const sources = await listWindowCaptureSources()
@@ -1755,6 +1718,7 @@ app.whenReady().then(() => {
         if (!enabled) {
           nativeRecordingStartedAtMs = 0
           browserRecordingStartedBySourceId.clear()
+          windowRecorderService.resetBrowserRecordingSources()
           refreshBackgroundRecordingStartedAtMs()
           await windowRecorderService.stop()
         }
@@ -1785,10 +1749,13 @@ app.whenReady().then(() => {
   }
 
   const browserRecordingStartedAtMs = (target?: CaptureTargetRef): number => {
-    const starts = [...browserRecordingStartedBySourceId.values()]
-      .filter((started) => !target || recordingSourceMatchesTarget(started, target))
+    const availableStarts = [...browserRecordingStartedBySourceId.values()]
+    const starts = target
+      ? recordingSourcesMatchingTarget(availableStarts, target)
+      : availableStarts
+    const startedTimes = starts
       .map((started) => started.startedAtMs)
-    return starts.length > 0 ? Math.min(...starts) : 0
+    return startedTimes.length > 0 ? Math.min(...startedTimes) : 0
   }
 
   const refreshBackgroundRecordingStartedAtMs = (): void => {
@@ -1841,15 +1808,11 @@ app.whenReady().then(() => {
     const settings = await settingsStore.load()
     if (settings.recording.sourceType === 'screen') return undefined
 
-    const configuredTarget = selectedWindowTradeTarget(settings, event.symbol)
-    if (configuredTarget) return configuredTarget
-
-    const sources = await listWindowCaptureSources()
-    const patterns = terminalWindowPatterns[event.source]
+    const sources = await listWindowCaptureSources(true)
     const terminalSources = sources.filter((candidate) => (
-      candidate.type === 'window' && patterns.some((pattern) => pattern.test(candidate.name))
+      candidate.type === 'window' && terminalWindowMatchesSource(candidate.name, event.source)
     ))
-    const selection = selectTerminalSource(event, terminalSources)
+    const selection = selectTerminalWindowSource(event, terminalSources, electronScreen.getCursorScreenPoint())
     const source = selection.source
     if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
       void appLog.warn('recording', 'Terminal process id and ticker did not identify a capture window; trade will wait for an exact window', {
@@ -1941,12 +1904,14 @@ app.whenReady().then(() => {
 
       const settings = await settingsStore.load()
       const sources = await listDesktopCaptureSources()
-      const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)
-      const source = sources.find((source) => source.id === settings.recording.windowSourceId) ??
-        sources.find((source) => source.name === settings.recording.windowSourceName) ??
-        (hasSavedCaptureSource ? undefined : sources.find((source) => settings.recording.sourceType === 'screen'
-          ? source.id.startsWith('screen:')
-          : !source.id.startsWith('screen:')))
+      const hasSavedCaptureSource = settings.recording.sourceType === 'screen' && Boolean(
+        settings.recording.windowSourceId || settings.recording.windowSourceName
+      )
+      const source = settings.recording.sourceType === 'screen'
+        ? sources.find((source) => source.id === settings.recording.windowSourceId) ??
+          sources.find((source) => source.name === settings.recording.windowSourceName) ??
+          (hasSavedCaptureSource ? undefined : sources.find((source) => source.id.startsWith('screen:')))
+        : sources.find((source) => !source.id.startsWith('screen:') && isSupportedTerminalWindowName(source.name))
 
       if (!source) {
         if (hasSavedCaptureSource) {
@@ -2172,6 +2137,7 @@ app.whenReady().then(() => {
     if (backgroundWindowRecordingEnabled) {
       nativeRecordingStartedAtMs = 0
       browserRecordingStartedBySourceId.clear()
+      windowRecorderService.resetBrowserRecordingSources()
       refreshBackgroundRecordingStartedAtMs()
       const started = await windowRecorderService.start(settings)
       if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) {
@@ -2232,16 +2198,18 @@ app.whenReady().then(() => {
       throw new Error('Некорректное подтверждение старта записи окна')
     }
 
+    const startedRecording: WindowRecordingStartedInput = {
+      sourceId,
+      sourceName,
+      ...(Number.isFinite(processId) && processId > 0 ? { processId } : {}),
+      captureEpochId,
+      startedAtMs
+    }
     const current = browserRecordingStartedBySourceId.get(sourceId)
     if (!current || current.captureEpochId !== captureEpochId || startedAtMs < current.startedAtMs) {
-      browserRecordingStartedBySourceId.set(sourceId, {
-        sourceId,
-        sourceName,
-        ...(Number.isFinite(processId) && processId > 0 ? { processId } : {}),
-        captureEpochId,
-        startedAtMs
-      })
+      browserRecordingStartedBySourceId.set(sourceId, startedRecording)
     }
+    windowRecorderService.noteBrowserRecordingStarted(startedRecording)
     refreshBackgroundRecordingStartedAtMs()
   })
   ipcMain.handle('recording:browser-stopped', (event, input: WindowRecordingStoppedInput) => {
@@ -2251,6 +2219,7 @@ app.whenReady().then(() => {
     const current = browserRecordingStartedBySourceId.get(sourceId)
     if (!sourceId || !captureEpochId || current?.captureEpochId !== captureEpochId) return
     browserRecordingStartedBySourceId.delete(sourceId)
+    windowRecorderService.noteBrowserRecordingStopped({ sourceId, captureEpochId })
     refreshBackgroundRecordingStartedAtMs()
   })
   ipcMain.handle('recording:append-segment', async (event, input: WindowRecordingSegmentInput) => {

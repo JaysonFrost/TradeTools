@@ -101,7 +101,7 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('const browserRecordingStartedAtMs = (target?: CaptureTargetRef)')
-    expect(source).toContain('recordingSourceMatchesTarget(started, target)')
+    expect(source).toContain('recordingSourcesMatchingTarget(availableStarts, target)')
     expect(source).toContain("if (settings.recording.sourceType === 'window' && !recordingTarget)")
     expect(source).toContain('const requiredStartMs = event.eventTimeMs - settings.clip.paddingBeforeSeconds * 1000')
     expect(source).toContain('return browserStartedAtMs <= requiredStartMs')
@@ -121,6 +121,15 @@ describe('main app lifecycle', () => {
     expect(resolverSource).toContain('return undefined')
     expect(resolverSource).not.toContain('const fallback = configuredCaptureTargets')
     expect(resolverSource).not.toContain('using configured capture target')
+  })
+
+  it('keeps duplicate same-named terminal windows selectable without weakening cursor selection', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const selectionSource = await readFile(resolve('src/main/services/recording/terminalWindowSelection.ts'), 'utf8')
+
+    expect(source).toContain('selectTerminalWindowSource(event, terminalSources, electronScreen.getCursorScreenPoint())')
+    expect(selectionSource).toContain("if (cursorSource) return { source: cursorSource, candidates, reason: 'cursor' }")
+    expect(selectionSource).toContain("if (candidateNames.size === 1) return { source: candidates[0], candidates, reason: 'first' }")
   })
 
   it('sets the logical recording boundary from an actual browser recorder start signal', async () => {
@@ -161,11 +170,21 @@ describe('main app lifecycle', () => {
     expect(packageJson).toContain('NSAudioCaptureUsageDescription')
   })
 
-  it('does not fall back to another terminal window when a saved capture window is missing', async () => {
+  it('always resolves window capture from the live supported-terminal list', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain('const hasSavedCaptureSource = Boolean(settings.recording.windowSourceId || settings.recording.windowSourceName)')
-    expect(source).toContain('hasSavedCaptureSource ? undefined : sources.find')
+    expect(source).toContain("settings.recording.sourceType === 'screen'")
+    expect(source).toContain("!source.id.startsWith('screen:') && isSupportedTerminalWindowName(source.name)")
+    expect(source).not.toContain('hasSavedCaptureSourceReference')
+  })
+
+  it('matches terminal trade events through the strict supported-terminal classifier', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('detectSupportedTerminalWindow(name) === source')
+    expect(source).toContain('const sources = await listWindowCaptureSources(true)')
+    expect(source).toContain('terminalWindowMatchesSource(candidate.name, event.source)')
+    expect(source).not.toContain("metascalp: [/metascalp/i, /metatrader/i")
   })
 
   it('keeps unnamed desktop capture windows selectable instead of dropping them', async () => {
@@ -499,6 +518,9 @@ describe('main app lifecycle', () => {
     expect(source).toContain("ipcMain.handle('recording:set-enabled'")
     expect(source).toContain("ipcMain.handle('recording:report-status'")
     expect(source).toContain("ipcMain.handle('recording:stop-engine'")
+    expect(source).toContain('windowRecorderService.noteBrowserRecordingStarted(startedRecording)')
+    expect(source).toContain('windowRecorderService.noteBrowserRecordingStopped({ sourceId, captureEpochId })')
+    expect(source).toContain('windowRecorderService.resetBrowserRecordingSources()')
     expect(source).toContain("ipcMain.handle('recording:check'")
     expect(source).toContain("event.sender !== mainWindow?.webContents")
     expect(source).toContain('notifyWindowRecordingNeeded()')

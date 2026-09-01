@@ -2,15 +2,19 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { createDefaultSettings } from '../../src/main/services/settings/settings'
+import { createDefaultSettings, type CaptureTargetRef } from '../../src/main/services/settings/settings'
 import type { ClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import {
+  advanceLootxJournalSnapshot,
   createTerminalTradeWatcher,
   diffMetaScalpPositionSnapshots,
+  getLootxJournalPath,
   getVatagaLogsDir,
+  parseLootxJournalSnapshot,
   parseMetaScalpPositionSnapshot,
   parseTigerTradePositionEvent,
-  parseVatagaPositionEvent
+  parseVatagaPositionEvent,
+  type TerminalPositionEvent
 } from '../../src/main/services/trades/terminalTradeRecorder'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -77,6 +81,51 @@ const createVatagaPositionLine = ({
   TradeTime: new Date(timeMs).toISOString(),
   TradeSide: size < 0 ? 'Sell' : 'Buy',
   ProcessId: 39336
+})
+
+type LootxTradeFixture = {
+  timeMs: number
+  side: 'Bid' | 'Ask'
+  quantity: number
+  execId?: string | number
+  tradeId?: string | number
+  symbol?: string
+  exchangeId?: string
+  connectionTag?: string
+  orderId?: string | number
+  cumulativeFilledQuantity?: number
+  quantityScale?: number
+}
+
+const createLootxTrade = ({
+  timeMs,
+  side,
+  quantity,
+  execId = timeMs,
+  tradeId = timeMs,
+  symbol = 'BTRUSDT',
+  exchangeId = 'BINANCEF',
+  connectionTag = 'lootx-account:F',
+  orderId = `order-${timeMs}`,
+  cumulativeFilledQuantity = quantity,
+  quantityScale = 1
+}: LootxTradeFixture) => ({
+  TimestampMs: timeMs,
+  Instrument: { ExchangeId: exchangeId, Symbol: symbol },
+  Side: side,
+  QuantityRaw: quantity,
+  QuantityScale: quantityScale,
+  TradeId: tradeId,
+  ExecId: execId,
+  OrderId: orderId,
+  CumulativeFilledQtyRaw: cumulativeFilledQuantity,
+  ConnectionTag: connectionTag
+})
+
+const createLootxJournal = (resetTimestampMs: number, trades: unknown[]): string => JSON.stringify({
+  ResetTimestampMs: resetTimestampMs,
+  Trades: trades,
+  RoundTrips: []
 })
 
 const runCrossSourcePair = async ({
@@ -207,6 +256,584 @@ describe('terminalTradeRecorder', () => {
     expect(getVatagaLogsDir({
       HOME: '/Users/trader'
     })).toBe('/Users/trader/Library/Application Support/Vataga/Vataga.terminal/Logs')
+  })
+
+  it('finds the LootX journal under TradingTerminal application data', () => {
+    expect(getLootxJournalPath({ APPDATA: 'C:\\Users\\trader\\AppData\\Roaming' }))
+      .toBe(join('C:\\Users\\trader\\AppData\\Roaming', 'TradingTerminal', 'journal.json'))
+    expect(getLootxJournalPath({})).toBeUndefined()
+  })
+
+  it('parses real LootX fills, excludes synthetic seeds, and scopes execution deduplication', () => {
+    const parsed = parseLootxJournalSnapshot(createLootxJournal(55, [
+      createLootxTrade({ timeMs: 101, side: 'Bid', quantity: 2, execId: 'SYNTHETIC_SEED', tradeId: 0 }),
+      createLootxTrade({ timeMs: 100, side: 'Bid', quantity: 2, execId: 'exec-1' }),
+      createLootxTrade({ timeMs: 100, side: 'Bid', quantity: 2, execId: 'exec-1', orderId: 'duplicate' }),
+      createLootxTrade({
+        timeMs: 101,
+        side: 'Ask',
+        quantity: 2,
+        execId: 'exec-1',
+        connectionTag: 'second-account:F'
+      }),
+      createLootxTrade({ timeMs: 102, side: 'Bid', quantity: 1, execId: 0, tradeId: 0 })
+    ]))
+
+    expect(parsed?.resetTimestampMs).toBe(55)
+    expect(parsed?.fills).toHaveLength(3)
+    expect(parsed?.fills.map((fill) => fill.signedQuantity)).toEqual([2, -2, 1])
+    expect(parsed?.fills.map((fill) => fill.exchange)).toEqual(['BINANCE', 'BINANCE', 'BINANCE'])
+    expect(new Set(parsed?.fills.map((fill) => fill.positionId)).size).toBe(2)
+    expect(parseLootxJournalSnapshot('{')).toBeUndefined()
+  })
+
+  it('converts scaled LootX raw quantities to position units', () => {
+    const parsed = parseLootxJournalSnapshot(createLootxJournal(56, [
+      createLootxTrade({
+        timeMs: 103,
+        side: 'Ask',
+        quantity: 2_500,
+        quantityScale: 1_000,
+        execId: 'scaled-fill'
+      })
+    ]))
+
+    expect(parsed?.fills).toMatchObject([{ signedQuantity: -2.5 }])
+  })
+
+  it('advances LootX partial fills, reversals, closes, and reset baselines deterministically', () => {
+    const entryTimeMs = 1_900_000_001_000
+    const partialTimeMs = entryTimeMs + 100
+    const reversalTimeMs = entryTimeMs + 200
+    const closeTimeMs = entryTimeMs + 300
+    const entry = createLootxTrade({ timeMs: entryTimeMs, side: 'Bid', quantity: 4, execId: 'entry' })
+    const initial = advanceLootxJournalSnapshot(parseLootxJournalSnapshot(createLootxJournal(10, [entry]))!)
+    expect(initial.events).toEqual([])
+    expect(initial.openPositions).toMatchObject([{ size: 4, side: 'LONG', entryTimeMs }])
+
+    const partial = createLootxTrade({ timeMs: partialTimeMs, side: 'Ask', quantity: 1, execId: 'partial' })
+    const reversal = createLootxTrade({ timeMs: reversalTimeMs, side: 'Ask', quantity: 5, execId: 'reversal' })
+    const reversed = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(10, [entry, partial, reversal]))!,
+      initial.cursor
+    )
+    expect(reversed.events).toMatchObject([
+      { source: 'lootx', size: 3, side: 'LONG', isClosed: false, eventTimeMs: partialTimeMs },
+      { source: 'lootx', size: -2, side: 'SHORT', isClosed: false, eventTimeMs: reversalTimeMs }
+    ])
+
+    const reset = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(20, []))!,
+      reversed.cursor
+    )
+    expect(reset.resetDetected).toBe(true)
+    expect(reset.events).toEqual([])
+    expect(reset.openPositions).toMatchObject([{ size: -2, side: 'SHORT', entryTimeMs: reversalTimeMs }])
+
+    const resetReversal = createLootxTrade({ timeMs: closeTimeMs, side: 'Bid', quantity: 7, execId: 'replacement' })
+    const resetWithReversal = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(30, [resetReversal]))!,
+      reversed.cursor
+    )
+    expect(resetWithReversal.resetDetected).toBe(true)
+    expect(resetWithReversal.events).toMatchObject([
+      { source: 'lootx', size: 5, side: 'LONG', isClosed: false, eventTimeMs: closeTimeMs }
+    ])
+    expect(resetWithReversal.openPositions).toMatchObject([
+      { size: 5, side: 'LONG', entryTimeMs: closeTimeMs }
+    ])
+
+    const close = createLootxTrade({ timeMs: closeTimeMs, side: 'Bid', quantity: 2, execId: 'close' })
+    const closed = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(20, [close]))!,
+      reset.cursor
+    )
+    expect(closed.events).toMatchObject([
+      { source: 'lootx', size: 0, side: 'SHORT', isClosed: true, eventTimeMs: closeTimeMs }
+    ])
+    expect(closed.openPositions).toEqual([])
+  })
+
+  it('applies a close from the first LootX snapshot after reset to the preserved position', () => {
+    const entryTimeMs = 1_900_000_010_000
+    const closeTimeMs = entryTimeMs + 1_000
+    const entry = createLootxTrade({ timeMs: entryTimeMs, side: 'Bid', quantity: 4, execId: 'entry' })
+    const initial = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(entryTimeMs - 100, [entry]))!
+    )
+    const syntheticSeed = createLootxTrade({
+      timeMs: closeTimeMs - 100,
+      side: 'Bid',
+      quantity: 4,
+      execId: 'SYNTHETIC_SEED'
+    })
+    const close = createLootxTrade({ timeMs: closeTimeMs, side: 'Ask', quantity: 4, execId: 'close' })
+
+    const advanced = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(closeTimeMs - 200, [syntheticSeed, close]))!,
+      initial.cursor
+    )
+
+    expect(advanced.resetDetected).toBe(true)
+    expect(advanced.events).toMatchObject([
+      { source: 'lootx', size: 0, side: 'LONG', isClosed: true, eventTimeMs: closeTimeMs }
+    ])
+    expect(advanced.openPositions).toEqual([])
+  })
+
+  it('applies a reversal from the first LootX snapshot after truncation without a phantom opposite size', () => {
+    const entryTimeMs = 1_900_000_020_000
+    const reversalTimeMs = entryTimeMs + 1_000
+    const entry = createLootxTrade({ timeMs: entryTimeMs, side: 'Bid', quantity: 4, execId: 'entry' })
+    const initial = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(entryTimeMs - 100, [entry]))!
+    )
+    const syntheticSeed = createLootxTrade({
+      timeMs: reversalTimeMs - 100,
+      side: 'Bid',
+      quantity: 4,
+      execId: 'SYNTHETIC_SEED'
+    })
+    const reversal = createLootxTrade({
+      timeMs: reversalTimeMs,
+      side: 'Ask',
+      quantity: 6,
+      execId: 'reversal'
+    })
+
+    const advanced = advanceLootxJournalSnapshot(
+      parseLootxJournalSnapshot(createLootxJournal(initial.cursor.resetTimestampMs, [syntheticSeed, reversal]))!,
+      initial.cursor
+    )
+
+    expect(advanced.resetDetected).toBe(true)
+    expect(advanced.events).toMatchObject([
+      { source: 'lootx', size: -2, side: 'SHORT', isClosed: false, eventTimeMs: reversalTimeMs }
+    ])
+    expect(advanced.openPositions).toMatchObject([
+      { size: -2, side: 'SHORT', entryTimeMs: reversalTimeMs }
+    ])
+  })
+
+  it('replays only an open LootX position when recording turns on and retries invalid JSON safely', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-lootx-replay-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const journalDir = join(appDataDir, 'TradingTerminal')
+    const journalPath = join(journalDir, 'journal.json')
+    const recordingBoundaryMs = Date.now() - 2_000
+    let recordingStartedAtMs = 0
+    const historicEntry = createLootxTrade({
+      timeMs: recordingBoundaryMs - 20_000,
+      side: 'Bid',
+      quantity: 2,
+      execId: 'historic-entry'
+    })
+    const historicClose = createLootxTrade({
+      timeMs: recordingBoundaryMs - 15_000,
+      side: 'Ask',
+      quantity: 2,
+      execId: 'historic-close'
+    })
+    const liveEntry = createLootxTrade({
+      timeMs: recordingBoundaryMs - 5_000,
+      side: 'Bid',
+      quantity: 3,
+      execId: 'live-entry'
+    })
+    const syntheticSeed = createLootxTrade({
+      timeMs: recordingBoundaryMs - 4_800,
+      side: 'Bid',
+      quantity: 3,
+      execId: 'SYNTHETIC_SEED',
+      tradeId: 0
+    })
+    const initialTrades = [historicEntry, historicClose, liveEntry, syntheticSeed]
+
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(journalPath, createLootxJournal(100, initialTrades), 'utf8')
+    const settings = createDefaultSettings(rootDir)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const ensureVideoRecordingReady = vi.fn(async () => true)
+    const watcher = createTerminalTradeWatcher({
+      getSettings: async () => settings,
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('lootx')
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+      expect(ensureVideoRecordingReady).not.toHaveBeenCalled()
+
+      recordingStartedAtMs = recordingBoundaryMs
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+        expect(watcher.getStatus().message).toContain('LootX')
+      })
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+
+      await writeFile(journalPath, '{', 'utf8')
+      await sleep(80)
+      expect(watcher.getStatus().activeTradeCount).toBe(1)
+      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
+
+      const closeTimeMs = recordingBoundaryMs + 1_000
+      const liveClose = createLootxTrade({
+        timeMs: closeTimeMs,
+        side: 'Ask',
+        quantity: 3,
+        execId: 'live-close'
+      })
+      await writeFile(journalPath, createLootxJournal(100, [...initialTrades, liveClose]), 'utf8')
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        exchange: 'BINANCE',
+        symbol: 'BTRUSDT',
+        side: 'LONG',
+        entryTimeMs: recordingBoundaryMs,
+        exitTimeMs: closeTimeMs
+      })
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an active LootX trade protected across journal reset until an explicit close fill', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-lootx-reset-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const journalDir = join(appDataDir, 'TradingTerminal')
+    const journalPath = join(journalDir, 'journal.json')
+    const entryTimeMs = Date.now() - 10_000
+    const closeTimeMs = entryTimeMs + 5_000
+    const recordingStartedAtMs = entryTimeMs - 1_000
+    const settings = createDefaultSettings(rootDir)
+    const getSettings = vi.fn(async () => settings)
+    const protectSince = vi.fn()
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(journalPath, createLootxJournal(200, []), 'utf8')
+
+    const watcher = createTerminalTradeWatcher({
+      getSettings,
+      getRecordingStartedAtMs: () => recordingStartedAtMs,
+      ensureVideoRecordingReady: async () => true,
+      protectSince,
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('lootx')
+      })
+      const entry = createLootxTrade({ timeMs: entryTimeMs, side: 'Bid', quantity: 4, execId: 'entry' })
+      await writeFile(journalPath, createLootxJournal(200, [entry]), 'utf8')
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+      expect(protectSince).toHaveBeenCalledWith(
+        entryTimeMs - settings.clip.paddingBeforeSeconds * 1_000 - 5_000
+      )
+
+      const settingsCallsBeforeReset = getSettings.mock.calls.length
+      await writeFile(journalPath, createLootxJournal(300, []), 'utf8')
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsBeforeReset + 3)
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(1)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+
+      const close = createLootxTrade({ timeMs: closeTimeMs, side: 'Ask', quantity: 4, execId: 'close' })
+      await writeFile(journalPath, createLootxJournal(300, [close]), 'utf8')
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+      })
+      expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
+        symbol: 'BTRUSDT',
+        entryTimeMs,
+        exitTimeMs: closeTimeMs
+      })
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a LootX open after the video buffer becomes ready without another journal update', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-lootx-buffer-retry-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const journalDir = join(appDataDir, 'TradingTerminal')
+    const journalPath = join(journalDir, 'journal.json')
+    const originalEntryTimeMs = Date.now() - 10_000
+    const closeTimeMs = Date.now() + 60_000
+    const entry = createLootxTrade({
+      timeMs: originalEntryTimeMs,
+      side: 'Bid',
+      quantity: 3,
+      execId: 'buffer-retry-entry'
+    })
+    const close = createLootxTrade({
+      timeMs: closeTimeMs,
+      side: 'Ask',
+      quantity: 3,
+      execId: 'buffer-retry-close'
+    })
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(journalPath, createLootxJournal(400, []), 'utf8')
+
+    const settings = createDefaultSettings(rootDir)
+    const getSettings = vi.fn(async () => settings)
+    const target = { id: 'window:lootx', name: 'LootX', type: 'window' as const }
+    let videoReady = false
+    const ensureVideoRecordingReady = vi.fn(async (
+      _event: TerminalPositionEvent,
+      _recordingTarget?: CaptureTargetRef
+    ) => videoReady)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      resolveRecordingTarget: async () => target,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('lootx')
+      })
+
+      await writeFile(journalPath, createLootxJournal(400, [entry]), 'utf8')
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThanOrEqual(1)
+        expect(watcher.getStatus().activeTradeCount).toBe(0)
+        expect(watcher.getStatus().message).toContain('ждём готовности видеобуфера')
+      })
+
+      const readinessCallsBeforeReady = ensureVideoRecordingReady.mock.calls.length
+      videoReady = true
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThan(readinessCallsBeforeReady)
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+
+      await writeFile(journalPath, createLootxJournal(400, [entry, close]), 'utf8')
+      await waitForAssertion(() => {
+        expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+        expect(watcher.getStatus().activeTradeCount).toBe(0)
+      })
+
+      const closedTrade = createClipForClosedTrade.mock.calls[0]?.[0]
+      expect(closedTrade).toMatchObject({
+        exchange: 'BINANCE',
+        symbol: 'BTRUSDT',
+        side: 'LONG',
+        exitTimeMs: closeTimeMs,
+        recordingTarget: target
+      })
+      expect(closedTrade?.entryTimeMs).toBeGreaterThan(originalEntryTimeMs)
+      expect(closedTrade?.entryTimeMs).toBeLessThan(closeTimeMs)
+
+      const settingsCallsAfterClip = getSettings.mock.calls.length
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsAfterClip + 3)
+      })
+      expect(createClipForClosedTrade).toHaveBeenCalledTimes(1)
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears a pending LootX open when it closes before the video buffer is ready', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-lootx-buffer-close-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const journalDir = join(appDataDir, 'TradingTerminal')
+    const journalPath = join(journalDir, 'journal.json')
+    const entryTimeMs = Date.now() - 10_000
+    const closeTimeMs = entryTimeMs + 1_000
+    const entry = createLootxTrade({
+      timeMs: entryTimeMs,
+      side: 'Bid',
+      quantity: 2,
+      execId: 'pending-close-entry'
+    })
+    const close = createLootxTrade({
+      timeMs: closeTimeMs,
+      side: 'Ask',
+      quantity: 2,
+      execId: 'pending-close-exit'
+    })
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(journalPath, createLootxJournal(500, []), 'utf8')
+
+    const settings = createDefaultSettings(rootDir)
+    const getSettings = vi.fn(async () => settings)
+    let videoReady = false
+    const ensureVideoRecordingReady = vi.fn(async (
+      _event: TerminalPositionEvent,
+      _recordingTarget?: CaptureTargetRef
+    ) => videoReady)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('lootx')
+      })
+
+      await writeFile(journalPath, createLootxJournal(500, [entry]), 'utf8')
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThanOrEqual(1)
+        expect(watcher.getStatus().activeTradeCount).toBe(0)
+      })
+
+      const settingsCallsBeforeClose = getSettings.mock.calls.length
+      await writeFile(journalPath, createLootxJournal(500, [entry, close]), 'utf8')
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsBeforeClose + 4)
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+
+      const settingsCallsBeforeReady = getSettings.mock.calls.length
+      videoReady = true
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsBeforeReady + 3)
+      })
+      expect(watcher.getStatus().activeTradeCount).toBe(0)
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops a delayed LootX close at or before the retried entry boundary without creating a clip', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('MetaScalp offline')
+    }))
+
+    const rootDir = await mkdtemp(join(tmpdir(), 'tradetools-lootx-delayed-close-'))
+    const appDataDir = join(rootDir, 'AppData')
+    const journalDir = join(appDataDir, 'TradingTerminal')
+    const journalPath = join(journalDir, 'journal.json')
+    const originalEntryTimeMs = Date.now() - 10_000
+    const delayedCloseTimeMs = originalEntryTimeMs + 1_000
+    const entry = createLootxTrade({
+      timeMs: originalEntryTimeMs,
+      side: 'Bid',
+      quantity: 5,
+      execId: 'delayed-close-entry'
+    })
+    const close = createLootxTrade({
+      timeMs: delayedCloseTimeMs,
+      side: 'Ask',
+      quantity: 5,
+      execId: 'delayed-close-exit'
+    })
+    await mkdir(journalDir, { recursive: true })
+    await writeFile(journalPath, createLootxJournal(600, []), 'utf8')
+
+    const settings = createDefaultSettings(rootDir)
+    const getSettings = vi.fn(async () => settings)
+    let videoReady = false
+    const ensureVideoRecordingReady = vi.fn(async (
+      _event: TerminalPositionEvent,
+      _recordingTarget?: CaptureTargetRef
+    ) => videoReady)
+    const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
+    const watcher = createTerminalTradeWatcher({
+      getSettings,
+      ensureVideoRecordingReady,
+      protectSince: vi.fn(),
+      createClipForClosedTrade,
+      env: { APPDATA: appDataDir },
+      pollIntervalMs: 20
+    })
+
+    try {
+      watcher.start()
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().availableSources).toContain('lootx')
+      })
+
+      await writeFile(journalPath, createLootxJournal(600, [entry]), 'utf8')
+      await waitForAssertion(() => {
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThanOrEqual(1)
+        expect(watcher.getStatus().activeTradeCount).toBe(0)
+      })
+
+      const readinessCallsBeforeReady = ensureVideoRecordingReady.mock.calls.length
+      videoReady = true
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(1)
+      })
+      const retriedEvent = ensureVideoRecordingReady.mock.calls
+        .slice(readinessCallsBeforeReady)
+        .map(([event]) => event)
+        .find((event) => event?.symbol === 'BTRUSDT')
+      expect(retriedEvent?.eventTimeMs).toBeGreaterThan(originalEntryTimeMs)
+      expect(delayedCloseTimeMs).toBeLessThanOrEqual(retriedEvent?.eventTimeMs ?? 0)
+
+      await writeFile(journalPath, createLootxJournal(600, [entry, close]), 'utf8')
+      await waitForAssertion(() => {
+        expect(watcher.getStatus().activeTradeCount).toBe(0)
+      })
+      const settingsCallsAfterClose = getSettings.mock.calls.length
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsAfterClose + 3)
+      })
+      expect(createClipForClosedTrade).not.toHaveBeenCalled()
+    } finally {
+      watcher.stop()
+      vi.unstubAllGlobals()
+      await rm(rootDir, { recursive: true, force: true })
+    }
   })
 
   it('parses TigerTrade position updates from WorkLog rows', () => {
@@ -790,14 +1417,18 @@ describe('terminalTradeRecorder', () => {
         mode: 'terminal-window' as const
       }
     }
+    const getSettings = vi.fn(async () => settings)
     const target = { id: 'window:tiger-beat', name: 'Tiger.com - BEATUSDT', type: 'window' as const }
     let videoReady = false
-    const ensureVideoRecordingReady = vi.fn(async () => videoReady)
+    const ensureVideoRecordingReady = vi.fn(async (
+      _event: TerminalPositionEvent,
+      _recordingTarget?: CaptureTargetRef
+    ) => videoReady)
     const resolveRecordingTarget = vi.fn(async () => target)
     const createClipForClosedTrade = vi.fn(async (_trade: ClosedTrade) => undefined)
     const onStatusChange = vi.fn()
     const watcher = createTerminalTradeWatcher({
-      getSettings: async () => settings,
+      getSettings,
       ensureVideoRecordingReady,
       protectSince: vi.fn(),
       createClipForClosedTrade,
@@ -826,17 +1457,18 @@ describe('terminalTradeRecorder', () => {
         executions: 1
       }) + '\n', 'utf8')
       await waitForAssertion(() => {
-        expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
-        expect(watcher.getStatus().message).toContain('видеобуфер')
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThanOrEqual(1)
+        expect(watcher.getStatus().message).toContain('ждём готовности видеобуфера')
       })
-      expect(ensureVideoRecordingReady).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ symbol: 'BEATUSDT', eventTimeMs: skippedEntryTimeMs }),
-        target
-      )
+      expect(ensureVideoRecordingReady.mock.calls.some(([event, recordingTarget]) => (
+        event?.symbol === 'BEATUSDT'
+        && event?.eventTimeMs === skippedEntryTimeMs
+        && recordingTarget === target
+      ))).toBe(true)
       expect(watcher.getStatus().activeTradeCount).toBe(0)
       expect(createClipForClosedTrade).not.toHaveBeenCalled()
 
+      const settingsCallsBeforeScale = getSettings.mock.calls.length
       await appendFile(logPath, createTigerTradePositionLine({
         timeMs: skippedScaleTimeMs,
         symbol: 'BEATUSDT',
@@ -844,23 +1476,30 @@ describe('terminalTradeRecorder', () => {
         executions: 2
       }) + '\n', 'utf8')
       await waitForAssertion(() => {
-        expect(watcher.getStatus().lastEventAtMs).toBe(skippedScaleTimeMs)
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsBeforeScale + 3)
       })
-      expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(1)
-      expect(resolveRecordingTarget).toHaveBeenCalledTimes(1)
       expect(watcher.getStatus().activeTradeCount).toBe(0)
 
+      const settingsCallsBeforeClose = getSettings.mock.calls.length
       await appendFile(logPath, createTigerTradePositionLine({
         timeMs: skippedExitTimeMs,
         symbol: 'BEATUSDT',
         size: 0,
         executions: 3
       }) + '\n', 'utf8')
-      await sleep(80)
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsBeforeClose + 4)
+      })
       expect(createClipForClosedTrade).not.toHaveBeenCalled()
       expect(watcher.getStatus().activeTradeCount).toBe(0)
 
+      const settingsCallsAfterSkippedClose = getSettings.mock.calls.length
+      await waitForAssertion(() => {
+        expect(getSettings.mock.calls.length).toBeGreaterThanOrEqual(settingsCallsAfterSkippedClose + 3)
+      })
+
       videoReady = true
+      const readinessCallsBeforeRecordedEntry = ensureVideoRecordingReady.mock.calls.length
       await appendFile(logPath, createTigerTradePositionLine({
         timeMs: recordedEntryTimeMs,
         symbol: 'BEATUSDT',
@@ -868,10 +1507,10 @@ describe('terminalTradeRecorder', () => {
         executions: 4
       }) + '\n', 'utf8')
       await waitForAssertion(() => {
-        expect(ensureVideoRecordingReady).toHaveBeenCalledTimes(2)
+        expect(ensureVideoRecordingReady.mock.calls.length).toBeGreaterThan(readinessCallsBeforeRecordedEntry)
         expect(watcher.getStatus().activeTradeCount).toBe(1)
       })
-      expect(resolveRecordingTarget).toHaveBeenCalledTimes(2)
+      expect(resolveRecordingTarget.mock.calls.length).toBeGreaterThanOrEqual(1)
 
       await appendFile(logPath, createTigerTradePositionLine({
         timeMs: recordedExitTimeMs,
@@ -890,7 +1529,8 @@ describe('terminalTradeRecorder', () => {
         recordingTarget: target
       })
       expect(onStatusChange.mock.calls.some(([nextStatus]) => (
-        typeof nextStatus?.message === 'string' && nextStatus.message.includes('эту сделку пропускаем')
+        typeof nextStatus?.message === 'string'
+        && nextStatus.message.includes('клип начнётся с доступного участка')
       ))).toBe(true)
     } finally {
       watcher.stop()

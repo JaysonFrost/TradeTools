@@ -121,6 +121,7 @@ describe('Dashboard layout', () => {
 
   it('supports built-in terminal window recording without requiring OBS', async () => {
     const settingsPanelSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
+    const setupWizardSource = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -150,6 +151,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('Сколько секунд видео TradeTools держит до входа')
     expect(settingsPanelSource).toContain('longClipPresetSeconds')
     expect(settingsPanelSource).toContain('longClipAfterExitSeconds')
+    expect(settingsPanelSource).toContain('findAutoRecordedTerminalSources(windowSources)')
+    expect(setupWizardSource).toContain('findAutoRecordedTerminalSources(windowSources)')
     expect(controllerSource).toContain('findAutoRecordedTerminalSources')
     expect(controllerSource).not.toContain("recording.mode !== 'window'")
     expect(controllerSource).not.toContain('Автоматически выбрали окно терминала')
@@ -195,8 +198,8 @@ describe('Dashboard layout', () => {
     expect(settingsPanelSource).toContain('captureTargets')
     expect(settingsPanelSource).toContain("saveTargetMode: sourceType === 'screen' ? 'all' : 'selected'")
     expect(settingsPanelSource).toContain('const firstCaptureTarget = nextCaptureTargets[0]')
-    expect(settingsPanelSource).toContain("windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : windowSourceId")
-    expect(settingsPanelSource).toContain("windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName")
+    expect(settingsPanelSource).toContain("windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? ''")
+    expect(settingsPanelSource).toContain("windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? ''")
     expect(settingsPanelSource).not.toContain('saveTradeDisplayOnly')
     expect(settingsPanelSource).not.toContain('Только монитор сделки')
     expect(settingsPanelSource).not.toContain('Все мониторы')
@@ -478,18 +481,20 @@ describe('Dashboard layout', () => {
     expect(controllerSource).not.toContain('if (disposed) return\n\n                const status = await api.recording.appendSegment')
   })
 
-  it('checks a saved window source before showing ffmpeg startup status', async () => {
+  it('stops stale terminal recorders before reporting that no supported window is open', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
-    expect(controllerSource).toContain('isSavedWindowSourceMissing')
-    expect(controllerSource.indexOf('isSavedWindowSourceMissing')).toBeLessThan(controllerSource.indexOf('Запускаем оптимизированную ffmpeg-запись'))
+    expect(controllerSource).not.toContain('isSavedWindowSourceMissing')
+    expect(controllerSource.indexOf('const desiredSourceIds')).toBeLessThan(controllerSource.indexOf('if (targets.length === 0)'))
+    expect(controllerSource).toContain('await Promise.all(stoppedRecorders)')
     expect(controllerSource).toContain('scheduleSourceRetry()')
-    expect(controllerSource).toContain('Окно ${savedWindowLabel} не найдено')
+    expect(controllerSource).toContain('Откройте торговый терминал. TradeTools сам выберет подходящее окно')
     expect(controllerSource).toContain('mergeBrowserRecorderStatus(status, activeSources, message)')
   })
 
   it('uses terminal window recording as the default no-API trade source', async () => {
     const dashboardSource = await readFile(resolve('src/renderer/routes/Dashboard.tsx'), 'utf8')
+    const setupStepsSource = await readFile(resolve('src/renderer/components/setup/setupWizardSteps.ts'), 'utf8')
     const settingsSource = await readFile(resolve('src/main/services/settings/settings.ts'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -497,6 +502,10 @@ describe('Dashboard layout', () => {
     expect(settingsSource).toContain("mode: 'terminal-window'")
     expect(dashboardSource).toContain('Автозапись терминалов')
     expect(dashboardSource).toContain('После закрытия TradeTools сам сохранит клип')
+    expect(dashboardSource).toContain('supportedTerminalLabels[source]')
+    expect(dashboardSource).toContain('Автовыбор терминала')
+    expect(dashboardSource).toContain('Vataga, TigerTrade, LootX или MetaScalp')
+    expect(setupStepsSource).toContain('Vataga, TigerTrade, LootX или MetaScalp')
     expect(dashboardSource).not.toContain('Начать запись сделки')
     expect(preloadSource).toContain("ipcRenderer.invoke('terminal-trade:get-status'")
     expect(preloadSource).not.toContain("ipcRenderer.invoke('terminal-trade:start'")
@@ -699,13 +708,16 @@ describe('Dashboard layout', () => {
     expect(source).toContain('Ожидает')
   })
 
-  it('does not replace a temporarily unavailable saved window with an auto-detected terminal', async () => {
+  it('shows only live supported terminals and never injects a legacy window option', async () => {
     const wizardSource = await readFile(resolve('src/renderer/components/setup/SetupWizard.tsx'), 'utf8')
     const settingsSource = await readFile(resolve('src/renderer/components/settings/RecordingSettingsPanel.tsx'), 'utf8')
 
-    expect(wizardSource).toContain("!windowSourceId && !windowSourceName")
-    expect(wizardSource).toContain('(временно недоступно)')
-    expect(settingsSource).toContain('(временно недоступно)')
+    expect(wizardSource).toContain('Терминалы для автозаписи')
+    expect(settingsSource).toContain('Терминалы для автозаписи')
+    expect(wizardSource).not.toContain('displayedWindowSourceId')
+    expect(settingsSource).not.toContain('displayedWindowSourceId')
+    expect(wizardSource).not.toContain('(временно недоступно)')
+    expect(settingsSource).not.toContain('(временно недоступно)')
   })
 
   it('keeps clip cards free of the source badge', async () => {

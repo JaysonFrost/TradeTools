@@ -8,7 +8,7 @@ import { defaultLocalProxyPort } from '../../../shared/defaults'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
-import { findPreferredTerminalSource } from '../../lib/windowCaptureSources'
+import { findAutoRecordedTerminalSources, findPreferredTerminalSource } from '../../lib/windowCaptureSources'
 import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { proxySetupWizardSteps, videoSetupWizardSteps } from './setupWizardSteps'
 import { Button } from '../ui/Button'
@@ -285,23 +285,23 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
 
   const step = steps[stepIndex]
   const progress = useMemo(() => Math.round(((stepIndex + 1) / steps.length) * 100), [stepIndex, steps.length])
-  const filteredSources = windowSources.filter((source) => source.type === sourceType)
-  const selectedWindowTemporarilyUnavailable = Boolean(
-    sourceType === 'window' && windowSourceId && !filteredSources.some((source) => source.id === windowSourceId)
-  )
+  const windowOptions = findAutoRecordedTerminalSources(windowSources)
+  const filteredSources = sourceType === 'window'
+    ? windowOptions
+    : windowSources.filter((source) => source.type === 'screen')
   const stepActionLabels = useMemo(() => {
     if (!step) return []
     if (mode === 'video' && step.id === 'recording-source') {
       return [
-        'Открыть окно торгового терминала',
-        'Выбрать окно или мониторы для записи',
-        'Сохранить источник записи'
+        'Открыть нужные торговые терминалы',
+        'Проверить автоматически найденные окна или выбрать мониторы',
+        'Сохранить режим записи'
       ]
     }
     if (mode === 'video' && step.id === 'recording-buffer') {
       return [
-        'Откройте окно торгового терминала',
-        'Если окно не выбрано, TradeTools попробует выбрать его автоматически',
+        'Откройте нужный торговый терминал',
+        'TradeTools автоматически подключит поддержанное окно',
         'Нажмите проверку видео'
       ]
     }
@@ -322,15 +322,17 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
     setLocalMessage('')
     try {
       const api = getTradeToolsApi()
-      const latestSources = !windowSourceId && !windowSourceName
-        ? await api.recording.listWindowSources()
+      const latestSources = sourceType === 'window'
+        ? await api.recording.listWindowSources(true)
+        : !windowSourceId && !windowSourceName
+          ? await api.recording.listWindowSources()
         : windowSources
       if (latestSources !== windowSources) setWindowSources(latestSources)
-      const selectedSource = windowSources.find((source) => source.id === windowSourceId)
-        ?? latestSources.find((source) => source.id === windowSourceId)
-        ?? (sourceType === 'window' && !windowSourceId && !windowSourceName
-          ? findPreferredTerminalSource(latestSources)
-          : undefined)
+      const selectedSource = sourceType === 'window'
+        ? findAutoRecordedTerminalSources(latestSources).find((source) => source.id === windowSourceId)
+          ?? findPreferredTerminalSource(latestSources)
+        : windowSources.find((source) => source.id === windowSourceId)
+          ?? latestSources.find((source) => source.id === windowSourceId)
       const selectedTarget = selectedSource ? {
         id: selectedSource.id,
         name: selectedSource.name,
@@ -340,7 +342,7 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
       } : undefined
       const nextCaptureTargets = sourceType === 'screen'
         ? captureTargets.filter((target) => target.type === 'screen')
-        : selectedTarget ? [selectedTarget] : captureTargets.filter((target) => target.type === 'window')
+        : selectedTarget ? [selectedTarget] : []
       const firstCaptureTarget = nextCaptureTargets[0]
       const parsedPaddingBeforeSeconds = Number(paddingBefore)
       const parsedReplayBufferSeconds = Number(replayBufferSeconds)
@@ -351,7 +353,7 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
           mode: 'window',
           sourceType,
           windowSourceId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? windowSourceId,
-          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? windowSourceName,
+          windowSourceName: sourceType === 'screen' ? firstCaptureTarget?.name ?? '' : selectedSource?.name ?? '',
           captureTargets: nextCaptureTargets,
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId: sourceType === 'screen' ? firstCaptureTarget?.id ?? '' : selectedSource?.id ?? firstCaptureTarget?.id ?? '',
@@ -802,22 +804,14 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
                                 {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
                               </select>
                             ) : (
-                              <select
-                                className={`${compactInputClass} min-w-[180px] flex-[1_1_240px] appearance-none`}
-                                value={windowSourceId}
-                                onChange={(event) => {
-                                  const source = windowSources.find((candidate) => candidate.id === event.target.value)
-                                  setWindowSourceId(event.target.value)
-                                  setWindowSourceName(source?.name ?? '')
-                                }}
-                                aria-label="Окно для записи"
+                              <div
+                                className={`${compactInputClass} min-w-[180px] flex-[1_1_240px] text-sm`}
+                                aria-label="Терминалы для автозаписи"
                               >
-                                <option value="">Выберите окно</option>
-                                {selectedWindowTemporarilyUnavailable && (
-                                  <option value={windowSourceId}>{windowSourceName || 'Сохранённое окно'} (временно недоступно)</option>
-                                )}
-                                {filteredSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
-                              </select>
+                                {filteredSources.length > 0
+                                  ? `Автовыбор: ${filteredSources.map((source) => source.name).join(', ')}`
+                                  : 'Откройте Vataga, TigerTrade, LootX или MetaScalp'}
+                              </div>
                             )}
                             <Button className="shrink-0" variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>
                               <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}

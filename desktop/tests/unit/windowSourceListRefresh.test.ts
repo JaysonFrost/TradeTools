@@ -7,7 +7,7 @@ import { findPreferredTerminalSource } from '../../src/renderer/lib/windowCaptur
 
 describe('window source list refresh', () => {
   it.each([
-    { id: 'window:obsidian', name: 'Obsidian - Торговый дневник' },
+    { id: 'window:lootx', name: 'LootX' },
     { id: 'window:vataga', name: 'Vataga.terminal' }
   ])('preserves a hydrated HAPP selection when an async mount refresh prefers $name', async (preferred) => {
     let resolveSources: (sources: WindowCaptureSource[]) => void = () => undefined
@@ -80,5 +80,23 @@ describe('window source list refresh', () => {
     expect(refreshSource).not.toContain('setWindowSourceId')
     expect(refreshSource).not.toContain('setWindowSourceName')
     expect(refreshSource).not.toContain('setCaptureTargets')
+  })
+
+  it.each([
+    'src/renderer/components/settings/RecordingSettingsPanel.tsx',
+    'src/renderer/components/setup/SetupWizard.tsx'
+  ])('shows only supported terminal windows in %s', async (filePath) => {
+    const source = await readFile(resolve(filePath), 'utf8')
+
+    expect(source).toContain("import { findAutoRecordedTerminalSources")
+    expect(source).toContain('findAutoRecordedTerminalSources(windowSources)')
+    expect(source).toContain('Терминалы для автозаписи')
+    expect(source).not.toContain('displayedWindowSourceId')
+  })
+
+  it('force-refreshes capture sources while automatic terminal recording is active', async () => {
+    const source = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+
+    expect(source).toContain("listWindowSources(currentSettings.recording.sourceType === 'window')")
   })
 })

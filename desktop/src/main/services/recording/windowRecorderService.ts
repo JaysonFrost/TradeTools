@@ -3,11 +3,12 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFile, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { AppSettings, CaptureTargetRef } from '../settings/settings'
-import { terminalTitleMatchesTicker } from './terminalWindowSelection'
+import { recordingSourcesMatchingTarget } from './terminalWindowSelection'
 import type { ClosedTrade } from '../trades/simulatedTradePipeline'
 import { toSafeClipFileBaseName } from '../video/clipPaths'
 import { buildH264VideoArgs, calculateFfmpegRenderThreads } from '../video/ffmpegCommand'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
+import { isSupportedTerminalWindowName } from '../../../shared/supportedTerminalWindows'
 
 export type WindowCaptureSource = {
   id: string
@@ -22,6 +23,8 @@ export type WindowCaptureSource = {
     height: number
   }
 }
+
+const usesAutomaticTerminalWindows = (settings: AppSettings): boolean => settings.recording.sourceType === 'window'
 
 export type ScreenCaptureBounds = {
   displayId: string
@@ -167,8 +170,11 @@ export type WindowRecorderService = {
   finishFreeRecording: (settings: AppSettings) => Promise<FreeRecordingFinishResult>
   getFreeRecordingStatus: (settings: AppSettings) => Promise<FreeRecordingStatus>
   getStatus: (settings: AppSettings) => Promise<WindowRecorderStatus>
+  noteBrowserRecordingStarted: (input: WindowRecordingStartedInput) => void
+  noteBrowserRecordingStopped: (input: WindowRecordingStoppedInput) => void
   pauseFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   protectSince: (timeMs?: number) => void
+  resetBrowserRecordingSources: () => void
   resumeFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   saveReplayBuffer: (input: WindowReplaySaveInput) => Promise<WindowReplaySaveResult>
   start: (settings: AppSettings) => Promise<WindowRecorderStatus>
@@ -839,6 +845,8 @@ export const createWindowRecorderService = ({
   const segments: StoredSegment[] = []
   const pendingSegmentPaths = new Set<string>()
   const activeSegmentReadCounts = new Map<string, number>()
+  const activeBrowserRecordings = new Map<string, WindowRecordingStartedInput>()
+  let browserLifecycleObserved = false
   let protectedSinceMs = 0
   const replayProtectionTimes = new Map<string, number>()
   let freeRecording: FreeRecordingState | undefined
@@ -962,6 +970,7 @@ export const createWindowRecorderService = ({
     if (
       settings.recording.sourceType !== 'window' ||
       !settings.recording.windowSourceName ||
+      usesAutomaticTerminalWindows(settings) ||
       !isWindowSourceAvailable
     ) {
       return undefined
@@ -1278,40 +1287,61 @@ export const createWindowRecorderService = ({
     await pruneReplayFiles(replaysDir, replayCutoffMs)
   }
 
-  const targetMatchesSegment = (segment: StoredSegment, captureTarget: CaptureTargetRef): boolean => {
-    if (segment.sourceId === captureTarget.id) return true
-    if (Boolean(captureTarget.name) && segment.sourceName === captureTarget.name) return true
-
-    const segmentProcessId = sanitizeProcessId(segment.processId)
-    const targetProcessId = sanitizeProcessId(captureTarget.processId)
-    return Boolean(
-      captureTarget.symbol &&
-      segmentProcessId !== undefined &&
-      segmentProcessId === targetProcessId &&
-      terminalTitleMatchesTicker(segment.sourceName, captureTarget.symbol)
-    )
-  }
-
   const relevantSegments = (settings: AppSettings, captureTarget?: CaptureTargetRef): StoredSegment[] => {
     const sourceId = settings.recording.windowSourceId
     const sourceName = settings.recording.windowSourceName
     const configuredTargets = settings.recording.captureTargets
-    const matchesConfiguredTarget = (segment: StoredSegment): boolean => {
-      if (captureTarget) return targetMatchesSegment(segment, captureTarget)
-      if (settings.recording.sourceType === 'window' && (sourceId || sourceName)) {
-        return segment.sourceId === sourceId || segment.sourceName === sourceName
-      }
-      if (configuredTargets.length > 0) return configuredTargets.some((target) => targetMatchesSegment(segment, target))
-      return true
+    const automaticTerminalWindows = usesAutomaticTerminalWindows(settings)
+    const availableSegments = segments.filter((segment) => !segment.retainedForSession)
+    let matchingSegments: StoredSegment[]
+    if (captureTarget) {
+      matchingSegments = recordingSourcesMatchingTarget(availableSegments, captureTarget)
+    } else if (automaticTerminalWindows) {
+      matchingSegments = availableSegments.filter((segment) => isSupportedTerminalWindowName(segment.sourceName))
+    } else if (settings.recording.sourceType === 'window' && (sourceId || sourceName)) {
+      matchingSegments = recordingSourcesMatchingTarget(availableSegments, {
+        id: sourceId,
+        name: sourceName
+      })
+    } else if (configuredTargets.length > 0) {
+      const configuredSegments = new Set(configuredTargets.flatMap((target) => (
+        recordingSourcesMatchingTarget(availableSegments, target)
+      )))
+      matchingSegments = availableSegments.filter((segment) => configuredSegments.has(segment))
+    } else {
+      matchingSegments = availableSegments
     }
 
-    return segments
-      .filter((segment) => !segment.retainedForSession && matchesConfiguredTarget(segment))
+    return matchingSegments
       .sort((a, b) => a.startedAtMs - b.startedAtMs)
   }
 
   const statusCaptureTargets = (settings: AppSettings): CaptureTargetRef[] => {
     const { windowSourceId, windowSourceName, sourceType, captureTargets } = settings.recording
+    if (usesAutomaticTerminalWindows(settings)) {
+      if (browserLifecycleObserved) {
+        return [...activeBrowserRecordings.values()]
+          .filter((recording) => isSupportedTerminalWindowName(recording.sourceName))
+          .map((recording) => ({
+            id: recording.sourceId,
+            name: recording.sourceName,
+            type: 'window',
+            ...(recording.processId ? { processId: recording.processId } : {})
+          }))
+      }
+
+      const targetsById = new Map<string, CaptureTargetRef>()
+      for (const segment of segments) {
+        if (segment.retainedForSession || !isSupportedTerminalWindowName(segment.sourceName)) continue
+        targetsById.set(segment.sourceId, {
+          id: segment.sourceId,
+          name: segment.sourceName,
+          type: 'window',
+          ...(segment.processId ? { processId: segment.processId } : {})
+        })
+      }
+      return [...targetsById.values()]
+    }
     if (sourceType !== 'window' || (!windowSourceId && !windowSourceName)) return captureTargets
 
     const selectedTarget = captureTargets.find((target) => (
@@ -1327,7 +1357,10 @@ export const createWindowRecorderService = ({
     }]
   }
 
-  const buildSourceStatuses = (settings: AppSettings) => statusCaptureTargets(settings).map((target) => {
+  const buildSourceStatuses = (
+    settings: AppSettings,
+    targets = statusCaptureTargets(settings)
+  ) => targets.map((target) => {
     const sourceSegments = relevantSegments(settings, target)
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
@@ -1347,11 +1380,17 @@ export const createWindowRecorderService = ({
     override: Partial<Pick<WindowRecorderStatus, 'backend' | 'fallbackRequired' | 'message'>> = {}
   ): Promise<WindowRecorderStatus> => {
     await pruneSegments(settings)
-    const sourceSegments = relevantSegments(settings)
+    const automaticTerminalWindows = usesAutomaticTerminalWindows(settings)
+    const statusTargets = statusCaptureTargets(settings)
+    const sourceSegments = automaticTerminalWindows && browserLifecycleObserved
+      ? statusTargets
+          .flatMap((target) => relevantSegments(settings, target))
+          .sort((left, right) => left.startedAtMs - right.startedAtMs)
+      : relevantSegments(settings)
     const first = sourceSegments[0]
     const last = sourceSegments.at(-1)
     const rawBufferedSeconds = first && last ? Math.max(0, (last.endedAtMs - first.startedAtMs) / 1000) : 0
-    const sourceStatuses = buildSourceStatuses(settings)
+    const sourceStatuses = buildSourceStatuses(settings, statusTargets)
     const metrics = aggregateWindowRecorderSourceStatuses(sourceStatuses, {
       segmentCount: sourceSegments.length,
       bufferedSeconds: Math.min(settings.clip.replayBufferSeconds, rawBufferedSeconds),
@@ -1363,7 +1402,7 @@ export const createWindowRecorderService = ({
     const backend = override.backend ?? (hasNativeRecorder ? 'ffmpeg' : 'browser')
     const bufferTargetSeconds = Math.max(1, Math.round(settings.clip.replayBufferSeconds))
     const bufferMessage = `накоплено ${Math.round(bufferedSeconds)}с из ${bufferTargetSeconds}с`
-    const defaultMessage = !settings.recording.windowSourceId && settings.recording.sourceType === 'window'
+    const defaultMessage = automaticTerminalWindows
         ? 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
         : backend === 'ffmpeg' && hasNativeRecorder
           ? bufferedSeconds > 0
@@ -1381,8 +1420,8 @@ export const createWindowRecorderService = ({
       backend,
       ...(override.fallbackRequired || (!hasNativeRecorder && Boolean(nativeLastError)) ? { fallbackRequired: true } : {}),
       mode: settings.recording.mode,
-      sourceId: settings.recording.windowSourceId,
-      sourceName: settings.recording.windowSourceName,
+      sourceId: automaticTerminalWindows ? '' : settings.recording.windowSourceId,
+      sourceName: automaticTerminalWindows ? '' : settings.recording.windowSourceName,
       segmentCount: metrics.segmentCount,
       bufferedSeconds,
       lastSegmentAtMs: metrics.lastSegmentAtMs,
@@ -1867,6 +1906,10 @@ export const createWindowRecorderService = ({
       const parsed = Number(timeMs)
       protectedSinceMs = Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
     },
+    resetBrowserRecordingSources() {
+      browserLifecycleObserved = true
+      activeBrowserRecordings.clear()
+    },
     finishFreeRecording,
     getFreeRecordingStatus: buildFreeRecordingStatus,
     async appendSegment(input, settings) {
@@ -1910,6 +1953,18 @@ export const createWindowRecorderService = ({
       return buildStatus(settings)
     },
     getStatus: getWindowRecorderStatus,
+    noteBrowserRecordingStarted(input) {
+      browserLifecycleObserved = true
+      const current = activeBrowserRecordings.get(input.sourceId)
+      if (!current || current.captureEpochId !== input.captureEpochId || input.startedAtMs < current.startedAtMs) {
+        activeBrowserRecordings.set(input.sourceId, { ...input })
+      }
+    },
+    noteBrowserRecordingStopped(input) {
+      browserLifecycleObserved = true
+      const current = activeBrowserRecordings.get(input.sourceId)
+      if (current?.captureEpochId === input.captureEpochId) activeBrowserRecordings.delete(input.sourceId)
+    },
     async pauseFreeRecording(settings) {
       if (!freeRecording) return buildFreeRecordingStatus(settings, 'Свободная запись не запущена')
 

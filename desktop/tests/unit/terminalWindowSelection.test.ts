@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { preferTerminalSourcesForSymbol, recordingSourceMatchesTarget, terminalTitleMatchesTicker } from '../../src/main/services/recording/terminalWindowSelection'
+import {
+  preferTerminalSourcesForSymbol,
+  recordingSourceMatchesTarget,
+  recordingSourcesMatchingTarget,
+  selectTerminalWindowSource,
+  terminalTitleMatchesTicker
+} from '../../src/main/services/recording/terminalWindowSelection'
 
 describe('terminal window selection', () => {
   it('prefers the window whose title contains the exact normalized ticker', () => {
@@ -42,12 +48,75 @@ describe('terminal window selection', () => {
       name: 'Tiger.com - HEIUSDT',
       processId: 42,
       symbol: 'HEIUSDT'
-    })).toBe(false)
+    }, [beatSource])).toBe(false)
     expect(recordingSourceMatchesTarget(beatSource, {
       id: 'old-window:beat',
       name: 'Tiger.com',
       processId: 42,
       symbol: 'BEAT/USDT'
-    })).toBe(true)
+    }, [beatSource])).toBe(true)
+  })
+
+  it('lets an exact source id dominate duplicate terminal names', () => {
+    const first = { sourceId: 'window:lootx-one', sourceName: 'LootX', processId: 42 }
+    const second = { sourceId: 'window:lootx-two', sourceName: 'LootX', processId: 42 }
+    const sources = [first, second]
+    const target = { id: first.sourceId, name: 'LootX', processId: 42 }
+
+    expect(recordingSourcesMatchingTarget(sources, target)).toEqual([first])
+    expect(recordingSourceMatchesTarget(first, target, sources)).toBe(true)
+    expect(recordingSourceMatchesTarget(second, target, sources)).toBe(false)
+  })
+
+  it('falls back to a terminal name only when it identifies one source id', () => {
+    const firstSegment = { sourceId: 'window:lootx-new', sourceName: 'LootX' }
+    const secondSegment = { sourceId: 'window:lootx-new', sourceName: 'LootX' }
+    const otherWindow = { sourceId: 'window:lootx-other', sourceName: 'LootX' }
+    const staleTarget = { id: 'window:lootx-old', name: 'LootX' }
+
+    expect(recordingSourcesMatchingTarget([firstSegment, secondSegment], staleTarget)).toEqual([
+      firstSegment,
+      secondSegment
+    ])
+    expect(recordingSourcesMatchingTarget([firstSegment, secondSegment, otherWindow], staleTarget)).toEqual([])
+  })
+
+  it('uses process and ticker to safely disambiguate a replaced source id', () => {
+    const expected = { sourceId: 'window:new-eth', sourceName: 'Tiger.com - ETHUSDT', processId: 42 }
+    const sameNameOtherProcess = { sourceId: 'window:other-process', sourceName: 'Tiger.com - ETHUSDT', processId: 84 }
+    const sameProcessOtherTicker = { sourceId: 'window:new-btc', sourceName: 'Tiger.com - BTCUSDT', processId: 42 }
+
+    expect(recordingSourcesMatchingTarget([
+      expected,
+      sameNameOtherProcess,
+      sameProcessOtherTicker
+    ], {
+      id: 'window:old-eth',
+      name: 'Tiger.com - ETHUSDT',
+      processId: 42,
+      symbol: 'ETHUSDT'
+    })).toEqual([expected])
+  })
+
+  it('selects one duplicate same-named terminal after process, ticker, and cursor checks', () => {
+    const first = {
+      id: 'window:lootx-one',
+      name: 'LootX',
+      bounds: { x: 0, y: 0, width: 100, height: 100 }
+    }
+    const second = {
+      id: 'window:lootx-two',
+      name: 'LootX',
+      bounds: { x: 100, y: 0, width: 100, height: 100 }
+    }
+
+    expect(selectTerminalWindowSource({ symbol: 'ETHUSDT' }, [first, second], { x: 150, y: 50 })).toMatchObject({
+      source: second,
+      reason: 'cursor'
+    })
+    expect(selectTerminalWindowSource({ symbol: 'ETHUSDT' }, [first, second])).toMatchObject({
+      source: first,
+      reason: 'first'
+    })
   })
 })
