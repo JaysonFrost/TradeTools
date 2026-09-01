@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { defaultLocalProxyPort } from '../../../shared/defaults'
+import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, maxClipPaddingSeconds, maxWindowReplayBufferSeconds } from '../../../shared/videoDefaults'
 
 export type RecordingSourceType = 'window' | 'screen'
@@ -115,9 +116,7 @@ const normalizeString = (value: unknown): string => typeof value === 'string' ? 
 const normalizeProcessId = (value: unknown): number | undefined => (
   typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
 )
-const normalizeCaptureSymbol = (value: unknown): string => (
-  typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : ''
-)
+const normalizeCaptureSymbol = (value: unknown): string => normalizeTerminalSymbolToken(value)
 const normalizeLocalProxyType = (value: unknown): LocalProxyType => value === 'HTTP' ? 'HTTP' : 'SOCKS5'
 const normalizeInterfaceTheme = (value: unknown): InterfaceTheme => value === 'engineering-blueprint' ? 'engineering-blueprint' : 'classic'
 

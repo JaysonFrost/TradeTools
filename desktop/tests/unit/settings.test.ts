@@ -225,6 +225,28 @@ describe('settings', () => {
     expect(settings.recording.saveTargetId).toBe('screen:1')
   })
 
+  it('preserves a Chinese ticker on persisted window capture targets', () => {
+    const settings = normalizeSettings({
+      recording: {
+        mode: 'window',
+        sourceType: 'window',
+        captureTargets: [{
+          id: 'window:lootx',
+          name: 'LootX - 龙虾/USDT',
+          type: 'window',
+          symbol: ' 龙虾/USDT '
+        }]
+      }
+    }, '/app-data')
+
+    expect(settings.recording.captureTargets).toEqual([{
+      id: 'window:lootx',
+      name: 'LootX - 龙虾/USDT',
+      type: 'window',
+      symbol: '龙虾USDT'
+    }])
+  })
+
   it('ignores the legacy trade-display-only screen saving flag', () => {
     const settings = normalizeSettings({
       recording: {

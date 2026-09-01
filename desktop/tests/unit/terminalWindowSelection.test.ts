@@ -37,6 +37,21 @@ describe('terminal window selection', () => {
     expect(preferTerminalSourcesForSymbol('ETHUSDT', [beth])).toEqual([])
   })
 
+  it('matches a Chinese ticker without confusing it with a longer Unicode symbol', () => {
+    const lobster = { id: 'lobster', name: 'LootX - 龙虾/USDT chart' }
+    const dragonFish = { id: 'dragon-fish', name: 'LootX - 龙鱼/USDT chart' }
+
+    expect(terminalTitleMatchesTicker(lobster.name, '龙虾USDT')).toBe(true)
+    expect(terminalTitleMatchesTicker('LootX - 小龙虾USDT chart', '龙虾USDT')).toBe(false)
+    expect(terminalTitleMatchesTicker('LootX - 龙虾USDTA chart', '龙虾USDT')).toBe(false)
+    expect(preferTerminalSourcesForSymbol('龙虾USDT', [dragonFish, lobster])).toEqual([lobster])
+  })
+
+  it('matches supplementary-plane and full-width terminal symbols', () => {
+    expect(terminalTitleMatchesTicker('LootX - 𠮷/USDT chart', '𠮷USDT')).toBe(true)
+    expect(terminalTitleMatchesTicker('ＬｏｏｔＸ - ＢＴＣ／ＵＳＤＴ', 'BTCUSDT')).toBe(true)
+  })
+
   it('does not inherit readiness from another ticker window in the same terminal process', () => {
     const beatSource = {
       sourceId: 'window:beat',

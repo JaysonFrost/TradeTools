@@ -287,6 +287,40 @@ describe('terminalTradeRecorder', () => {
     expect(parseLootxJournalSnapshot('{')).toBeUndefined()
   })
 
+  it('preserves Chinese LootX symbols and keeps different Unicode positions distinct', () => {
+    const parsed = parseLootxJournalSnapshot(createLootxJournal(56, [
+      createLootxTrade({
+        timeMs: 103,
+        symbol: '龙虾',
+        side: 'Bid',
+        quantity: 1,
+        execId: 'unicode-only'
+      }),
+      createLootxTrade({
+        timeMs: 104,
+        symbol: '龙虾USDT',
+        side: 'Bid',
+        quantity: 2,
+        execId: 'shared-exec'
+      }),
+      createLootxTrade({
+        timeMs: 104,
+        symbol: '龙鱼USDT',
+        side: 'Bid',
+        quantity: 3,
+        execId: 'shared-exec'
+      })
+    ]))
+
+    expect(parsed?.fills.map((fill) => fill.symbol)).toEqual(['龙虾', '龙虾USDT', '龙鱼USDT'])
+    expect(parsed?.fills.map((fill) => fill.positionId)).toEqual([
+      'LOOTX-ACCOUNT:F:BINANCEF:龙虾',
+      'LOOTX-ACCOUNT:F:BINANCEF:龙虾USDT',
+      'LOOTX-ACCOUNT:F:BINANCEF:龙鱼USDT'
+    ])
+    expect(new Set(parsed?.fills.map((fill) => fill.id)).size).toBe(3)
+  })
+
   it('converts scaled LootX raw quantities to position units', () => {
     const parsed = parseLootxJournalSnapshot(createLootxJournal(56, [
       createLootxTrade({
@@ -440,12 +474,14 @@ describe('terminalTradeRecorder', () => {
     })
     const liveEntry = createLootxTrade({
       timeMs: recordingBoundaryMs - 5_000,
+      symbol: '龙虾USDT',
       side: 'Bid',
       quantity: 3,
       execId: 'live-entry'
     })
     const syntheticSeed = createLootxTrade({
       timeMs: recordingBoundaryMs - 4_800,
+      symbol: '龙虾USDT',
       side: 'Bid',
       quantity: 3,
       execId: 'SYNTHETIC_SEED',
@@ -492,6 +528,7 @@ describe('terminalTradeRecorder', () => {
       const closeTimeMs = recordingBoundaryMs + 1_000
       const liveClose = createLootxTrade({
         timeMs: closeTimeMs,
+        symbol: '龙虾USDT',
         side: 'Ask',
         quantity: 3,
         execId: 'live-close'
@@ -502,7 +539,7 @@ describe('terminalTradeRecorder', () => {
       })
       expect(createClipForClosedTrade.mock.calls[0]?.[0]).toMatchObject({
         exchange: 'BINANCE',
-        symbol: 'BTRUSDT',
+        symbol: '龙虾USDT',
         side: 'LONG',
         entryTimeMs: recordingBoundaryMs,
         exitTimeMs: closeTimeMs

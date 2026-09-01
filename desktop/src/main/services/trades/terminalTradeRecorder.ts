@@ -5,6 +5,7 @@ import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
 import { supportedTerminalLabels, type SupportedTerminalId } from '../../../shared/supportedTerminalWindows'
+import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
 
 export type TerminalTradeSource = SupportedTerminalId
 
@@ -193,8 +194,7 @@ const getErrorMessage = (error: unknown, fallback: string): string => (
 )
 
 const normalizeTerminalSymbol = (value: unknown, fallback = 'TERMINAL'): string => {
-  const text = normalizeAnyText(value)
-  return text.toUpperCase().replace(/[^A-Z0-9]+/g, '') || fallback
+  return normalizeTerminalSymbolToken(value) || fallback
 }
 
 const normalizeVatagaSymbolTitle = (value: unknown): string => {

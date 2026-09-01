@@ -1,7 +1,12 @@
-const normalizeTerminalTitleToken = (value: string): string => value.replace(/[^a-z0-9]/gi, '').toUpperCase()
+import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
+
+const terminalTitleCharacterClass = '\\p{L}\\p{M}\\p{N}'
+
+const normalizeTerminalTitleToken = (value: string): string => normalizeTerminalSymbolToken(value)
+const normalizeTerminalTitle = (value: string): string => value.normalize('NFKC').toUpperCase().normalize('NFKC')
 
 const tickerCharacterPattern = (ticker: string): string => (
-  normalizeTerminalTitleToken(ticker).split('').join('[^A-Z0-9]*')
+  [...normalizeTerminalTitleToken(ticker)].join(`[^${terminalTitleCharacterClass}]*`)
 )
 
 export const terminalTitleMatchesTicker = (title: string, ticker: string): boolean => {
@@ -9,12 +14,16 @@ export const terminalTitleMatchesTicker = (title: string, ticker: string): boole
   if (!normalizedTicker) return false
 
   const separatedTickerPattern = tickerCharacterPattern(normalizedTicker)
-  return new RegExp(`(?:^|[^A-Z0-9])${separatedTickerPattern}(?=$|[^A-Z0-9])`, 'i').test(title)
+  const normalizedTitle = normalizeTerminalTitle(title)
+  return new RegExp(
+    `(?:^|[^${terminalTitleCharacterClass}])${separatedTickerPattern}(?=$|[^${terminalTitleCharacterClass}])`,
+    'u'
+  ).test(normalizedTitle)
 }
 
 const terminalTitleContainsTickerCharacters = (title: string, ticker: string): boolean => {
   const pattern = tickerCharacterPattern(ticker)
-  return Boolean(pattern) && new RegExp(pattern, 'i').test(title)
+  return Boolean(pattern) && new RegExp(pattern, 'u').test(normalizeTerminalTitle(title))
 }
 
 export type RecordingSourceRef = {

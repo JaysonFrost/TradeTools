@@ -1,4 +1,5 @@
 import type { ClosedTrade } from './simulatedTradePipeline'
+import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
 
 export type TmmTradeMatcherDeps = {
   fetch?: typeof fetch
@@ -35,7 +36,7 @@ const toEpochMs = (value: unknown): number | undefined => {
   return time < 100_000_000_000 ? time * 1000 : time
 }
 
-const normalizeSymbol = (value: unknown): string => String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+const normalizeSymbol = (value: unknown): string => normalizeTerminalSymbolToken(value)
 
 const toDate = (timeMs: number): string => new Date(timeMs).toISOString().slice(0, 10)
 

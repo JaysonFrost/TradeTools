@@ -71,6 +71,53 @@ describe('tmmTradeMatcher', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ headers: { 'API-KEY': 'tmm-key' } }))
   })
 
+  it('keeps a Chinese ticker intact in the query and candidate comparison', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [
+        { id: 34, symbol: '龙虾/USDT', open_time: 1_784_168_400, close_time: 1_784_168_470_000 },
+        { id: 35, symbol: '龙鱼USDT', open_time: 1_784_168_400, close_time: 1_784_168_470_000 }
+      ]
+    })))
+    const fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    await expect(findTmmTradeUrl({
+      apiKey: 'tmm-key',
+      trade: {
+        symbol: '龙虾USDT',
+        entryTimeMs: 1_784_168_400_000,
+        exitTimeMs: 1_784_168_470_000
+      }
+    }, { fetch })).resolves.toBe('https://tradermake.money/app2/account/my-trades/34')
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]))
+    expect(requestUrl.searchParams.get('symbol')).toBe('龙虾USDT')
+  })
+
+  it('queries different Chinese tickers separately even when they share the same quote asset', async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const symbol = new URL(String(input)).searchParams.get('symbol')
+      const data = symbol === '龙虾USDT'
+        ? [{ id: 36, symbol: '龙虾USDT', open_time: 1_784_168_400, close_time: 1_784_168_470_000 }]
+        : symbol === '龙鱼USDT'
+          ? [{ id: 37, symbol: '龙鱼USDT', open_time: 1_784_168_600, close_time: 1_784_168_680_000 }]
+          : []
+      return new Response(JSON.stringify({ data }))
+    })
+    const fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    await expect(findTmmTradeUrls({
+      apiKey: 'tmm-key',
+      trades: [
+        { symbol: '龙虾USDT', entryTimeMs: 1_784_168_400_000, exitTimeMs: 1_784_168_470_000 },
+        { symbol: '龙鱼USDT', entryTimeMs: 1_784_168_600_000, exitTimeMs: 1_784_168_680_000 }
+      ]
+    }, { fetch })).resolves.toEqual([
+      'https://tradermake.money/app2/account/my-trades/36',
+      'https://tradermake.money/app2/account/my-trades/37'
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('selects the nearest same-symbol trade when TMM timestamps differ by minutes', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: [

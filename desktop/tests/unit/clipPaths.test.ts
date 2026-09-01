@@ -19,6 +19,14 @@ describe('clipPaths', () => {
     })
   })
 
+  it('preserves Chinese characters in clip titles and filenames', () => {
+    expect(buildClipFileNames({ ...trade, symbol: '龙虾USDT' })).toEqual({
+      title: '龙虾USDT Binance 22.05.26 14:32:11',
+      videoFileName: '龙虾USDT Binance 22.05.26 14-32-11.mp4',
+      metadataFileName: '龙虾USDT Binance 22.05.26 14-32-11.json'
+    })
+  })
+
   it('places clips under dated output folder', () => {
     expect(buildClipOutputPaths('/Users/igor/TradeClips', trade)).toEqual({
       dayFolder: join('/Users/igor/TradeClips', '2026-05-22'),

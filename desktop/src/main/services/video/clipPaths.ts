@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
 
 export type ClipPathTrade = {
   exchange: string
@@ -36,7 +37,7 @@ const formatDateParts = (timeMs: number): { day: string; titleTimestamp: string 
   return { day, titleTimestamp }
 }
 
-const formatSymbol = (value: string): string => value.toUpperCase().replace(/[^A-Z0-9]+/g, '')
+const formatSymbol = (value: string): string => normalizeTerminalSymbolToken(value)
 
 const formatExchange = (value: string): string => {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
