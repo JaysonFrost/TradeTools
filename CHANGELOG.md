@@ -6,6 +6,26 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-01
+
+### Added
+
+- Added automatic LootX trade recording from its local execution journal, including partial closes and position reversals.
+- Added automatic discovery and selection of the currently running supported terminal, including terminals that appear after TradeTools starts.
+
+### Changed
+
+- Window selection now shows only Vataga, TigerTrade, LootX, and MetaScalp terminals.
+- Background recording now follows the active supported terminal without requiring manual source selection.
+- Manual buffer saves and free recordings now use the live active terminal and keep each recording isolated to one terminal source.
+
+### Fixed
+
+- Fixed the proxy setup wizard running a failed root installation a second time through sudo.
+- Removed non-interactive curl and tput noise from proxy setup failures and preserved the actual remote error with its exit code.
+- Fixed blurry native 1:1 terminal recordings by using exact Windows Graphics Capture bounds and recreating stale capture streams after a window resize.
+- Tuned native browser capture for sharp terminal text and prevented replay exports from mixing segments recorded at different window sizes.
+
 ## [0.6.4] - 2026-08-24
 
 ### Added
