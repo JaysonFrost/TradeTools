@@ -3,7 +3,7 @@ import type { ProxyRecord } from '../../src/main/services/settings/settings'
 import { createProxyNetworkAdvice, findLikelyTunnelInterfaces } from '../../src/main/services/proxies/networkEnvironment'
 import { createVpnBypassStatus, createWindowsVpnBypassRouteScript, normalizeVpnBypassRoutes } from '../../src/main/services/proxies/vpnBypassRoutes'
 import { createLocalPortBusyMessage, createLocalXrayConfig, createPowerShellExpandArchiveCommand, createXrayReleaseDownloadUrl } from '../../src/main/services/proxies/xrayLocalRuntime'
-import { createProxyChainRoute, createXrayServerConfig } from '../../src/main/services/proxies/proxyChainSetup'
+import { buildSudoShellCommand, buildXrayInstallCommand, createProxyChainRoute, createRemoteCommandFailureMessage, createXrayServerConfig } from '../../src/main/services/proxies/proxyChainSetup'
 import { defaultLocalProxyPort } from '../../src/shared/defaults'
 
 const proxy = (id: string, name: string, server: string): ProxyRecord => ({
@@ -98,6 +98,59 @@ describe('proxyChainSetup', () => {
       address: 'tokyo.example',
       port: 443
     })
+  })
+
+  it('runs the remote shell exactly once when the root command fails', () => {
+    const command = buildSudoShellCommand('false', "pa'ss")
+
+    expect(command).toContain('if [ "$(id -u)" -eq 0 ]; then')
+    expect(command).toContain('; else ')
+    expect(command).toContain('; fi')
+    expect(command).not.toContain('&& sh -lc')
+    expect(command).toContain("'pa'\\''ss'")
+  })
+
+  it('gives the Xray installer a terminal type and keeps bootstrap curl quiet', () => {
+    const command = buildXrayInstallCommand({}, 443)
+
+    expect(command).toContain('export TERM=xterm')
+    expect(command).toContain('curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh')
+    expect(command).not.toContain('curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh')
+  })
+
+  it('keeps the real remote failure while removing curl and tput noise', () => {
+    const message = createRemoteCommandFailureMessage(
+      '\u001b[31mDownloading Xray archive\nerror: Download failed! Please check your network or try again.\u001b(B\u001b[m',
+      [
+        '% Total    % Received % Xferd  Average Speed   Time    Time     Time  Current',
+        'Dload  Upload   Total   Spent    Left  Speed',
+        '100 31219 100 31219 0 0 22192 0 0:00:01 0:00:01 --:--:-- 483k',
+        'tput: No value for $TERM and no -T specified',
+        'curl: (28) Operation timed out'
+      ].join('\r\n'),
+      1
+    )
+
+    expect(message).toContain('error: Download failed!')
+    expect(message).toContain('curl: (28) Operation timed out')
+    expect(message).toContain('завершилась с кодом 1')
+    expect(message).not.toContain('\u001b')
+    expect(message).not.toContain('% Total')
+    expect(message).not.toContain('31219')
+    expect(message).not.toContain('tput:')
+  })
+
+  it('reports the remote exit code even when the command produced no output', () => {
+    expect(createRemoteCommandFailureMessage('', '', 42)).toBe(
+      'Удалённая команда завершилась с кодом 42 без диагностического вывода'
+    )
+  })
+
+  it('keeps the remote exit code when long diagnostics are truncated', () => {
+    const message = createRemoteCommandFailureMessage(`error: ${'x'.repeat(5_000)}`, '', 7)
+
+    expect(message).toMatch(/^Удалённая команда завершилась с кодом 7:/)
+    expect(message.length).toBeLessThanOrEqual(4_000)
   })
 
   it('uses Xray release assets for the common desktop platforms', () => {

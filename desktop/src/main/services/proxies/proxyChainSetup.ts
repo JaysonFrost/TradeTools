@@ -69,6 +69,38 @@ const remoteXrayPort = 443
 const proxyDisplayName = (proxy: ProxyRecord): string => proxy.name || proxy.server || 'сервер'
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
+const ansiEscapePattern = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\([A-Z0-9])/g
+const curlProgressHeaderPattern = /^% Total\s+% Received\s+% Xferd\s+Average Speed\s+Time\s+Time\s+Time\s+Current$/i
+const curlProgressSubheaderPattern = /^Dload\s+Upload\s+Total\s+Spent\s+Left\s+Speed$/i
+const curlProgressRowPattern = /^\d{1,3}\s+\d+[kKmMgGtTpP]?\s+\d{1,3}\s+\d+[kKmMgGtTpP]?\s+\d{1,3}\s+\d+[kKmMgGtTpP]?\s+\d+\s+\d+\s+(?:--:--:--|\d{1,2}:\d{2}:\d{2})\s+(?:--:--:--|\d{1,2}:\d{2}:\d{2})\s+(?:--:--:--|\d{1,2}:\d{2}:\d{2})\s+\S+$/
+const usefulRemoteErrorPattern = /(?:^|\b)(?:error|failed|failure|fatal|denied|refused|timed? out|timeout|not found|inactive|не удалось|не найден|не установлен|ошиб)/i
+
+const cleanRemoteOutputLines = (output: string, filterTerminalNoise: boolean): string[] => output
+  .replace(ansiEscapePattern, '')
+  .replace(/\r/g, '\n')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .filter((line) => !filterTerminalNoise || !(
+    /^tput: (?:No value for \$TERM and no -T specified|unknown terminal\b)/i.test(line)
+    || curlProgressHeaderPattern.test(line)
+    || curlProgressSubheaderPattern.test(line)
+    || curlProgressRowPattern.test(line)
+  ))
+
+export const createRemoteCommandFailureMessage = (stdout: string, stderr: string, code?: number): string => {
+  const lines = [...cleanRemoteOutputLines(stdout, false), ...cleanRemoteOutputLines(stderr, true)]
+  const uniqueLines = lines.filter((line, index) => lines.indexOf(line) === index)
+  const usefulLines = uniqueLines.filter((line) => usefulRemoteErrorPattern.test(line))
+  const selectedLines = (usefulLines.length > 0 ? usefulLines : uniqueLines).slice(-24)
+  const status = `Удалённая команда завершилась с кодом ${code ?? 'unknown'}`
+  const details = selectedLines.join('\n')
+  if (!details) return `${status} без диагностического вывода`
+
+  const detailsLimit = 4_000 - status.length - 2
+  return `${status}:\n${details.slice(-detailsLimit)}`
+}
+
 const runRemoteCommand = async (client: Client, command: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     client.exec(command, (error, stream) => {
@@ -86,7 +118,7 @@ const runRemoteCommand = async (client: Client, command: string): Promise<string
             return
           }
 
-          reject(new Error(stderr.trim() || stdout.trim() || `Remote command failed with code ${code ?? 'unknown'}`))
+          reject(new Error(createRemoteCommandFailureMessage(stdout, stderr, code)))
         })
         .on('data', (chunk: Buffer) => {
           stdout += chunk.toString('utf8')
@@ -121,9 +153,9 @@ const connectSsh = (proxy: ProxyRecord, password: string): Promise<Client> => {
   })
 }
 
-const sudoShell = (command: string, password: string): string => {
+export const buildSudoShellCommand = (command: string, password: string): string => {
   const quoted = shellQuote(command)
-  return `[ "$(id -u)" -eq 0 ] && sh -lc ${quoted} || printf '%s\\n' ${shellQuote(password)} | sudo -S -p '' sh -lc ${quoted}`
+  return `if [ "$(id -u)" -eq 0 ]; then sh -lc ${quoted}; else printf '%s\\n' ${shellQuote(password)} | sudo -S -p '' sh -lc ${quoted}; fi`
 }
 
 export const createProxyChainRoute = (chain: ProxyRecord[]): string => chain.map((proxy) => `${proxyDisplayName(proxy)} (${proxy.server})`).join(' -> ')
@@ -193,13 +225,14 @@ export const createXrayServerConfig = (node: ProxyChainNode, nextNode?: ProxyCha
   }
 })
 
-const buildXrayInstallCommand = (config: Record<string, unknown>, listenPort: number): string => {
+export const buildXrayInstallCommand = (config: Record<string, unknown>, listenPort: number): string => {
   const configBase64 = Buffer.from(JSON.stringify(config, null, 2), 'utf8').toString('base64')
 
   return [
     'set -eu',
+    'export TERM=xterm',
     'command -v systemctl >/dev/null 2>&1 || { echo "systemd не найден. Автоматическая настройка Xray пока поддерживает только systemd VPS." >&2; exit 42; }',
-    'if ! command -v xray >/dev/null 2>&1; then if ! command -v curl >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates; else echo "curl не найден и пакетный менеджер не распознан" >&2; exit 41; fi; fi; bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; fi',
+    'if ! command -v xray >/dev/null 2>&1; then if ! command -v curl >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates; elif command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates; elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates; elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl ca-certificates; else echo "curl не найден и пакетный менеджер не распознан" >&2; exit 41; fi; fi; bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install; fi',
     'command -v xray >/dev/null 2>&1 || { echo "Xray не установлен" >&2; exit 43; }',
     'systemctl disable --now tradetools-proxy-chain >/dev/null 2>&1 || true',
     'mkdir -p /usr/local/etc/xray',
@@ -336,7 +369,7 @@ export const setupProxyChainOnServers = async (input: ProxyChainSetupInput): Pro
       })
 
       const config = createXrayServerConfig(node, nextNode)
-      await runRemoteCommand(client, sudoShell(buildXrayInstallCommand(config, node.listenPort), password))
+      await runRemoteCommand(client, buildSudoShellCommand(buildXrayInstallCommand(config, node.listenPort), password))
 
       progress({
         proxyId: node.proxy.id,
