@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-01
+
+### Fixed
+
+- Preserved Chinese and other Unicode terminal symbols throughout LootX trade detection, position and trade IDs, automatic window selection, clip filenames, metadata, and TraderMake.Money matching.
+- Prevented different Unicode symbols with the same quote asset from being merged or matched as one position.
+
 ## [0.7.0] - 2026-09-01
 
 ### Added
