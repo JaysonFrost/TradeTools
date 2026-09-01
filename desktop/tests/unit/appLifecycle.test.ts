@@ -20,6 +20,17 @@ describe('main app lifecycle', () => {
     expect(source).toContain('recordingSourceRevision(current.recording) === expectedRecordingSourceRevision')
   })
 
+  it('uses fresh DWM capture bounds for supported terminal windows', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain('DwmGetWindowAttribute')
+    expect(source).toContain('DWMWA_EXTENDED_FRAME_BOUNDS = 9')
+    expect(source).toContain('SetThreadDpiAwarenessContext(new IntPtr(-4))')
+    expect(source).toContain('return GetWindowRect(hWnd, out rect)')
+    expect(source).toContain('terminalWindowMetadataCacheMs = 5_000')
+    expect(source).toContain('terminalWindowMetadataIds.has(windowId)')
+  })
+
   it('stops recording and clip rendering before installing an update', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
@@ -31,11 +42,12 @@ describe('main app lifecycle', () => {
     expect(source).toContain('waitForClipRenderIdle()')
   })
 
-  it('disables Windows Graphics Capture to avoid stale desktop frames', async () => {
+  it('uses exact WGC window capture while keeping stale-prone zero-hertz and screen paths disabled', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('windowsDesktopCaptureFallbackFeatures')
-    expect(source).toContain('AllowWgcWindowCapturer')
+    expect(source).not.toContain("'AllowWgcWindowCapturer'")
+    expect(source).toContain('AllowWgcWindowZeroHz')
     expect(source).toContain('AllowWgcScreenCapturer')
     expect(source).toContain("app.commandLine.appendSwitch('disable-features'")
   })
@@ -176,6 +188,32 @@ describe('main app lifecycle', () => {
     expect(source).toContain("settings.recording.sourceType === 'screen'")
     expect(source).toContain("!source.id.startsWith('screen:') && isSupportedTerminalWindowName(source.name)")
     expect(source).not.toContain('hasSavedCaptureSourceReference')
+  })
+
+  it('resolves manual buffer and free recording from the live active terminal instead of saved window settings', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    const resolverStart = source.indexOf('const resolveManualWindowRecordingTarget =')
+    const resolverSource = source.slice(resolverStart, source.indexOf('const selectManualBufferTargets =', resolverStart))
+    const manualBufferSource = source.slice(
+      source.indexOf('const selectManualBufferTargets ='),
+      source.indexOf('let recordingBufferSavePromise')
+    )
+    const freeStartSource = source.slice(
+      source.indexOf("ipcMain.handle('recording:free-start'"),
+      source.indexOf("ipcMain.handle('recording:free-pause'")
+    )
+
+    expect(resolverStart).toBeGreaterThan(-1)
+    expect(resolverSource).toContain('await listWindowCaptureSources(true)')
+    expect(resolverSource).toContain('isSupportedTerminalWindowName(source.name)')
+    expect(resolverSource).toContain('browserRecordingStartedBySourceId.keys()')
+    expect(resolverSource).toContain('selectManualTerminalWindowSource')
+    expect(resolverSource).toContain('id: settings.recording.windowSourceId')
+    expect(resolverSource).toContain('name: settings.recording.windowSourceName')
+    expect(resolverSource).not.toContain('configuredCaptureTargets(settings)')
+    expect(manualBufferSource).toContain('await resolveManualWindowRecordingTarget(settings)')
+    expect(freeStartSource).toContain('await resolveManualWindowRecordingTarget(settings)')
+    expect(freeStartSource).toContain('startFreeRecording(settings, captureTarget)')
   })
 
   it('matches terminal trade events through the strict supported-terminal classifier', async () => {

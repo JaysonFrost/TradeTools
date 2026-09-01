@@ -138,6 +138,35 @@ export const selectTerminalWindowSource = <T extends TerminalWindowCandidate>(
   return { candidates, reason: 'ambiguous' }
 }
 
+export const selectManualTerminalWindowSource = <T extends TerminalWindowCandidate & { id: string }>(
+  terminalSources: T[],
+  activeSourceIds: ReadonlySet<string>,
+  currentTarget?: RecordingTargetRef,
+  cursorPoint?: { x: number, y: number }
+): T | undefined => {
+  const activeSources = terminalSources.filter((source) => activeSourceIds.has(source.id))
+  const candidates = activeSources.length > 0 ? activeSources : terminalSources
+  const cursorSelection = selectTerminalWindowSource({ symbol: '' }, candidates, cursorPoint)
+  if (cursorSelection.reason === 'cursor') return cursorSelection.source
+
+  if (currentTarget) {
+    const candidateRefs = candidates.map((candidate) => ({
+      sourceId: candidate.id,
+      sourceName: candidate.name,
+      processId: candidate.processId,
+      candidate
+    }))
+    const currentSource = recordingSourcesMatchingTarget(candidateRefs, currentTarget)[0]?.candidate
+    if (currentSource) return currentSource
+  }
+
+  return [...candidates].sort((left, right) => {
+    const leftKey = `${normalizeTerminalTitleToken(left.name)}\u0000${left.id}`
+    const rightKey = `${normalizeTerminalTitleToken(right.name)}\u0000${right.id}`
+    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0
+  })[0]
+}
+
 export const preferTerminalSourcesForSymbol = <T extends { name: string }>(symbol: string, sources: T[]): T[] => {
   const normalizedSymbol = normalizeTerminalTitleToken(symbol)
   if (!normalizedSymbol) return sources

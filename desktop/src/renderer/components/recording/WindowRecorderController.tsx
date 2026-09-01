@@ -79,7 +79,26 @@ export const browserVideoTrackIsUsable = (track: Pick<MediaStreamTrack, 'readySt
   track.readyState === 'live' && !track.muted
 )
 
-export const shouldPersistBrowserRecorderChunk = (size: number): boolean => size > 0
+export const browserVideoTrackMatchesSourceBounds = (
+  trackSettings: Pick<MediaTrackSettings, 'width' | 'height'>,
+  source: Pick<WindowCaptureSource, 'type' | 'bounds'>
+): boolean => {
+  if (source.type !== 'window' || !source.bounds) return true
+  const width = Number(trackSettings.width)
+  const height = Number(trackSettings.height)
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return true
+
+  return Math.abs(width - source.bounds.width) <= 1 && Math.abs(height - source.bounds.height) <= 1
+}
+
+export const configureBrowserVideoTrackForRecording = (
+  track: Pick<MediaStreamTrack, 'contentHint'>,
+  preset: AppSettings['recording']['resolutionPreset']
+): void => {
+  if (preset === 'native') track.contentHint = 'text'
+}
+
+export const shouldPersistBrowserRecorderChunk = (size: number, sessionActive = true): boolean => size > 0 && sessionActive
 
 const resolveSource = (sources: WindowCaptureSource[], settings: AppSettings): WindowCaptureSource | undefined => (
   sources.find((source) => source.type === settings.recording.sourceType && source.id === settings.recording.windowSourceId) ??
@@ -385,10 +404,12 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
     const stopBrowserRecorder = (session: BrowserRecorderSession): Promise<void> => {
       if (session.stopping) return session.stopPromise ?? Promise.resolve()
       session.stopping = true
-      session.stopPromise = getTradeToolsApi().recording.browserStopped({
+      const pendingAppend = session.appendQueue ?? Promise.resolve()
+      const browserStoppedPromise = getTradeToolsApi().recording.browserStopped({
         sourceId: session.source.id,
         captureEpochId: session.captureEpochId
       }).catch(() => undefined)
+      session.stopPromise = Promise.all([browserStoppedPromise, pendingAppend]).then(() => undefined)
       if (session.sessionTimer !== undefined) window.clearTimeout(session.sessionTimer)
       if (session.muteTimer !== undefined) window.clearTimeout(session.muteTimer)
       const [videoTrack] = session.stream?.getVideoTracks() ?? []
@@ -470,6 +491,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
 
         const [videoTrack] = mediaStream.getVideoTracks()
         if (!videoTrack) throw new Error('Источник записи не вернул видеодорожку')
+        configureBrowserVideoTrackForRecording(videoTrack, currentSettings.recording.resolutionPreset)
         videoTrack.onended = () => markSessionDead(session)
         videoTrack.onmute = () => {
           if (session.muteTimer !== undefined) window.clearTimeout(session.muteTimer)
@@ -519,7 +541,10 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
           })
           session.recorder = recorder
           recorder.ondataavailable = (event) => {
-            if (!shouldPersistBrowserRecorderChunk(event.data.size)) return
+            if (!shouldPersistBrowserRecorderChunk(
+              event.data.size,
+              !session.stopping && browserRecorders.get(source.id) === session
+            )) return
 
             const endedAtMs = Date.now()
             const startedAtMs = chunkStartedAtMs
@@ -605,6 +630,8 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
             sourceId: source.id,
             sourceName: source.name,
             processId: source.processId,
+            width: videoTrack.getSettings().width,
+            height: videoTrack.getSettings().height,
             captureEpochId: session.captureEpochId,
             startedAtMs: chunkStartedAtMs
           }).catch(() => {
@@ -714,8 +741,12 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         })
       }
       const desiredSourceIds = new Set(targets.map((target) => target.id))
+      const targetsById = new Map(targets.map((target) => [target.id, target]))
       browserRecorders.forEach((session, sourceId) => {
-        if (!desiredSourceIds.has(sourceId) || !streamIsLive(session)) {
+        const target = targetsById.get(sourceId)
+        const [videoTrack] = session.stream?.getVideoTracks() ?? []
+        const geometryMatches = !target || !videoTrack || browserVideoTrackMatchesSourceBounds(videoTrack.getSettings(), target)
+        if (!desiredSourceIds.has(sourceId) || !streamIsLive(session) || !geometryMatches) {
           browserRecorders.delete(sourceId)
           stoppedRecorders.push(stopBrowserRecorder(session))
         }
@@ -762,6 +793,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
         statusPollTimer = undefined
       }
 
+      await Promise.all(stoppedRecorders)
       const targetsToStart = targets.filter((target) => !browserRecorders.has(target.id))
       if (targetsToStart.length > 0 && targets.length > 1) {
         reportStatus(createLocalStatus(prepared.currentSettings, `Запускаем запись ${targets.length} источников...`, true))

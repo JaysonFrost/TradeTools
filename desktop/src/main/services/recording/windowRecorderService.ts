@@ -50,6 +50,8 @@ export type WindowRecordingStartedInput = {
   sourceId: string
   sourceName: string
   processId?: number
+  width?: number
+  height?: number
   captureEpochId: string
   startedAtMs: number
 }
@@ -108,6 +110,24 @@ export const shouldPruneReplayFile = (
   fileStat.mtimeMs < cutoffMs &&
   nowMs - Math.max(fileStat.ctimeMs, fileStat.birthtimeMs) >= replayFileCreationGraceMs
 )
+
+export const browserRecordingGeometryChanged = (
+  previous: Pick<WindowRecordingStartedInput, 'width' | 'height'> | undefined,
+  current: Pick<WindowRecordingStartedInput, 'width' | 'height'>
+): boolean => {
+  const previousWidth = Number(previous?.width)
+  const previousHeight = Number(previous?.height)
+  const currentWidth = Number(current.width)
+  const currentHeight = Number(current.height)
+  if (
+    !Number.isFinite(previousWidth) || previousWidth <= 0 ||
+    !Number.isFinite(previousHeight) || previousHeight <= 0 ||
+    !Number.isFinite(currentWidth) || currentWidth <= 0 ||
+    !Number.isFinite(currentHeight) || currentHeight <= 0
+  ) return false
+
+  return Math.abs(previousWidth - currentWidth) > 1 || Math.abs(previousHeight - currentHeight) > 1
+}
 
 export const aggregateWindowRecorderSourceStatuses = (
   sources: NonNullable<WindowRecorderStatus['sources']>,
@@ -178,7 +198,7 @@ export type WindowRecorderService = {
   resumeFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
   saveReplayBuffer: (input: WindowReplaySaveInput) => Promise<WindowReplaySaveResult>
   start: (settings: AppSettings) => Promise<WindowRecorderStatus>
-  startFreeRecording: (settings: AppSettings) => Promise<FreeRecordingStatus>
+  startFreeRecording: (settings: AppSettings, captureTarget?: CaptureTargetRef) => Promise<FreeRecordingStatus>
   stop: () => Promise<void>
 }
 
@@ -281,6 +301,7 @@ type FreeRecordingInterval = {
 type FreeRecordingState = {
   startedAtMs: number
   intervals: FreeRecordingInterval[]
+  captureTarget?: CaptureTargetRef
 }
 
 const pollIntervalMs = 250
@@ -846,6 +867,7 @@ export const createWindowRecorderService = ({
   const pendingSegmentPaths = new Set<string>()
   const activeSegmentReadCounts = new Map<string, number>()
   const activeBrowserRecordings = new Map<string, WindowRecordingStartedInput>()
+  const browserRecordingGeometryBySourceId = new Map<string, Pick<WindowRecordingStartedInput, 'width' | 'height'>>()
   let browserLifecycleObserved = false
   let protectedSinceMs = 0
   const replayProtectionTimes = new Map<string, number>()
@@ -1763,7 +1785,7 @@ export const createWindowRecorderService = ({
     const paused = isFreeRecordingPaused(recording)
     const currentInterval = recording.intervals.at(-1)
     const recordedSeconds = Math.round(getFreeRecordingRecordedMs(recording) / 1000)
-    const intervalSegments = relevantSegments(settings).filter((segment) => (
+    const intervalSegments = relevantSegments(settings, recording.captureTarget).filter((segment) => (
       recording.intervals.some((interval) => (
         segment.endedAtMs >= interval.startMs - exportToleranceMs &&
         segment.startedAtMs <= (interval.endMs ?? Date.now()) + exportToleranceMs
@@ -1808,7 +1830,11 @@ export const createWindowRecorderService = ({
         : { ...interval }
     ))
     const intervals = endedIntervals.filter((interval) => (interval.endMs ?? endedAtMs) - interval.startMs > 250)
-    const finishedRecording = { startedAtMs: recording.startedAtMs, intervals }
+    const finishedRecording = {
+      startedAtMs: recording.startedAtMs,
+      intervals,
+      captureTarget: recording.captureTarget
+    }
     const durationSeconds = Math.round(getFreeRecordingRecordedMs(finishedRecording, endedAtMs) / 1000)
     if (intervals.length === 0 || durationSeconds <= 0) throw new Error('Свободная запись слишком короткая: нет сохранённых сегментов')
 
@@ -1822,7 +1848,7 @@ export const createWindowRecorderService = ({
     freeRecordingExportProtectedSinceMs = finishedRecording.startedAtMs
 
     try {
-      const sourceSegments = await waitForSegmentsUntil(settings, targetEndMs, timeoutMs)
+      const sourceSegments = await waitForSegmentsUntil(settings, targetEndMs, timeoutMs, finishedRecording.captureTarget)
       const neededSegments = sourceSegments.filter((segment) => intervals.some((interval) => (
         segment.endedAtMs >= interval.startMs - exportToleranceMs &&
         segment.startedAtMs <= (interval.endMs ?? endedAtMs) + exportToleranceMs
@@ -1955,6 +1981,15 @@ export const createWindowRecorderService = ({
     getStatus: getWindowRecorderStatus,
     noteBrowserRecordingStarted(input) {
       browserLifecycleObserved = true
+      const previousGeometry = browserRecordingGeometryBySourceId.get(input.sourceId)
+      if (browserRecordingGeometryChanged(previousGeometry, input)) {
+        for (const segment of segments) {
+          if (segment.backend === 'browser' && segment.sourceId === input.sourceId) segment.retainedForSession = true
+        }
+      }
+      if (Number.isFinite(input.width) && Number.isFinite(input.height)) {
+        browserRecordingGeometryBySourceId.set(input.sourceId, { width: input.width, height: input.height })
+      }
       const current = activeBrowserRecordings.get(input.sourceId)
       if (!current || current.captureEpochId !== input.captureEpochId || input.startedAtMs < current.startedAtMs) {
         activeBrowserRecordings.set(input.sourceId, { ...input })
@@ -1980,14 +2015,15 @@ export const createWindowRecorderService = ({
       freeRecording.intervals.push({ startMs: Date.now() })
       return buildFreeRecordingStatus(settings)
     },
-    async startFreeRecording(settings) {
+    async startFreeRecording(settings, captureTarget) {
       if (freeRecording) return buildFreeRecordingStatus(settings)
 
       await startNativeRecorder(settings)
       const startedAtMs = Date.now()
       freeRecording = {
         startedAtMs,
-        intervals: [{ startMs: startedAtMs }]
+        intervals: [{ startMs: startedAtMs }],
+        captureTarget
       }
       return buildFreeRecordingStatus(settings, 'Свободная запись началась')
     },

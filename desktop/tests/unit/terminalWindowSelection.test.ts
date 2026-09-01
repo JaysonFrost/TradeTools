@@ -3,6 +3,7 @@ import {
   preferTerminalSourcesForSymbol,
   recordingSourceMatchesTarget,
   recordingSourcesMatchingTarget,
+  selectManualTerminalWindowSource,
   selectTerminalWindowSource,
   terminalTitleMatchesTicker
 } from '../../src/main/services/recording/terminalWindowSelection'
@@ -118,5 +119,58 @@ describe('terminal window selection', () => {
       source: first,
       reason: 'first'
     })
+  })
+
+  it('selects the active live terminal for manual recording instead of the first stale candidate', () => {
+    const staleTiger = { id: 'window:tiger-old', name: 'TigerTrade' }
+    const liveLootx = { id: 'window:lootx', name: 'LootX' }
+
+    expect(selectManualTerminalWindowSource(
+      [staleTiger, liveLootx],
+      new Set([liveLootx.id]),
+      { id: staleTiger.id, name: staleTiger.name }
+    )).toBe(liveLootx)
+  })
+
+  it('prefers the cursor window over the current live settings selection', () => {
+    const vataga = {
+      id: 'window:vataga',
+      name: 'Vataga.terminal',
+      bounds: { x: 0, y: 0, width: 100, height: 100 }
+    }
+    const lootx = {
+      id: 'window:lootx',
+      name: 'LootX',
+      bounds: { x: 100, y: 0, width: 100, height: 100 }
+    }
+    const activeIds = new Set([vataga.id, lootx.id])
+
+    expect(selectManualTerminalWindowSource(
+      [vataga, lootx],
+      activeIds,
+      { id: vataga.id, name: vataga.name },
+      { x: 150, y: 50 }
+    )).toBe(lootx)
+  })
+
+  it('prefers the current live settings selection when no candidate contains the cursor', () => {
+    const vataga = { id: 'window:vataga', name: 'Vataga.terminal' }
+    const lootx = { id: 'window:lootx', name: 'LootX' }
+    const activeIds = new Set([vataga.id, lootx.id])
+
+    expect(selectManualTerminalWindowSource(
+      [vataga, lootx],
+      activeIds,
+      { id: lootx.id, name: lootx.name }
+    )).toBe(lootx)
+  })
+
+  it('uses a stable fallback independent of desktop capture source order', () => {
+    const vataga = { id: 'window:vataga', name: 'Vataga.terminal' }
+    const lootx = { id: 'window:lootx', name: 'LootX' }
+    const activeIds = new Set([vataga.id, lootx.id])
+
+    expect(selectManualTerminalWindowSource([vataga, lootx], activeIds)).toBe(lootx)
+    expect(selectManualTerminalWindowSource([lootx, vataga], activeIds)).toBe(lootx)
   })
 })

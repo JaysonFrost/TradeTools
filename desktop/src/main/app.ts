@@ -8,7 +8,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
 import { createWindowRecorderService, recorderStatusHasFreshSegments, type WindowCaptureSource, type WindowRecorderStatus, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
-import { recordingSourcesMatchingTarget, selectTerminalWindowSource } from './services/recording/terminalWindowSelection'
+import { recordingSourcesMatchingTarget, selectManualTerminalWindowSource, selectTerminalWindowSource } from './services/recording/terminalWindowSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
@@ -49,7 +49,6 @@ const windowsRunKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const windowsLoginLaunchArg = '--windows-login'
 const windowsProxyRuntimeStartupGraceMs = 8_000
 const windowsDesktopCaptureFallbackFeatures = [
-  'AllowWgcWindowCapturer',
   'AllowWgcWindowZeroHz',
   'AllowWgcScreenCapturer',
   'AllowWgcScreenZeroHz'
@@ -316,11 +315,13 @@ const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktop
 
 const windowCaptureSourcesCacheMs = 5_000
 const windowMetadataCacheMs = 5 * 60_000
-const windowMetadataRetryMs = 30_000
+const terminalWindowMetadataCacheMs = 5_000
+const windowMetadataRetryMs = 5_000
 const windowMetadataTimeoutMs = 45_000
 const maxWindowMetadataOutputLength = 1024 * 1024
 let windowCaptureSourcesCache: { loadedAtMs: number, sources: WindowCaptureSource[] } | undefined
 const windowMetadataByWindowId = new Map<string, CachedWindowMetadata>()
+const terminalWindowMetadataIds = new Set<string>()
 const pendingWindowMetadataIds = new Set<string>()
 let windowMetadataEnrichmentPromise: Promise<void> | undefined
 let windowMetadataLastAttemptAtMs = 0
@@ -371,15 +372,28 @@ public static class TradeToolsWindowMetadata {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
+  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
+  public static bool TryGetCaptureBounds(IntPtr hWnd, out RECT rect) {
+    const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+    if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf(typeof(RECT))) == 0 && rect.Right > rect.Left && rect.Bottom > rect.Top) return true;
+    return GetWindowRect(hWnd, out rect);
+  }
   public static string Describe(long handle) {
+    IntPtr previousDpiContext = SetThreadDpiAwarenessContext(new IntPtr(-4));
+    try {
     uint processId;
-    GetWindowThreadProcessId(new IntPtr(handle), out processId);
+    IntPtr hWnd = new IntPtr(handle);
+    GetWindowThreadProcessId(hWnd, out processId);
     RECT rect;
-    if (!GetWindowRect(new IntPtr(handle), out rect)) return String.Format("W|{0}|{1}||||", handle, processId);
+    if (!TryGetCaptureBounds(hWnd, out rect)) return String.Format("W|{0}|{1}||||", handle, processId);
     int width = rect.Right - rect.Left;
     int height = rect.Bottom - rect.Top;
     if (width <= 0 || height <= 0) return String.Format("W|{0}|{1}||||", handle, processId);
     return String.Format("W|{0}|{1}|{2}|{3}|{4}|{5}", handle, processId, rect.Left, rect.Top, width, height);
+    } finally {
+      if (previousDpiContext != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpiContext);
+    }
   }
 }
 "@
@@ -509,7 +523,8 @@ const scheduleWindowMetadataEnrichment = (windowIds: string[]): void => {
   const requestedWindowIds = sanitizedWindowHandles(windowIds).map(String)
   for (const windowId of requestedWindowIds) {
     const cached = windowMetadataByWindowId.get(windowId)
-    if (!cached || now - cached.loadedAtMs >= windowMetadataCacheMs) {
+    const cacheMs = terminalWindowMetadataIds.has(windowId) ? terminalWindowMetadataCacheMs : windowMetadataCacheMs
+    if (!cached || now - cached.loadedAtMs >= cacheMs) {
       pendingWindowMetadataIds.add(windowId)
     } else {
       pendingWindowMetadataIds.delete(windowId)
@@ -550,6 +565,11 @@ const listWindowCaptureSources = async (forceRefresh = false): Promise<WindowCap
 
   const sources = await listDesktopCaptureSources()
   const windowIds = sources.map((source) => desktopSourceWindowId(source.id)).filter(Boolean)
+  terminalWindowMetadataIds.clear()
+  for (const source of sources) {
+    const windowId = desktopSourceWindowId(source.id)
+    if (windowId && isSupportedTerminalWindowName(source.name)) terminalWindowMetadataIds.add(windowId)
+  }
   const { windowProcessIds, windowBounds } = cachedWindowMetadataMaps(windowIds)
   const displayLabels = new Map(
     electronScreen.getAllDisplays()
@@ -1597,7 +1617,36 @@ app.whenReady().then(() => {
     return [targets[0]]
   }
 
-  const selectManualBufferTargets = (settings: AppSettings): Array<CaptureTargetRef | undefined> => {
+  const resolveManualWindowRecordingTarget = async (settings: AppSettings): Promise<CaptureTargetRef | undefined> => {
+    if (settings.recording.sourceType !== 'window') return undefined
+
+    const sources = await listWindowCaptureSources(true)
+    const terminalSources = sources.filter((source) => (
+      source.type === 'window' && isSupportedTerminalWindowName(source.name)
+    ))
+    const activeSourceIds = new Set(browserRecordingStartedBySourceId.keys())
+    const source = selectManualTerminalWindowSource(
+      terminalSources,
+      activeSourceIds,
+      {
+        id: settings.recording.windowSourceId,
+        name: settings.recording.windowSourceName
+      },
+      electronScreen.getCursorScreenPoint()
+    )
+    if (!source) {
+      notifyWindowRecordingNeeded()
+      throw new Error('Окно терминала не найдено. Откройте Vataga, TigerTrade, LootX или MetaScalp.')
+    }
+
+    return toCaptureTargetRef(source)
+  }
+
+  const selectManualBufferTargets = async (settings: AppSettings): Promise<Array<CaptureTargetRef | undefined>> => {
+    if (settings.recording.sourceType === 'window') {
+      return [await resolveManualWindowRecordingTarget(settings)]
+    }
+
     const targets = selectClipRenderTargets(settings)
     if (settings.recording.sourceType === 'screen' && targets.length === 0) {
       throw new Error('Выберите хотя бы один монитор в настройках записи.')
@@ -1614,7 +1663,8 @@ app.whenReady().then(() => {
       const settings = await settingsStore.load()
       if (recordingControlShuttingDown) throw new Error('Приложение завершает работу')
       const requestedAtMs = Date.now()
-      const results = await Promise.allSettled(selectManualBufferTargets(settings).map((captureTarget) => enqueueManualBufferRender({
+      const captureTargets = await selectManualBufferTargets(settings)
+      const results = await Promise.allSettled(captureTargets.map((captureTarget) => enqueueManualBufferRender({
         waitForCompletion: true,
         requestedAtMs,
         captureTarget
@@ -2160,7 +2210,8 @@ app.whenReady().then(() => {
     try {
       const settings = await settingsStore.load()
       if (!backgroundWindowRecordingEnabled || recordingControlShuttingDown) throw new Error('Сначала включите фоновую запись')
-      return await windowRecorderService.startFreeRecording(settings)
+      const captureTarget = await resolveManualWindowRecordingTarget(settings)
+      return await windowRecorderService.startFreeRecording(settings, captureTarget)
     } finally {
       freeRecordingStartPending = false
     }
@@ -2194,6 +2245,8 @@ app.whenReady().then(() => {
     const captureEpochId = asString(input?.captureEpochId)
     const startedAtMs = Math.trunc(Number(input?.startedAtMs))
     const processId = Math.trunc(Number(input?.processId))
+    const width = Math.trunc(Number(input?.width))
+    const height = Math.trunc(Number(input?.height))
     if (!sourceId || !sourceName || !captureEpochId || !Number.isFinite(startedAtMs) || startedAtMs <= 0) {
       throw new Error('Некорректное подтверждение старта записи окна')
     }
@@ -2202,6 +2255,8 @@ app.whenReady().then(() => {
       sourceId,
       sourceName,
       ...(Number.isFinite(processId) && processId > 0 ? { processId } : {}),
+      ...(Number.isFinite(width) && width > 0 ? { width } : {}),
+      ...(Number.isFinite(height) && height > 0 ? { height } : {}),
       captureEpochId,
       startedAtMs
     }
@@ -2523,7 +2578,8 @@ app.whenReady().then(() => {
   ipcMain.handle('clips:create-buffer', () => saveLatestRecordingBuffer())
   ipcMain.handle('clips:create-test', async () => {
     const settings = await settingsStore.load()
-    const [clip] = await Promise.all(selectManualBufferTargets(settings).map((target) => enqueueManualBufferRender({
+    const targets = await selectManualBufferTargets(settings)
+    const [clip] = await Promise.all(targets.map((target) => enqueueManualBufferRender({
       waitForCompletion: true,
       requestedAtMs: Date.now(),
       captureTarget: target

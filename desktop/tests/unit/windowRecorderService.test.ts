@@ -2,12 +2,14 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, recorderStatusHasFreshSegments, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
+import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, browserRecordingGeometryChanged, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, recorderStatusHasFreshSegments, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
 import {
   browserCaptureFrameRate,
   browserVideoBitrate,
+  browserVideoTrackMatchesSourceBounds,
   browserVideoTrackIsUsable,
+  configureBrowserVideoTrackForRecording,
   hasConfiguredRecordingSource,
   mergeBrowserRecorderStatus,
   resolveRecordingTargets,
@@ -1144,6 +1146,154 @@ describe('windowRecorderService', () => {
     }
   })
 
+  it('pins free recording to one automatic terminal and never merges another terminal stream', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-free-recording-target-'))
+    const defaults = createDefaultSettings(dataDir)
+    const outputDir = join(dataDir, 'clips')
+    const settings = {
+      ...defaults,
+      recording: {
+        ...defaults.recording,
+        mode: 'window' as const,
+        sourceType: 'window' as const,
+        windowSourceId: 'window:tiger-stale',
+        windowSourceName: 'TigerTrade',
+        systemAudioEnabled: false,
+        microphoneEnabled: false
+      },
+      clip: {
+        ...defaults.clip,
+        outputDir,
+        replayBufferSeconds: 60
+      }
+    }
+    const runFfmpeg = vi.fn(async (args: string[]) => {
+      const outputPath = args.at(-1)
+      if (outputPath) await writeFile(outputPath, 'free recording')
+    })
+    const service = createWindowRecorderService({
+      appDataDir: dataDir,
+      isWindowSourceAvailable: async () => true,
+      probeBrowserSessionMedia: async () => ({ hasAudio: false, ...browserVideoMetadata(4) }),
+      runFfmpeg
+    })
+    const startedAtMs = 1_786_060_000_000
+    let nowMs = startedAtMs
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs)
+    const lootxTarget = { id: 'window:lootx', name: 'LootX', type: 'window' as const }
+
+    try {
+      await service.startFreeRecording(settings, lootxTarget)
+      nowMs = startedAtMs + 4_000
+      await service.appendSegment({
+        sourceId: lootxTarget.id,
+        sourceName: lootxTarget.name,
+        sessionId: 'lootx-free-session',
+        sequence: 0,
+        startedAtMs,
+        endedAtMs: nowMs,
+        mimeType: 'video/webm',
+        data: new Uint8Array([1]).buffer
+      }, settings)
+      await service.appendSegment({
+        sourceId: 'window:vataga',
+        sourceName: 'Vataga.terminal',
+        sessionId: 'vataga-free-session',
+        sequence: 0,
+        startedAtMs,
+        endedAtMs: nowMs,
+        mimeType: 'video/webm',
+        data: new Uint8Array([1]).buffer
+      }, settings)
+
+      const activeStatus = await service.getFreeRecordingStatus(settings)
+      const result = await service.finishFreeRecording(settings)
+      const renderArgs = runFfmpeg.mock.calls.at(-1)?.[0] ?? []
+
+      expect(activeStatus.segmentCount).toBe(1)
+      expect(result.ok).toBe(true)
+      expect(renderArgs.filter((arg) => arg === '-i')).toHaveLength(1)
+      expect(renderArgs).not.toContain('-filter_complex')
+    } finally {
+      nowSpy.mockRestore()
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops old browser geometry from the active replay buffer after a terminal resize', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-browser-resize-'))
+    const defaults = createDefaultSettings(dataDir)
+    const settings = {
+      ...defaults,
+      recording: {
+        ...defaults.recording,
+        mode: 'window' as const,
+        sourceType: 'window' as const,
+        windowSourceId: 'window:lootx',
+        windowSourceName: 'LootX',
+        systemAudioEnabled: false,
+        microphoneEnabled: false
+      },
+      clip: {
+        ...defaults.clip,
+        outputDir: join(dataDir, 'clips')
+      }
+    }
+    const service = createWindowRecorderService({ appDataDir: dataDir })
+    const sourceId = 'window:lootx'
+    const startedAtMs = Date.now() - 5_000
+
+    try {
+      service.noteBrowserRecordingStarted({
+        sourceId,
+        sourceName: 'LootX',
+        width: 3440,
+        height: 1400,
+        captureEpochId: 'before-resize',
+        startedAtMs
+      })
+      await service.appendSegment({
+        sourceId,
+        sourceName: 'LootX',
+        sessionId: 'before-resize-session',
+        sequence: 0,
+        startedAtMs,
+        endedAtMs: startedAtMs + 2_000,
+        mimeType: 'video/webm',
+        data: new Uint8Array([1]).buffer
+      }, settings)
+      service.noteBrowserRecordingStopped({ sourceId, captureEpochId: 'before-resize' })
+      service.noteBrowserRecordingStarted({
+        sourceId,
+        sourceName: 'LootX',
+        width: 3440,
+        height: 1392,
+        captureEpochId: 'after-resize',
+        startedAtMs: startedAtMs + 2_500
+      })
+      await service.appendSegment({
+        sourceId,
+        sourceName: 'LootX',
+        sessionId: 'after-resize-session',
+        sequence: 0,
+        startedAtMs: startedAtMs + 2_500,
+        endedAtMs: startedAtMs + 4_500,
+        mimeType: 'video/webm',
+        data: new Uint8Array([2]).buffer
+      }, settings)
+
+      const status = await service.getStatus(settings)
+      expect(status.segmentCount).toBe(1)
+      expect(status.sources).toEqual([
+        expect.objectContaining({ sourceId, segmentCount: 1 })
+      ])
+    } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
   it('does not make old 60s browser segments become a full 600s buffer after increasing the setting', async () => {
     const source = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-buffer-resize-'))
@@ -1552,7 +1702,10 @@ describe('windowRecorderService', () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     expect(controllerSource).toContain('some(browserVideoTrackIsUsable)')
     expect(controllerSource).toContain('if (!browserVideoTrackIsUsable(videoTrack)) markSessionDead(session)')
-    expect(controllerSource).toContain('if (!shouldPersistBrowserRecorderChunk(event.data.size)) return')
+    expect(controllerSource).toContain('if (!shouldPersistBrowserRecorderChunk(')
+    expect(controllerSource).toContain('!session.stopping && browserRecorders.get(source.id) === session')
+    expect(controllerSource).toContain('const pendingAppend = session.appendQueue ?? Promise.resolve()')
+    expect(controllerSource).toContain('Promise.all([browserStoppedPromise, pendingAppend])')
     expect(controllerSource).not.toContain('event.data.size <= 0 || session.dead || videoTrack.muted')
   })
 
@@ -1649,7 +1802,40 @@ describe('windowRecorderService', () => {
     expect(browserCaptureFrameRate(5)).toBe(10)
     expect(browserCaptureFrameRate(120)).toBe(60)
     expect(browserCaptureFrameRate(Number.NaN)).toBe(30)
+    expect(shouldPersistBrowserRecorderChunk(1, true)).toBe(true)
+    expect(shouldPersistBrowserRecorderChunk(1, false)).toBe(false)
+    expect(browserVideoTrackMatchesSourceBounds(
+      { width: 3440, height: 1392 },
+      { type: 'window', bounds: { x: 0, y: 0, width: 3440, height: 1392 } }
+    )).toBe(true)
+    expect(browserVideoTrackMatchesSourceBounds(
+      { width: 3440, height: 1400 },
+      { type: 'window', bounds: { x: 100, y: 200, width: 3440, height: 1392 } }
+    )).toBe(false)
+    expect(browserVideoTrackMatchesSourceBounds(
+      { width: 3440, height: 1393 },
+      { type: 'window', bounds: { x: 100, y: 200, width: 3440, height: 1392 } }
+    )).toBe(true)
+    expect(browserVideoTrackMatchesSourceBounds(
+      { width: 1, height: 1 },
+      { type: 'screen', bounds: { x: 0, y: 0, width: 3440, height: 1392 } }
+    )).toBe(true)
+    const nativeTrack = { contentHint: '' }
+    configureBrowserVideoTrackForRecording(nativeTrack, 'native')
+    expect(nativeTrack.contentHint).toBe('text')
+    const scaledTrack = { contentHint: '' }
+    configureBrowserVideoTrackForRecording(scaledTrack, '1440p')
+    expect(scaledTrack.contentHint).toBe('')
+    expect(browserRecordingGeometryChanged(
+      { width: 3440, height: 1400 },
+      { width: 3440, height: 1392 }
+    )).toBe(true)
+    expect(browserRecordingGeometryChanged(
+      { width: 3440, height: 1392 },
+      { width: 3440, height: 1393 }
+    )).toBe(false)
     expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
+    expect(controllerSource).toContain('browserVideoTrackMatchesSourceBounds(videoTrack.getSettings(), target)')
     expect(controllerSource).not.toContain('canvas.captureStream')
     expect(controllerSource).not.toContain('window.setInterval(drawFrame')
   })
