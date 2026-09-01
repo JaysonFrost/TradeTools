@@ -1197,20 +1197,38 @@ export const createWindowRecorderService = ({
     const missingWindowStatus = await savedWindowSourceMissingStatus(settings)
     if (missingWindowStatus) return missingWindowStatus
 
-    if (!isNativeRecordingSupported()) {
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
-      })
-    }
-
     if (browserAudioEnabled(settings)) {
       await stopNativeRecorder()
       return buildStatus(settings, {
         backend: 'browser',
         fallbackRequired: true,
         message: 'Звук встроен в видео через Chromium: системный звук и микрофон идут в тот же клип.'
+      })
+    }
+
+    if (settings.recording.sourceType === 'window') {
+      await stopNativeRecorder()
+
+      if (!settings.recording.windowSourceName) {
+        return buildStatus(settings, {
+          backend: 'browser',
+          fallbackRequired: true,
+          message: 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
+        })
+      }
+
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Окна терминалов пишутся через Chromium без захвата курсора. Качество сохраняется в разрешении выбранного пресета.'
+      })
+    }
+
+    if (!isNativeRecordingSupported()) {
+      return buildStatus(settings, {
+        backend: 'browser',
+        fallbackRequired: true,
+        message: 'Оптимизированная ffmpeg-запись пока доступна на Windows. Используем совместимый рекордер Chromium.'
       })
     }
 
@@ -1228,19 +1246,9 @@ export const createWindowRecorderService = ({
       return startNativeRecorders(settings, targets, `Оптимизированная запись экранов запущена: ${targets.map((target) => target.sourceName).join(', ')}`)
     }
 
-    if (settings.recording.sourceType === 'window' && !settings.recording.windowSourceName) {
-      return buildStatus(settings, {
-        backend: 'browser',
-        fallbackRequired: true,
-        message: 'Откройте торговый терминал, TradeTools выберет окно и начнёт запись'
-      })
-    }
-
-    await stopNativeRecorder()
     return buildStatus(settings, {
       backend: 'browser',
-      fallbackRequired: true,
-      message: 'Окна терминалов пишутся через Chromium без захвата курсора. Качество сохраняется в разрешении выбранного пресета.'
+      fallbackRequired: true
     })
   }
 
