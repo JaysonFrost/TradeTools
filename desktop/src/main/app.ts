@@ -1322,7 +1322,7 @@ app.whenReady().then(() => {
   let watcherProtectedSinceMs = 0
   const clipRenderQueue: ClipRenderJob[] = []
   const activeClipRenderJobs = new Map<string, ClipRenderJob>()
-  const maxConcurrentClipRenders = 2
+  const maxConcurrentClipRenders = 1
 
   const normalizeProtectionTime = (value?: number): number => (
     Number.isFinite(value) && (value ?? 0) > 0 ? Math.trunc(value as number) : 0

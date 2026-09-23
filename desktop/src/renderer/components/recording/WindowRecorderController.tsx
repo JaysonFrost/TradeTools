@@ -511,6 +511,7 @@ export const WindowRecorderController = ({ settings, enabled = true, recordingEn
                 sourceId: source.id,
                 sourceName: source.name,
                 processId: source.processId,
+                captureEpochId: session.captureEpochId,
                 sessionId,
                 sequence: 0,
                 startedAtMs: fragment.startedAtMs,

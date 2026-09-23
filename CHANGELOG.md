@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-23
+
+### Fixed
+
+- Replays from one continuous capture now open through one sequential FFmpeg demuxer instead of opening a decoder for every two-second fragment.
+- Limited clip exports to one job at a time and paced FFmpeg input to reduce CPU, GPU, and memory spikes while recording continues.
+
 ## [1.0.0] - 2026-09-23
 
 ### Changed

@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, browserRecordingGeometryChanged, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, recorderStatusHasFreshSegments, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
+import { aggregateWindowRecorderSourceStatuses, assertBrowserSessionVideoCoverage, browserRecordingGeometryChanged, buildBrowserSessionConcatFilter, buildNativeRecorderArgs, buildReplayConcatManifest, canConcatBrowserSessionsSequentially, createWindowRecorderService, parseBrowserSessionVideoPacketMetadata, planBrowserSessionTimeline, recorderStatusHasFreshSegments, selectAvailableReplayWindow, selectBrowserSessionPrefix, shouldConcatBrowserAudio, shouldPruneReplayFile } from '../../src/main/services/recording/windowRecorderService'
 import { createDefaultSettings, normalizeSettings } from '../../src/main/services/settings/settings'
 import {
   browserCaptureFrameRate,
@@ -1495,6 +1495,16 @@ describe('windowRecorderService', () => {
       'duration 60.003',
       ''
     ].join('\n'))
+  })
+
+  it('uses one demuxer only for contiguous fragments from the same capture epoch', () => {
+    const first = { path: 'C:/cache/first.mp4', startedAtMs: 1_000, endedAtMs: 3_000, captureEpochId: 'epoch', hasAudio: true }
+    const second = { ...first, path: 'C:/cache/second.mp4', startedAtMs: 3_000, endedAtMs: 5_000 }
+    expect(canConcatBrowserSessionsSequentially([first, second])).toBe(true)
+    expect(canConcatBrowserSessionsSequentially([first, { ...second, startedAtMs: 5_000 }])).toBe(false)
+    expect(canConcatBrowserSessionsSequentially([first, { ...second, captureEpochId: 'other' }])).toBe(false)
+    expect(canConcatBrowserSessionsSequentially([first, { ...second, hasAudio: false }])).toBe(false)
+    expect(canConcatBrowserSessionsSequentially([first, { ...second, path: 'C:/cache/second.webm' }])).toBe(false)
   })
 
   it('rejects a reconstructed browser session without positive wall-clock duration', () => {

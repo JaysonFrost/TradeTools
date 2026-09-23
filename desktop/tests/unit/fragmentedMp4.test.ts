@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { FragmentedMp4Reader } from '../../src/main/services/recording/fragmentedMp4'
+import { canConcatBrowserSessionsSequentially, createWindowRecorderService } from '../../src/main/services/recording/windowRecorderService'
+import { createDefaultSettings } from '../../src/main/services/settings/settings'
 import { resolveMediaToolPath } from '../../src/main/services/video/mediaBinaries'
 
 describe('fragmented MP4 replay buffer', () => {
@@ -51,9 +53,67 @@ describe('fragmented MP4 replay buffer', () => {
         expect(fragment.endSeconds).toBeGreaterThan(fragment.startSeconds)
       }
       expect(fragments.at(-1)!.endSeconds).toBeCloseTo(3, 1)
+      const files = fragments.map((fragment, index) => ({
+        path: join(directory, `${index}.mp4`),
+        startedAtMs: Math.round(fragment.startSeconds * 1000),
+        endedAtMs: Math.round(fragment.endSeconds * 1000),
+        captureEpochId: 'capture',
+        hasAudio: true
+      }))
+      expect(canConcatBrowserSessionsSequentially(files)).toBe(true)
+      const service = createWindowRecorderService({ appDataDir: directory })
+      const settings = createDefaultSettings(directory)
+      settings.clip.paddingBeforeSeconds = 0
+      settings.clip.paddingAfterSeconds = 0
+      settings.recording.videoEncoder = 'cpu'
+      const captureStartMs = Date.now() - 5_000
+      try {
+        for (const [index, fragment] of fragments.entries()) {
+          const bytes = fragment.data
+          await service.appendSegment({
+            sourceId: 'window:synthetic',
+            sourceName: 'LootX',
+            captureEpochId: 'capture',
+            sessionId: `capture-${index}`,
+            sequence: 0,
+            startedAtMs: captureStartMs + files[index]!.startedAtMs,
+            endedAtMs: captureStartMs + files[index]!.endedAtMs,
+            mimeType: 'video/mp4',
+            data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+          }, settings)
+        }
+        const result = await service.saveReplayBuffer({
+          settings,
+          captureTarget: { id: 'window:synthetic', name: 'LootX', type: 'window' },
+          trade: {
+            id: 'synthetic',
+            exchange: 'BINANCE',
+            marketType: 'FUTURES',
+            symbol: 'BTCUSDT',
+            side: 'LONG',
+            status: 'closed',
+            entryTimeMs: captureStartMs + 500,
+            exitTimeMs: captureStartMs + 2_500
+          }
+        })
+        expect(result.ok, result.message).toBe(true)
+        const output = spawn(resolveMediaToolPath('ffprobe'), [
+          '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
+          result.replayPath!
+        ], { stdio: ['ignore', 'pipe', 'pipe'] })
+        let duration = ''
+        output.stdout.on('data', (chunk) => { duration += String(chunk) })
+        expect(await new Promise<number | null>((resolve) => output.once('close', resolve))).toBe(0)
+        expect(Number(duration)).toBeGreaterThan(1.8)
+        expect(Number(duration)).toBeLessThan(2.2)
+        const decode = spawn(ffmpeg, ['-v', 'error', '-i', result.replayPath!, '-f', 'null', '-'], { stdio: 'ignore' })
+        expect(await new Promise<number | null>((resolve) => decode.once('close', resolve))).toBe(0)
+      } finally {
+        await service.stop()
+      }
     } finally {
       child.kill()
       await rm(directory, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 60_000)
 })

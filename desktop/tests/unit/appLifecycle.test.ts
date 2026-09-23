@@ -286,7 +286,7 @@ describe('main app lifecycle', () => {
     expect(appSource).toContain('enqueueClipRender')
     expect(appSource).toContain('runClipRenderQueue')
     expect(appSource).toContain('activeClipRenderJobs')
-    expect(appSource).toContain('maxConcurrentClipRenders = 2')
+    expect(appSource).toContain('maxConcurrentClipRenders = 1')
     expect(appSource).toContain('parallelSafe: true')
     expect(appSource).toContain('some((job) => !job.parallelSafe)')
     expect(appSource).toContain('settings: job.settingsSnapshot')

@@ -39,6 +39,7 @@ export type WindowRecordingSegmentInput = {
   sourceId: string
   sourceName: string
   processId?: number
+  captureEpochId?: string
   sessionId?: string
   sequence?: number
   startedAtMs: number
@@ -211,6 +212,7 @@ type StoredSegment = {
   sourceId: string
   sourceName: string
   processId?: number
+  captureEpochId?: string
   sessionId: string
   sequence: number
   startedAtMs: number
@@ -224,6 +226,7 @@ export type ReplaySessionFile = {
   path: string
   startedAtMs: number
   endedAtMs: number
+  captureEpochId?: string
   firstVideoPacketSeconds?: number
   videoDurationSeconds?: number
   maxVideoPacketGapSeconds?: number
@@ -356,6 +359,17 @@ export const shouldConcatBrowserAudio = (
   requested: boolean
 ): boolean => (
   requested && sessionFiles.length > 0
+)
+
+export const canConcatBrowserSessionsSequentially = (files: ReplaySessionFile[]): boolean => (
+  files.length > 1 &&
+  Boolean(files[0]?.captureEpochId) &&
+  files.every((file, index) => (
+    extname(file.path).toLowerCase() === '.mp4' &&
+    file.captureEpochId === files[0]?.captureEpochId &&
+    file.hasAudio === files[0]?.hasAudio &&
+    (index === 0 || Math.abs(file.startedAtMs - files[index - 1]!.endedAtMs) <= 100)
+  ))
 )
 
 export type BrowserSessionTimelineSlice = {
@@ -1551,6 +1565,7 @@ export const createWindowRecorderService = ({
       path: sessionPath,
       startedAtMs: firstSegment.startedAtMs,
       endedAtMs: lastSegment.endedAtMs,
+      captureEpochId: firstSegment.captureEpochId,
       firstVideoPacketSeconds: mediaMetadata.firstVideoPacketSeconds,
       videoDurationSeconds: mediaMetadata.videoDurationSeconds,
       maxVideoPacketGapSeconds: mediaMetadata.maxVideoPacketGapSeconds,
@@ -1676,12 +1691,41 @@ export const createWindowRecorderService = ({
         '1',
         '-fflags',
         '+genpts',
+        '-readrate',
+        '1',
         '-ss',
         formatFfmpegSeconds(startSeconds),
         '-t',
         formatFfmpegSeconds(durationSeconds),
         '-i',
         firstSession.path,
+        ...replayEncodeArgs(settings, replayPath)
+      ], signal)
+      return
+    }
+
+    if (backend === 'browser' && canConcatBrowserSessionsSequentially(sessionFiles)) {
+      await writeFile(listPath, buildReplayConcatManifest(sessionFiles), 'utf8')
+      await executeFfmpeg([
+        '-y',
+        '-threads',
+        renderThreads,
+        '-filter_threads',
+        '1',
+        '-fflags',
+        '+genpts',
+        '-readrate',
+        '1',
+        '-ss',
+        formatFfmpegSeconds(startSeconds),
+        '-t',
+        formatFfmpegSeconds(durationSeconds),
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        listPath,
         ...replayEncodeArgs(settings, replayPath)
       ], signal)
       return
@@ -1705,7 +1749,7 @@ export const createWindowRecorderService = ({
         '1',
         '-fflags',
         '+genpts',
-        ...sessionFiles.flatMap((sessionFile) => ['-i', sessionFile.path]),
+        ...sessionFiles.flatMap((sessionFile) => ['-readrate', '1', '-threads', renderThreads, '-i', sessionFile.path]),
         '-filter_complex',
         concatFilter,
         ...replayEncodeArgs(settings, replayPath, {
@@ -1725,6 +1769,8 @@ export const createWindowRecorderService = ({
       '1',
       '-fflags',
       '+genpts',
+      '-readrate',
+      '1',
       '-ss',
       formatFfmpegSeconds(startSeconds),
       '-t',
@@ -2022,6 +2068,9 @@ export const createWindowRecorderService = ({
           sourceId: input.sourceId,
           sourceName: input.sourceName,
           processId,
+          captureEpochId: typeof input.captureEpochId === 'string' && input.captureEpochId.trim()
+            ? input.captureEpochId
+            : undefined,
           sessionId,
           sequence: Number.isFinite(sequence) && sequence >= 0 ? Math.trunc(sequence) : 0,
           startedAtMs,
