@@ -204,7 +204,7 @@ describe('main app lifecycle', () => {
     )
 
     expect(resolverStart).toBeGreaterThan(-1)
-    expect(resolverSource).toContain('await listWindowCaptureSources(true)')
+    expect(resolverSource).toContain('await listWindowCaptureSources(true, true)')
     expect(resolverSource).toContain('isSupportedTerminalWindowName(source.name)')
     expect(resolverSource).toContain('browserRecordingStartedBySourceId.keys()')
     expect(resolverSource).toContain('selectManualTerminalWindowSource')
@@ -220,7 +220,7 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
     expect(source).toContain('detectSupportedTerminalWindow(name) === source')
-    expect(source).toContain('const sources = await listWindowCaptureSources(true)')
+    expect(source).toContain('const sources = await listWindowCaptureSources(true, true)')
     expect(source).toContain('terminalWindowMatchesSource(candidate.name, event.source)')
     expect(source).not.toContain("metascalp: [/metascalp/i, /metatrader/i")
   })
@@ -317,7 +317,7 @@ describe('main app lifecycle', () => {
 
     expect(appSource).toContain('listWindowCaptureSources(forceRefresh')
     expect(appSource).toContain("ipcMain.handle('recording:list-window-sources', async (event, forceRefresh")
-    expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources', forceRefresh)")
+    expect(preloadSource).toContain("ipcRenderer.invoke('recording:list-window-sources', forceRefresh, terminalWindowsOnly)")
   })
 
   it('expands built-in multi-monitor trades into target-specific render jobs', async () => {

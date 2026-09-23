@@ -6,6 +6,22 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-23
+
+### Changed
+
+- Replaced rolling video files with a shared compressed replay buffer in memory, limited to 512 MiB by default. Protected footage from active trades spills to disk when the limit is reached.
+- Window recording now uses continuous H.264/AAC encoding with independently decodable MP4 fragments.
+- Updated Electron to support hardware H.264 at native window resolutions beyond 1080p on compatible GPUs.
+
+### Fixed
+
+- Stopped repeated Windows capture discovery and failed capture restarts from accumulating native resources.
+- Fixed unbounded retention of React development performance measurements during long recording sessions.
+- Applied CPU/GPU encoder changes to active recording and corrected the hardware fallback message.
+- Fixed odd-sized window capture, capture-worker startup, and cleanup after failed encoder initialization.
+- Corrected MP4 fragment timestamps so saving a replay or trade clip does not report a missing video beginning.
+
 ## [0.7.1] - 2026-09-01
 
 ### Fixed

@@ -94,9 +94,9 @@ describe('window source list refresh', () => {
     expect(source).not.toContain('displayedWindowSourceId')
   })
 
-  it('force-refreshes capture sources while automatic terminal recording is active', async () => {
+  it('polls terminal windows without desktopCapturer while automatic recording is active', async () => {
     const source = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
 
-    expect(source).toContain("listWindowSources(currentSettings.recording.sourceType === 'window')")
+    expect(source).toContain('listWindowSources(windowRecording, windowRecording)')
   })
 })

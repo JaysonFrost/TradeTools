@@ -49,6 +49,7 @@ export type AppSettings = {
     resolutionPreset: RecordingResolutionPreset
     frameRate: number
     segmentSeconds: number
+    memoryLimitMiB: number
     systemAudioEnabled: boolean
     microphoneEnabled: boolean
   }
@@ -298,6 +299,7 @@ export const createDefaultSettings = (appDataDir: string): AppSettings => ({
     resolutionPreset: '1440p',
     frameRate: 30,
     segmentSeconds: 2,
+    memoryLimitMiB: 512,
     systemAudioEnabled: false,
     microphoneEnabled: false
   },
@@ -367,6 +369,7 @@ export const normalizeSettings = (settings: PartialSettings, appDataDir: string)
       resolutionPreset: normalizeRecordingResolutionPreset(settings.recording?.resolutionPreset ?? defaults.recording.resolutionPreset),
       frameRate: clamp(settings.recording?.frameRate ?? defaults.recording.frameRate, 10, 60),
       segmentSeconds: clamp(settings.recording?.segmentSeconds ?? defaults.recording.segmentSeconds, 1, 10),
+      memoryLimitMiB: clamp(settings.recording?.memoryLimitMiB ?? defaults.recording.memoryLimitMiB, 128, 2048),
       systemAudioEnabled: settings.recording?.systemAudioEnabled === true,
       microphoneEnabled: settings.recording?.microphoneEnabled === true
     },

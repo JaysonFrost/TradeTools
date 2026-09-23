@@ -7,14 +7,14 @@ import { createDefaultSettings, normalizeSettings } from '../../src/main/service
 import {
   browserCaptureFrameRate,
   browserVideoBitrate,
-  browserVideoTrackMatchesSourceBounds,
+  browserWindowGeometryMatches,
   browserVideoTrackIsUsable,
   configureBrowserVideoTrackForRecording,
   hasConfiguredRecordingSource,
   mergeBrowserRecorderStatus,
   resolveRecordingTargets,
   sourceMatchesConfiguredRecording,
-  shouldPersistBrowserRecorderChunk
+  shouldPersistEncodedFragment
 } from '../../src/renderer/components/recording/WindowRecorderController'
 
 describe('windowRecorderService', () => {
@@ -438,7 +438,7 @@ describe('windowRecorderService', () => {
     }
   })
 
-  it('stores browser recording segments under the configured clip folder cache', async () => {
+  it('keeps rolling browser segments in RAM without creating video files', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-cache-path-'))
     const defaults = createDefaultSettings(dataDir)
     const settings = {
@@ -468,12 +468,40 @@ describe('windowRecorderService', () => {
         data: new ArrayBuffer(1)
       }, settings)
 
-      const cacheEntries = await readdir(join(settings.clip.outputDir, '.tradetools-cache', 'segments'))
-
-      expect(cacheEntries).toHaveLength(1)
-      expect(cacheEntries[0]).toMatch(/\.webm$/)
+      const segmentDirectory = join(settings.clip.outputDir, '.tradetools-cache', 'segments')
+      expect(await pathExists(segmentDirectory)).toBe(false)
+      expect((await service.getStatus(settings)).memoryBytes).toBe(1)
       expect(await pathExists(join(dataDir, 'window-recording'))).toBe(false)
     } finally {
+      await service.stop()
+      await rm(dataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds memory across sources and spills protected sessions without losing them', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tradetools-window-memory-budget-'))
+    const settings = createDefaultSettings(dataDir)
+    const service = createWindowRecorderService({ appDataDir: dataDir, memoryLimitBytes: 5 })
+    const now = Date.now()
+    const append = (sourceId: string, sessionId: string, start: number, bytes: number) => service.appendSegment({
+      sourceId, sourceName: sourceId, sessionId, sequence: 0,
+      startedAtMs: start, endedAtMs: start + 500,
+      mimeType: 'video/webm', data: new ArrayBuffer(bytes)
+    }, settings)
+    try {
+      await append('window:first', 'first', now - 3_000, 4)
+      await append('window:second', 'second', now - 2_000, 4)
+      expect((await service.getStatus(settings)).memoryBytes).toBe(4)
+      expect(await pathExists(join(settings.clip.outputDir, '.tradetools-cache', 'segments'))).toBe(false)
+
+      service.protectSince(now - 1_000)
+      await append('window:protected', 'protected', now - 800, 8)
+      const status = await service.getStatus(settings)
+      expect(status.memoryBytes).toBeLessThanOrEqual(5)
+      const files = await readdir(join(settings.clip.outputDir, '.tradetools-cache', 'segments'))
+      expect(files.filter((file) => file.endsWith('.webm'))).toHaveLength(1)
+    } finally {
+      service.protectSince()
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
     }
@@ -932,7 +960,7 @@ describe('windowRecorderService', () => {
       service.protectSince(Date.now() - 1_000)
 
       await expect(service.clearCache(settings)).rejects.toThrow('Нельзя очистить кэш')
-      expect(await pathExists(join(settings.clip.outputDir, '.tradetools-cache'))).toBe(true)
+      expect((await service.getStatus(settings)).memoryBytes).toBe(1)
     } finally {
       await service.stop()
       await rm(dataDir, { recursive: true, force: true })
@@ -1428,7 +1456,7 @@ describe('windowRecorderService', () => {
     expect(source).toContain('selectBrowserSessionPrefix')
     expect(source).toContain('protectSegmentReads')
     expect(source).toContain('activeSegmentReadCounts.has(segment.path)')
-    expect(source).toContain('writeFile(sessionPath, await readFile(firstSegment.path))')
+    expect(source).toContain('writeFile(sessionPath, await readSegment(firstSegment))')
     expect(source).toContain('appendFile(sessionPath')
     expect(source).toContain('cleanup: true')
   })
@@ -1696,16 +1724,15 @@ describe('windowRecorderService', () => {
     expect(browserVideoTrackIsUsable({ readyState: 'live', muted: false })).toBe(true)
     expect(browserVideoTrackIsUsable({ readyState: 'live', muted: true })).toBe(false)
     expect(browserVideoTrackIsUsable({ readyState: 'ended', muted: false })).toBe(false)
-    expect(shouldPersistBrowserRecorderChunk(1)).toBe(true)
-    expect(shouldPersistBrowserRecorderChunk(0)).toBe(false)
+    expect(shouldPersistEncodedFragment(1)).toBe(true)
+    expect(shouldPersistEncodedFragment(0)).toBe(false)
 
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     expect(controllerSource).toContain('some(browserVideoTrackIsUsable)')
     expect(controllerSource).toContain('if (!browserVideoTrackIsUsable(videoTrack)) markSessionDead(session)')
-    expect(controllerSource).toContain('if (!shouldPersistBrowserRecorderChunk(')
-    expect(controllerSource).toContain('!session.stopping && browserRecorders.get(source.id) === session')
-    expect(controllerSource).toContain('const pendingAppend = session.appendQueue ?? Promise.resolve()')
-    expect(controllerSource).toContain('Promise.all([browserStoppedPromise, pendingAppend])')
+    expect(controllerSource).toContain('if (!shouldPersistEncodedFragment(')
+    expect(controllerSource).toContain('session.encoder?.stop()')
+    expect(controllerSource).toContain('await session.appendQueue')
     expect(controllerSource).not.toContain('event.data.size <= 0 || session.dead || videoTrack.muted')
   })
 
@@ -1717,42 +1744,44 @@ describe('windowRecorderService', () => {
     expect(source).toContain('getErrorCode(error) ===')
   })
 
-  it('keeps one MediaRecorder running while it emits chunks for a bounded session', async () => {
+  it('keeps one WebCodecs encoder running and stores independent compressed MP4 fragments', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
+    const encoderSource = await readFile(resolve('src/renderer/lib/compressedWindowCapture.ts'), 'utf8')
 
-    expect(controllerSource).toContain('const browserRecordingSessionDurationMs = 60_000')
-    expect(controllerSource).toContain('recorder.start(chunkDurationMs)')
-    expect(controllerSource).not.toContain('}, chunkDurationMs)')
+    expect(controllerSource).toContain('startCompressedWindowCapture(')
+    expect(controllerSource).not.toContain('new MediaRecorder')
+    expect(encoderSource).toContain("fastStart: 'fragmented'")
+    expect(encoderSource).toContain('minimumFragmentDuration: fragmentSeconds')
+    expect(encoderSource).toContain('keyFrameInterval: fragmentSeconds')
+    expect(encoderSource).toContain("codec: 'avc'")
+    expect(encoderSource).toContain("codec: 'aac'")
     expect(serviceSource).toContain('cleanup?: boolean')
-    expect(serviceSource).toContain('appendFile(sessionPath')
+    expect(serviceSource).toContain("input.mimeType.toLowerCase().startsWith('video/mp4')")
+    expect(serviceSource).toContain('const sessionExtension = extname(firstSegment.path)')
   })
 
-  it('reports each browser source ready immediately after MediaRecorder starts', async () => {
+  it('reports each browser source ready after the continuous encoder starts', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
-    const sessionSource = controllerSource.slice(
-      controllerSource.indexOf('const startRecordingSession ='),
-      controllerSource.indexOf('      } catch (error)', controllerSource.indexOf('const startRecordingSession ='))
-    )
+    const sessionSource = controllerSource.slice(controllerSource.indexOf('const startBrowserRecorder ='), controllerSource.indexOf('const scheduleSourceRetry ='))
 
-    expect(sessionSource).toContain('chunkStartedAtMs = Date.now()')
-    expect(sessionSource.indexOf('recorder.start(chunkDurationMs)')).toBeLessThan(sessionSource.indexOf('api.recording.browserStarted({'))
+    expect(sessionSource).toContain('session.encoder = encoder')
+    expect(sessionSource.indexOf('session.encoder = encoder')).toBeLessThan(sessionSource.indexOf('api.recording.browserStarted({'))
+    expect(controllerSource).not.toContain('new MediaRecorder')
     expect(sessionSource).toContain('sourceId: source.id')
     expect(sessionSource).toContain('sourceName: source.name')
     expect(sessionSource).toContain('captureEpochId: session.captureEpochId')
-    expect(sessionSource).toContain('startedAtMs: chunkStartedAtMs')
+    expect(sessionSource).toContain('startedAtMs: recordingStartedAtMs')
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:browser-started', input)")
   })
 
   it('starts browser video before optional audio and keeps one stable Web Audio track', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
-    const sessionSource = controllerSource.slice(
-      controllerSource.indexOf('const startRecordingSession ='),
-      controllerSource.indexOf('session.sessionTimer = window.setTimeout', controllerSource.indexOf('const startRecordingSession ='))
-    )
+    const sessionSource = controllerSource.slice(controllerSource.indexOf('const startBrowserRecorder ='), controllerSource.indexOf('const scheduleSourceRetry ='))
 
-    expect(sessionSource.indexOf('recorder.start(chunkDurationMs)')).toBeLessThan(sessionSource.indexOf('startOptionalAudioCaptures({'))
+    expect(sessionSource).toContain('session.encoder = encoder')
+    expect(sessionSource.indexOf('session.encoder = encoder')).toBeLessThan(sessionSource.indexOf('startOptionalAudioCaptures({'))
     expect(sessionSource).toContain('optionalAudioEnabled && !session.optionalAudioCaptureStarted')
     expect(sessionSource).toContain('session.optionalAudioCaptureStarted = true')
     expect(sessionSource).not.toContain('await captureSystemAudioStream()')
@@ -1761,10 +1790,10 @@ describe('windowRecorderService', () => {
     expect(controllerSource).toContain('...destination.stream.getAudioTracks()')
     expect(controllerSource).toContain('source.connect(destination)')
     expect(controllerSource).toContain('createRecordingStream(session.browserVideoStream.stream, optionalAudioEnabled)')
-    expect(controllerSource).toContain("reportStatus(createLocalStatus(latestSettings, message, true))")
+    expect(controllerSource).toContain('reportStatus(createLocalStatus(latestSettings, `Встроенная запись видео активна, но не удалось подключить ${sourceLabel}${details}`, true))')
   })
 
-  it('replaces readiness on capture reconnect but keeps it across MediaRecorder chunk sessions', async () => {
+  it('replaces readiness on capture reconnect and closes the encoder on stop', async () => {
     const controllerSource = await readFile(resolve('src/renderer/components/recording/WindowRecorderController.tsx'), 'utf8')
     const appSource = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
@@ -1779,13 +1808,12 @@ describe('windowRecorderService', () => {
     expect(preloadSource).toContain("ipcRenderer.invoke('recording:browser-stopped', input)")
   })
 
-  it('keeps a browser segment on disk while another recorder is still registering it', async () => {
+  it('serializes segment registration and memory pruning across recorders', async () => {
     const serviceSource = await readFile(resolve('src/main/services/recording/windowRecorderService.ts'), 'utf8')
 
-    expect(serviceSource).toContain('const pendingSegmentPaths = new Set<string>()')
-    expect(serviceSource).toContain('pendingSegmentPaths.add(path)')
-    expect(serviceSource).toContain('pendingSegmentPaths.delete(path)')
-    expect(serviceSource).toContain('new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths, ...activeSegmentReadCounts.keys()])')
+    expect(serviceSource).toContain('serializeSegmentMutation(async () =>')
+    expect(serviceSource).toContain('storePayload(path, data)')
+    expect(serviceSource).toContain('activeSegmentReadCounts.has(segment.path)')
   })
 
   it('records the Chromium fallback directly with preset-aware bitrate', async () => {
@@ -1793,31 +1821,31 @@ describe('windowRecorderService', () => {
 
     expect(controllerSource).toContain('createBrowserVideoStream')
     expect(controllerSource).toContain('sampleFrameTimer')
-    expect(controllerSource.indexOf("'video/webm;codecs=vp9,opus'")).toBeLessThan(controllerSource.indexOf("'video/webm;codecs=vp8,opus'"))
+    expect(controllerSource).toContain('startCompressedWindowCapture(')
     expect(browserVideoBitrate('1080p', 60)).toBe(12_000_000)
     expect(browserVideoBitrate('1440p', 60)).toBe(24_000_000)
-    expect(browserVideoBitrate('native', 30)).toBe(60_000_000)
-    expect(browserVideoBitrate('native', 60)).toBe(90_000_000)
+    expect(browserVideoBitrate('native', 30)).toBe(24_000_000)
+    expect(browserVideoBitrate('native', 60)).toBe(39_000_000)
     expect(browserCaptureFrameRate(59.94)).toBe(59.94)
     expect(browserCaptureFrameRate(5)).toBe(10)
     expect(browserCaptureFrameRate(120)).toBe(60)
     expect(browserCaptureFrameRate(Number.NaN)).toBe(30)
-    expect(shouldPersistBrowserRecorderChunk(1, true)).toBe(true)
-    expect(shouldPersistBrowserRecorderChunk(1, false)).toBe(false)
-    expect(browserVideoTrackMatchesSourceBounds(
-      { width: 3440, height: 1392 },
+    expect(shouldPersistEncodedFragment(1, true)).toBe(true)
+    expect(shouldPersistEncodedFragment(1, false)).toBe(false)
+    expect(browserWindowGeometryMatches(
+      { type: 'window', bounds: { x: 0, y: 0, width: 3440, height: 1392 } },
       { type: 'window', bounds: { x: 0, y: 0, width: 3440, height: 1392 } }
     )).toBe(true)
-    expect(browserVideoTrackMatchesSourceBounds(
-      { width: 3440, height: 1400 },
+    expect(browserWindowGeometryMatches(
+      { type: 'window', bounds: { x: 0, y: 0, width: 3440, height: 1400 } },
       { type: 'window', bounds: { x: 100, y: 200, width: 3440, height: 1392 } }
     )).toBe(false)
-    expect(browserVideoTrackMatchesSourceBounds(
-      { width: 3440, height: 1393 },
+    expect(browserWindowGeometryMatches(
+      { type: 'window', bounds: { x: 0, y: 0, width: 3440, height: 1393 } },
       { type: 'window', bounds: { x: 100, y: 200, width: 3440, height: 1392 } }
     )).toBe(true)
-    expect(browserVideoTrackMatchesSourceBounds(
-      { width: 1, height: 1 },
+    expect(browserWindowGeometryMatches(
+      { type: 'screen', bounds: { x: 0, y: 0, width: 1, height: 1 } },
       { type: 'screen', bounds: { x: 0, y: 0, width: 3440, height: 1392 } }
     )).toBe(true)
     const nativeTrack = { contentHint: '' }
@@ -1834,8 +1862,8 @@ describe('windowRecorderService', () => {
       { width: 3440, height: 1392 },
       { width: 3440, height: 1393 }
     )).toBe(false)
-    expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
-    expect(controllerSource).toContain('browserVideoTrackMatchesSourceBounds(videoTrack.getSettings(), target)')
+    expect(controllerSource).toContain('browserVideoBitrate(currentSettings.recording.resolutionPreset, frameRate)')
+    expect(controllerSource).toContain('browserWindowGeometryMatches(session.source, target)')
     expect(controllerSource).not.toContain('canvas.captureStream')
     expect(controllerSource).not.toContain('window.setInterval(drawFrame')
   })
@@ -1961,8 +1989,8 @@ describe('windowRecorderService', () => {
     expect(serviceSource).toContain('Окна терминалов пишутся через Chromium без захвата курсора')
     expect(serviceSource).not.toContain("'gdigrab'")
     expect(serviceSource).not.toContain('TRADETOOLS_ENABLE_GDIGRAB')
-    expect(controllerSource).toContain("'video/webm;codecs=vp9'")
-    expect(controllerSource).toContain('videoBitsPerSecond: browserVideoBitrate')
+    expect(controllerSource).not.toContain('MediaRecorder')
+    expect(controllerSource).toContain('startCompressedWindowCapture(')
     expect(controllerSource).toContain('maxWidth: 2560')
     expect(controllerSource).toContain('maxHeight: 1440')
     expect(serviceSource).toContain('fallbackRequired')

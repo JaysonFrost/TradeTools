@@ -62,6 +62,7 @@ describe('settingsStore', () => {
       resolutionPreset: '1080p',
       frameRate: 24,
       segmentSeconds: 3,
+      memoryLimitMiB: 512,
       systemAudioEnabled: true,
       microphoneEnabled: true
     })

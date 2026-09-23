@@ -32,6 +32,7 @@ describe('settings', () => {
       resolutionPreset: '1440p',
       frameRate: 30,
       segmentSeconds: 2,
+      memoryLimitMiB: 512,
       systemAudioEnabled: false,
       microphoneEnabled: false
     })
@@ -157,6 +158,7 @@ describe('settings', () => {
       resolutionPreset: 'native',
       frameRate: 60,
       segmentSeconds: 1,
+      memoryLimitMiB: 512,
       systemAudioEnabled: true,
       microphoneEnabled: false
     })

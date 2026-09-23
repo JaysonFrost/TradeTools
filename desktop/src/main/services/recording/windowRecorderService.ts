@@ -9,6 +9,7 @@ import { toSafeClipFileBaseName } from '../video/clipPaths'
 import { buildH264VideoArgs, calculateFfmpegRenderThreads } from '../video/ffmpegCommand'
 import { createMissingMediaToolError, isMissingMediaToolError, resolveMediaToolPath } from '../video/mediaBinaries'
 import { isSupportedTerminalWindowName } from '../../../shared/supportedTerminalWindows'
+import { FragmentedMp4Reader } from './fragmentedMp4'
 
 export type WindowCaptureSource = {
   id: string
@@ -73,6 +74,8 @@ export type WindowRecorderStatus = {
   bufferedSeconds: number
   lastSegmentAtMs: number
   message: string
+  memoryBytes?: number
+  memoryLimitBytes?: number
   sources?: Array<{
     sourceId: string
     sourceName: string
@@ -262,6 +265,7 @@ type ReplayExportResult = {
 
 type WindowRecorderServiceInput = {
   appDataDir: string
+  memoryLimitBytes?: number
   isWindowSourceAvailable?: (source: { sourceId: string, sourceName: string }) => Promise<boolean>
   getDisplayBounds?: () => ScreenCaptureBounds[]
   probeBrowserSessionMedia?: (path: string) => Promise<BrowserSessionMediaMetadata>
@@ -276,9 +280,7 @@ type NativeRecorderState = {
   sourceName: string
   processId?: number
   startedAtMs: number
-  segmentsDir: string
-  listPath: string
-  outputPattern: string
+  stdoutTask?: Promise<void>
   stderr: string
   stopping: boolean
 }
@@ -307,7 +309,6 @@ type FreeRecordingState = {
 const pollIntervalMs = 250
 const exportToleranceMs = 1_500
 export const browserSessionVideoDurationToleranceSeconds = 2
-const nativeSegmentFileFreshnessMs = 8_000
 const nativeRecorderStartupGraceMs = 900
 
 const browserSegmentStaleAfterMs = (settings: AppSettings): number => (
@@ -649,19 +650,11 @@ export const buildNativeRecorderArgs = (
     'cfr',
     '-g',
     segmentFrameCount,
-    '-f',
-    'segment',
-    '-segment_time',
-    segmentSeconds,
-    '-reset_timestamps',
-    '1',
-    '-segment_format',
-    'mp4',
-    '-segment_list',
-    listPath,
-    '-segment_list_type',
-    'csv',
-    outputPattern
+    '-bf', '0',
+    '-force_key_frames', `expr:gte(t,n_forced*${segmentSeconds})`,
+    '-f', 'mp4',
+    '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+    'pipe:1'
   ]
 }
 const browserAudioEnabled = (settings: AppSettings): boolean => settings.recording.systemAudioEnabled || settings.recording.microphoneEnabled
@@ -857,6 +850,7 @@ const probeBrowserSessionMedia = async (path: string): Promise<BrowserSessionMed
 
 export const createWindowRecorderService = ({
   appDataDir,
+  memoryLimitBytes,
   isWindowSourceAvailable,
   getDisplayBounds,
   probeBrowserSessionMedia: inspectBrowserSessionMedia = probeBrowserSessionMedia,
@@ -864,7 +858,37 @@ export const createWindowRecorderService = ({
 }: WindowRecorderServiceInput): WindowRecorderService => {
   const legacyCacheRoot = resolve(join(appDataDir, 'window-recording'))
   const segments: StoredSegment[] = []
-  const pendingSegmentPaths = new Set<string>()
+  const payloads = new Map<string, Buffer>()
+  let memoryBytes = 0
+  let segmentMutation = Promise.resolve()
+  const serializeSegmentMutation = <T>(action: () => Promise<T>): Promise<T> => {
+    const result = segmentMutation.then(action)
+    segmentMutation = result.then(() => undefined, () => undefined)
+    return result
+  }
+  const storePayload = (path: string, data: Buffer) => {
+    payloads.set(path, data)
+    memoryBytes += data.length
+  }
+  const releasePayload = (path: string) => {
+    const data = payloads.get(path)
+    if (data) memoryBytes -= data.length
+    payloads.delete(path)
+  }
+  const readSegment = async (segment: StoredSegment): Promise<Buffer> => {
+    const data = payloads.get(segment.path)
+    if (data) return data
+    try {
+      return await readFile(segment.path)
+    } catch (error) {
+      if (getErrorCode(error) === 'ENOENT') {
+        throw new Error('Часть буфера записи уже очищена. Дождитесь накопления новых фрагментов.')
+      }
+      throw error
+    }
+  }
+  const droppedBrowserSessions = new Map<string, string>()
+  let lastDiskPruneAtMs = 0
   const activeSegmentReadCounts = new Map<string, number>()
   const activeBrowserRecordings = new Map<string, WindowRecordingStartedInput>()
   const browserRecordingGeometryBySourceId = new Map<string, Pick<WindowRecordingStartedInput, 'width' | 'height'>>()
@@ -1041,50 +1065,7 @@ export const createWindowRecorderService = ({
         current.process.kill('SIGTERM')
       })
     }))
-  }
-
-  const scanNativeSegments = async () => {
-    const currentRecorders = nativeRecorders
-    if (currentRecorders.length === 0) return
-
-    for (const current of currentRecorders) {
-      const listText = await readFile(current.listPath, 'utf8').catch(() => '')
-      if (!listText.trim()) continue
-
-      const knownIds = new Set(segments.map((segment) => segment.id))
-      const lines = listText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-
-      for (const [index, line] of lines.entries()) {
-        const [rawPath, rawStart, rawEnd] = line.split(',')
-        if (!rawPath || !rawStart || !rawEnd) continue
-
-        const startSeconds = Number(rawStart)
-        const endSeconds = Number(rawEnd)
-        if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) continue
-
-        const segmentPath = isAbsolute(rawPath) ? rawPath : join(current.segmentsDir, rawPath)
-        const fileStat = await stat(segmentPath).catch(() => undefined)
-        if (!fileStat?.isFile() || fileStat.size <= 0) continue
-
-        const id = `${current.sessionId}-${index}`
-        if (knownIds.has(id)) continue
-
-        segments.push({
-          id,
-          backend: 'ffmpeg',
-          sourceId: current.sourceId,
-          sourceName: current.sourceName,
-          processId: current.processId,
-          sessionId: current.sessionId,
-          sequence: index,
-          startedAtMs: current.startedAtMs + Math.round(startSeconds * 1000),
-          endedAtMs: current.startedAtMs + Math.round(endSeconds * 1000),
-          path: segmentPath,
-          sizeBytes: fileStat.size
-        })
-        knownIds.add(id)
-      }
-    }
+    await Promise.all(currentRecorders.map((current) => current.stdoutTask?.catch(() => undefined)))
   }
 
   const startNativeRecorders = async (
@@ -1099,22 +1080,18 @@ export const createWindowRecorderService = ({
       activeRecorders.length === targets.length &&
       settingsKeys.every((key) => activeRecorders.some((recorder) => recorder.settingsKey === key))
     ) {
-      await scanNativeSegments()
       return buildStatus(settings, { backend: 'ffmpeg' })
     }
 
     await stopNativeRecorder()
-    await mkdir(segmentsDir, { recursive: true })
     nativeLastError = ''
     clearNativeMissingSource()
 
     const startedRecorders = targets.map((target) => {
       const sessionId = `ffmpeg-${Date.now()}-${randomUUID()}`
-      const listPath = join(segmentsDir, `${sessionId}.csv`)
-      const outputPattern = join(segmentsDir, `${sessionId}-%06d.mp4`)
       const processStartedAtMs = Date.now()
-      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, outputPattern, listPath, target), {
-        stdio: ['ignore', 'ignore', 'pipe'],
+      const child = spawn(resolveMediaToolPath('ffmpeg'), buildNativeRecorderArgs(settings, 'pipe:1', '', target), {
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true
       })
       const state: NativeRecorderState = {
@@ -1125,12 +1102,33 @@ export const createWindowRecorderService = ({
         sourceName: target.sourceName,
         processId: target.processId,
         startedAtMs: processStartedAtMs,
-        segmentsDir,
-        listPath,
-        outputPattern,
         stderr: '',
         stopping: false
       }
+      state.stdoutTask = (async () => {
+        const parser = new FragmentedMp4Reader()
+        let sequence = 0
+        for await (const chunk of child.stdout!) {
+          for (const fragment of parser.push(chunk as Buffer)) {
+            const id = randomUUID()
+            const startedAtMs = processStartedAtMs + Math.round(fragment.startSeconds * 1000)
+            const endedAtMs = processStartedAtMs + Math.round(fragment.endSeconds * 1000)
+            await serializeSegmentMutation(async () => {
+              const path = join(segmentsDir, `${id}.mp4`)
+              segments.push({
+                id, backend: 'ffmpeg', sourceId: state.sourceId, sourceName: state.sourceName,
+                processId: state.processId, sessionId, sequence: sequence++,
+                startedAtMs, endedAtMs, path, sizeBytes: fragment.data.length
+              })
+              storePayload(path, fragment.data)
+              await pruneSegments(settings, endedAtMs)
+            })
+          }
+        }
+      })().catch((error) => {
+        if (!state.stopping) nativeLastError = error instanceof Error ? error.message : String(error)
+        child.kill()
+      })
 
       child.stderr.on('data', (chunk) => {
         state.stderr = normalizeFfmpegLog(`${state.stderr}${String(chunk)}`)
@@ -1260,13 +1258,6 @@ export const createWindowRecorderService = ({
       const extension = extname(entry.name).toLowerCase()
       if (!['.webm', '.mp4', '.csv'].includes(extension)) return
       if (keepPaths.has(filePath)) return
-      if (nativeRecorders.some((recorder) => recorder.listPath === filePath)) return
-
-      if (nativeRecorders.some((recorder) => entry.name.startsWith(`${recorder.sessionId}-`))) {
-        const fileStat = await stat(filePath).catch(() => undefined)
-        if (fileStat && Date.now() - fileStat.mtimeMs < nativeSegmentFileFreshnessMs) return
-      }
-
       await rm(filePath, { force: true }).catch(() => undefined)
     }))
   }
@@ -1285,7 +1276,6 @@ export const createWindowRecorderService = ({
 
   const pruneSegments = async (settings: AppSettings, nowMs = Date.now()) => {
     const { segmentsDir, replaysDir } = cachePaths(settings)
-    await scanNativeSegments()
     const maxAgeMs = (settings.clip.replayBufferSeconds + settings.clip.paddingBeforeSeconds + settings.clip.paddingAfterSeconds + 30) * 1000
     const replayCutoffMs = nowMs - maxAgeMs
     const protectedCutoffs = [
@@ -1309,12 +1299,44 @@ export const createWindowRecorderService = ({
       }
 
       segments.splice(index, 1)
+      releasePayload(segment.path)
       await rm(segment.path, { force: true }).catch(() => undefined)
     }
 
-    const keepPaths = new Set([...segments.map((segment) => segment.path), ...pendingSegmentPaths, ...activeSegmentReadCounts.keys()])
-    await pruneDiskFiles(segmentsDir, keepPaths)
-    await pruneReplayFiles(replaysDir, replayCutoffMs)
+    const maxBytes = memoryLimitBytes ?? Math.max(128, Math.min(2048, settings.recording.memoryLimitMiB ?? 512)) * 1024 * 1024
+    while (memoryBytes > maxBytes) {
+      const candidate = segments.find((segment) => payloads.has(segment.path))
+      if (!candidate) break
+      const group = candidate.backend === 'browser'
+        ? segments.filter((segment) => segment.backend === 'browser' && segment.sessionId === candidate.sessionId)
+        : [candidate]
+      const protectedGroup = group.some((segment) => (
+        segment.endedAtMs >= protectedCutoffMs && protectedCutoffMs > 0 ||
+        activeSegmentReadCounts.has(segment.path)
+      ))
+      if (protectedGroup) {
+        await mkdir(segmentsDir, { recursive: true })
+        for (const segment of group) {
+          const data = payloads.get(segment.path)
+          if (!data) continue
+          await writeFile(segment.path, data)
+          releasePayload(segment.path)
+        }
+      } else {
+        for (const segment of group) {
+          if (segment.backend === 'browser') droppedBrowserSessions.set(segment.sourceId, segment.sessionId)
+          releasePayload(segment.path)
+          segments.splice(segments.indexOf(segment), 1)
+          await rm(segment.path, { force: true }).catch(() => undefined)
+        }
+      }
+    }
+    if (Date.now() - lastDiskPruneAtMs > 60_000) {
+      lastDiskPruneAtMs = Date.now()
+      const keepPaths = new Set([...segments.map((segment) => segment.path), ...activeSegmentReadCounts.keys()])
+      await pruneDiskFiles(segmentsDir, keepPaths)
+      await pruneReplayFiles(replaysDir, replayCutoffMs)
+    }
   }
 
   const relevantSegments = (settings: AppSettings, captureTarget?: CaptureTargetRef): StoredSegment[] => {
@@ -1409,7 +1431,7 @@ export const createWindowRecorderService = ({
     settings: AppSettings,
     override: Partial<Pick<WindowRecorderStatus, 'backend' | 'fallbackRequired' | 'message'>> = {}
   ): Promise<WindowRecorderStatus> => {
-    await pruneSegments(settings)
+    await serializeSegmentMutation(() => pruneSegments(settings))
     const automaticTerminalWindows = usesAutomaticTerminalWindows(settings)
     const statusTargets = statusCaptureTargets(settings)
     const sourceSegments = automaticTerminalWindows && browserLifecycleObserved
@@ -1456,6 +1478,8 @@ export const createWindowRecorderService = ({
       bufferedSeconds,
       lastSegmentAtMs: metrics.lastSegmentAtMs,
       message: override.message ?? defaultMessage,
+      memoryBytes,
+      memoryLimitBytes: memoryLimitBytes ?? (settings.recording.memoryLimitMiB ?? 512) * 1024 * 1024,
       sources: sourceStatuses
     }
   }
@@ -1463,7 +1487,7 @@ export const createWindowRecorderService = ({
   const waitForSegmentsUntil = async (settings: AppSettings, targetEndMs: number, timeoutMs: number, captureTarget?: CaptureTargetRef): Promise<StoredSegment[]> => {
     const deadlineMs = Date.now() + timeoutMs
     while (Date.now() <= deadlineMs) {
-      await pruneSegments(settings)
+      await serializeSegmentMutation(() => pruneSegments(settings))
       const sourceSegments = relevantSegments(settings, captureTarget)
       if (sourceSegments.some((segment) => segment.endedAtMs >= targetEndMs)) {
         return sourceSegments
@@ -1475,6 +1499,7 @@ export const createWindowRecorderService = ({
   }
 
   const assertSegmentFile = async (segment: StoredSegment): Promise<void> => {
+    if (payloads.has(segment.path)) return
     try {
       await stat(segment.path)
     } catch (error) {
@@ -1500,12 +1525,13 @@ export const createWindowRecorderService = ({
     const firstSegment = sessionSegments[0]
     const lastSegment = sessionSegments.at(-1)
     if (!firstSegment || !lastSegment) throw new Error('Нет частей непрерывной сессии встроенной записи для сборки клипа')
-    const sessionPath = join(replaysDir, `${toFileTimestamp(lastSegment.endedAtMs)}-${replayId}-${fileIndex}.webm`)
+    const sessionExtension = extname(firstSegment.path) || '.webm'
+    const sessionPath = join(replaysDir, `${toFileTimestamp(lastSegment.endedAtMs)}-${replayId}-${fileIndex}${sessionExtension}`)
     const releaseSegmentReads = protectSegmentReads(sessionSegments.map((segment) => segment.path))
     try {
       await Promise.all(sessionSegments.map(assertSegmentFile))
-      await writeFile(sessionPath, await readFile(firstSegment.path))
-      for (const segment of sessionSegments.slice(1)) await appendFile(sessionPath, await readFile(segment.path))
+      await writeFile(sessionPath, await readSegment(firstSegment))
+      for (const segment of sessionSegments.slice(1)) await appendFile(sessionPath, await readSegment(segment))
     } catch (error) {
       await rm(sessionPath, { force: true }).catch(() => undefined)
       throw error
@@ -1534,13 +1560,22 @@ export const createWindowRecorderService = ({
   }
 
   const buildSessionFiles = async (neededSegments: StoredSegment[], replayId: string, replaysDir: string): Promise<ReplaySessionFile[]> => {
+    const releaseReads = protectSegmentReads(neededSegments.map((segment) => segment.path))
+    try {
     await Promise.all(neededSegments.map(assertSegmentFile))
     if (neededSegments.every((segment) => segment.backend !== 'browser')) {
-      return neededSegments.map((segment) => ({
-        path: segment.path,
-        startedAtMs: segment.startedAtMs,
-        endedAtMs: segment.endedAtMs
-      }))
+      const files: ReplaySessionFile[] = []
+      try {
+        for (const [index, segment] of neededSegments.entries()) {
+          const path = join(replaysDir, `${replayId}-${index}.mp4`)
+          await writeFile(path, await readSegment(segment))
+          files.push({ path, startedAtMs: segment.startedAtMs, endedAtMs: segment.endedAtMs, cleanup: true })
+        }
+        return files
+      } catch (error) {
+        await Promise.all(files.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
+        throw error
+      }
     }
 
     const lastNeededSequenceBySession = new Map<string, number>()
@@ -1568,6 +1603,9 @@ export const createWindowRecorderService = ({
     } catch (error) {
       await Promise.all(sessionFiles.map((file) => rm(file.path, { force: true }).catch(() => undefined)))
       throw error
+    }
+    } finally {
+      releaseReads()
     }
   }
 
@@ -1775,7 +1813,7 @@ export const createWindowRecorderService = ({
   }
 
   const buildFreeRecordingStatus = async (settings: AppSettings, message?: string): Promise<FreeRecordingStatus> => {
-    await pruneSegments(settings)
+    await serializeSegmentMutation(() => pruneSegments(settings))
     if (!freeRecording) {
       return {
         active: false,
@@ -1899,7 +1937,11 @@ export const createWindowRecorderService = ({
     }
 
     await stopNativeRecorder()
-    segments.splice(0, segments.length)
+    await serializeSegmentMutation(async () => {
+      for (const path of payloads.keys()) releasePayload(path)
+      segments.splice(0, segments.length)
+      droppedBrowserSessions.clear()
+    })
 
     const { root } = cachePaths(settings)
     await rm(root, { recursive: true, force: true })
@@ -1951,21 +1993,29 @@ export const createWindowRecorderService = ({
       const endedAtMs = sanitizeSegmentTime(input.endedAtMs)
       const processId = sanitizeProcessId(input.processId)
       const sequence = Number(input.sequence)
-      const data = Buffer.from(input.data)
+      let data: Buffer<ArrayBufferLike> = Buffer.from(input.data)
       if (!input.sourceId || !input.sourceName || !startedAtMs || endedAtMs <= startedAtMs || data.length === 0) {
         throw new Error('Некорректный сегмент встроенной записи')
       }
+      if (input.mimeType.toLowerCase().startsWith('video/mp4')) {
+        const parser = new FragmentedMp4Reader()
+        const fragments = parser.push(data)
+        if (fragments.length !== 1) throw new Error('Кодировщик не вернул один полный фрагмент MP4')
+        data = fragments[0]!.data
+      }
 
       const { segmentsDir } = cachePaths(settings)
-      await mkdir(segmentsDir, { recursive: true })
       const id = randomUUID()
       const sessionId = typeof input.sessionId === 'string' && input.sessionId.trim() ? input.sessionId.trim() : id
-      const path = join(segmentsDir, `${toFileTimestamp(startedAtMs)}-${toFileTimestamp(endedAtMs)}__${id}.webm`)
-      pendingSegmentPaths.add(path)
-      try {
-        await writeFile(path, data)
-        const fileStat = await stat(path)
-
+      const extension = input.mimeType.toLowerCase().startsWith('video/mp4') ? '.mp4' : '.webm'
+      const path = join(segmentsDir, `${toFileTimestamp(startedAtMs)}-${toFileTimestamp(endedAtMs)}__${id}${extension}`)
+      await serializeSegmentMutation(async () => {
+        if (droppedBrowserSessions.get(input.sourceId) === sessionId) return
+        if (sequence === 0) droppedBrowserSessions.delete(input.sourceId)
+        if (sequence > 0 && !segments.some((segment) => segment.sessionId === sessionId && segment.sequence === 0)) {
+          droppedBrowserSessions.set(input.sourceId, sessionId)
+          return
+        }
         segments.push({
           id,
           backend: 'browser',
@@ -1977,13 +2027,12 @@ export const createWindowRecorderService = ({
           startedAtMs,
           endedAtMs,
           path,
-          sizeBytes: fileStat.size
+          sizeBytes: data.length
         })
-      } finally {
-        pendingSegmentPaths.delete(path)
-      }
+        storePayload(path, data)
+        await pruneSegments(settings, endedAtMs)
+      })
       clearNativeMissingSource()
-      await pruneSegments(settings, endedAtMs)
       return buildStatus(settings)
     },
     getStatus: getWindowRecorderStatus,
@@ -2035,7 +2084,15 @@ export const createWindowRecorderService = ({
       }
       return buildFreeRecordingStatus(settings, 'Свободная запись началась')
     },
-    stop: stopNativeRecorder,
+    async stop() {
+      await stopNativeRecorder()
+      if (protectedSinceMs || replayProtectionTimes.size || freeRecording || freeRecordingExportProtectedSinceMs) return
+      await serializeSegmentMutation(async () => {
+        for (const path of payloads.keys()) releasePayload(path)
+        segments.splice(0, segments.length)
+        droppedBrowserSessions.clear()
+      })
+    },
     async saveReplayBuffer({ settings, trade, captureTarget, signal }) {
       const requestedAtMs = Date.now()
       const replayProtectionId = randomUUID()

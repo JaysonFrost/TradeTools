@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import '@fontsource/jetbrains-mono/400.css'
@@ -7,7 +8,13 @@ import '@fontsource/jetbrains-mono/700.css'
 import { App } from './App'
 import { RecordingWidget } from './components/recording/RecordingWidget'
 import { applyInterfaceTheme, readStoredInterfaceTheme } from './lib/interfaceTheme'
+import { startDevPerformanceCleanup } from './lib/devPerformanceTimeline'
 import './styles/globals.css'
+
+if (import.meta.env.DEV) {
+  const stopPerformanceCleanup = startDevPerformanceCleanup()
+  import.meta.hot?.dispose(stopPerformanceCleanup)
+}
 
 const searchParams = new URLSearchParams(window.location.search)
 const isRecordingWidget = searchParams.get('window') === 'recording-widget'

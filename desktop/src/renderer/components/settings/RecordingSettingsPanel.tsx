@@ -21,7 +21,7 @@ const sectionTitleClass = 'font-mono text-sm font-semibold uppercase tracking-[0
 const sectionHintClass = 'mt-1 font-mono text-xs leading-5 text-[#8b9bb4]'
 const checkCardClass = 'flex min-w-0 items-start gap-3 border border-[#1c2b3a] bg-[#07111c] p-3 font-mono text-sm leading-5 text-[#8b9bb4] transition-colors duration-150 hover:border-cyan-400/30'
 const fieldLabelClass = 'text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]'
-const segmentSecondsHint = 'Размер одного куска записи. Обычно 2с: статус обновляется часто, а файлов не слишком много. Это не общая длина хранения.'
+const segmentSecondsHint = 'Длительность одного фрагмента сжатого видео в памяти. Обычно 2с.'
 const replayBufferSecondsHint = 'Сколько секунд видео TradeTools держит до входа. Это должно быть не меньше поля «Секунд до входа».'
 
 const isDraftInput = (element: EventTarget | null): element is HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement => (
@@ -72,6 +72,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
   const [resolutionPreset, setResolutionPreset] = useState<AppSettings['recording']['resolutionPreset']>('1440p')
   const [frameRate, setFrameRate] = useState('30')
   const [segmentSeconds, setSegmentSeconds] = useState('2')
+  const [memoryLimitMiB, setMemoryLimitMiB] = useState('512')
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(false)
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false)
   const [launchAtLogin, setLaunchAtLogin] = useState(false)
@@ -104,6 +105,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     resolutionPreset,
     frameRate,
     segmentSeconds,
+    memoryLimitMiB,
     systemAudioEnabled,
     microphoneEnabled,
     launchAtLogin,
@@ -124,6 +126,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     resolutionPreset: nextSettings.recording.resolutionPreset,
     frameRate: String(nextSettings.recording.frameRate),
     segmentSeconds: String(nextSettings.recording.segmentSeconds),
+    memoryLimitMiB: String(nextSettings.recording.memoryLimitMiB),
     systemAudioEnabled: nextSettings.recording.systemAudioEnabled,
     microphoneEnabled: nextSettings.recording.microphoneEnabled,
     launchAtLogin: nextSettings.system.launchAtLogin,
@@ -148,6 +151,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     setResolutionPreset(settings.recording.resolutionPreset)
     setFrameRate(String(settings.recording.frameRate))
     setSegmentSeconds(String(settings.recording.segmentSeconds))
+    setMemoryLimitMiB(String(settings.recording.memoryLimitMiB))
     setSystemAudioEnabled(settings.recording.systemAudioEnabled)
     setMicrophoneEnabled(settings.recording.microphoneEnabled)
     setLaunchAtLogin(settings.system.launchAtLogin)
@@ -253,6 +257,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
           resolutionPreset,
           frameRate: numberOrUndefined(frameRate),
           segmentSeconds: numberOrUndefined(segmentSeconds),
+          memoryLimitMiB: numberOrUndefined(memoryLimitMiB),
           systemAudioEnabled,
           microphoneEnabled
         },
@@ -301,6 +306,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     resolutionPreset,
     frameRate,
     segmentSeconds,
+    memoryLimitMiB,
     systemAudioEnabled,
     microphoneEnabled,
     launchAtLogin,
@@ -574,6 +580,10 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
             <label className={fieldLabelClass}>
               <span>Интервал буфера, сек<FieldHint text={segmentSecondsHint} /></span>
               <input className={inputClass} value={segmentSeconds} onChange={(event) => setSegmentSeconds(event.target.value)} inputMode="numeric" />
+            </label>
+            <label className={fieldLabelClass}>
+              <span>Память буфера, МиБ<FieldHint text="Общий лимит сжатого видео для всех источников. Старые фрагменты удаляются; видео активной сделки при необходимости переносится на диск." /></span>
+              <input className={inputClass} value={memoryLimitMiB} onChange={(event) => setMemoryLimitMiB(event.target.value)} inputMode="numeric" />
             </label>
           </div>
         </section>

@@ -305,21 +305,25 @@ type WindowMetadata = { processId?: number, bounds?: WindowBounds }
 type CachedWindowMetadata = WindowMetadata & { loadedAtMs: number }
 type WindowMetadataResult = {
   metadataByWindowId: Map<string, WindowMetadata>
+  titlesByWindowId: Map<string, string>
 }
 
 const listDesktopCaptureSources = (): Promise<DesktopCaptureSource[]> => desktopCapturer.getSources({
   types: ['window', 'screen'],
-  thumbnailSize: { width: 1, height: 1 },
+  thumbnailSize: { width: 0, height: 0 },
   fetchWindowIcons: false
 })
 
 const windowCaptureSourcesCacheMs = 5_000
+const nativeWindowSourcesCacheMs = 2_000
 const windowMetadataCacheMs = 5 * 60_000
 const terminalWindowMetadataCacheMs = 5_000
 const windowMetadataRetryMs = 5_000
 const windowMetadataTimeoutMs = 45_000
 const maxWindowMetadataOutputLength = 1024 * 1024
 let windowCaptureSourcesCache: { loadedAtMs: number, sources: WindowCaptureSource[] } | undefined
+let nativeWindowSourcesCache: { loadedAtMs: number, sources: WindowCaptureSource[] } | undefined
+let nativeWindowSourcesRequest: Promise<WindowCaptureSource[]> | undefined
 const windowMetadataByWindowId = new Map<string, CachedWindowMetadata>()
 const terminalWindowMetadataIds = new Set<string>()
 const pendingWindowMetadataIds = new Set<string>()
@@ -333,12 +337,19 @@ const sanitizedWindowHandles = (windowIds: string[]): number[] => [...new Set(wi
   .filter((windowId) => Number.isSafeInteger(windowId) && windowId > 0)
 )]
 
-const parseWindowMetadata = (stdout: string, requestedWindowIds: Set<string>): WindowMetadataResult => {
+const parseWindowMetadata = (stdout: string, requestedWindowIds: Set<string>, enumerate = false): WindowMetadataResult => {
   const metadataByWindowId = new Map<string, WindowMetadata>()
+  const titlesByWindowId = new Map<string, string>()
 
   for (const line of stdout.split(/\r?\n/)) {
-    const [recordType, windowId, processIdText, xText, yText, widthText, heightText] = line.trim().split('|')
-    if (recordType !== 'W' || !requestedWindowIds.has(windowId)) continue
+    const [recordType, windowId, processIdText, xText, yText, widthText, heightText, encodedTitle] = line.trim().split('|')
+    if (recordType !== 'W' || (!enumerate && !requestedWindowIds.has(windowId))) continue
+    if (enumerate && (!windowId || !/^\d+$/.test(windowId) || !encodedTitle)) continue
+    if (encodedTitle) {
+      const title = Buffer.from(encodedTitle, 'base64').toString('utf8')
+      if (!isSupportedTerminalWindowName(title)) continue
+      titlesByWindowId.set(windowId, title)
+    }
 
     const processId = Number(processIdText)
     const x = Number(xText)
@@ -354,26 +365,46 @@ const parseWindowMetadata = (stdout: string, requestedWindowIds: Set<string>): W
     })
   }
 
-  return { metadataByWindowId }
+  return { metadataByWindowId, titlesByWindowId }
 }
 
-const listWindowMetadata = (windowIds: string[]): Promise<WindowMetadataResult | undefined> => {
+const listWindowMetadata = (windowIds: string[], enumerate = false): Promise<WindowMetadataResult | undefined> => {
   if (process.platform !== 'win32') return Promise.resolve(undefined)
 
   const handles = sanitizedWindowHandles(windowIds)
-  if (handles.length === 0) return Promise.resolve(undefined)
+  if (handles.length === 0 && !enumerate) return Promise.resolve(undefined)
   const requestedWindowIds = new Set(handles.map(String))
 
   const script = `
 $source = @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class TradeToolsWindowMetadata {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
   [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
+  public delegate bool WindowVisitor(IntPtr hWnd, IntPtr data);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(WindowVisitor visitor, IntPtr data);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder title, int maxCount);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextLength(IntPtr hWnd);
+  public static List<IntPtr> VisibleWindows() {
+    var windows = new List<IntPtr>();
+    EnumWindows((hWnd, data) => {
+      if (IsWindowVisible(hWnd) && GetWindowTextLength(hWnd) > 0) windows.Add(hWnd);
+      return true;
+    }, IntPtr.Zero);
+    return windows;
+  }
+  public static string Title(IntPtr hWnd) {
+    var title = new StringBuilder(GetWindowTextLength(hWnd) + 1);
+    GetWindowText(hWnd, title, title.Capacity);
+    return title.ToString();
+  }
   public static bool TryGetCaptureBounds(IntPtr hWnd, out RECT rect) {
     const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf(typeof(RECT))) == 0 && rect.Right > rect.Left && rect.Bottom > rect.Top) return true;
@@ -398,9 +429,13 @@ public static class TradeToolsWindowMetadata {
 }
 "@
 Add-Type $source
-foreach ($handle in @(${handles.join(',')})) {
+${enumerate
+    ? `foreach ($handle in [TradeToolsWindowMetadata]::VisibleWindows()) {
+  [TradeToolsWindowMetadata]::Describe($handle.ToInt64()) + "|" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([TradeToolsWindowMetadata]::Title($handle)))
+}`
+    : `foreach ($handle in @(${handles.join(',')})) {
   [TradeToolsWindowMetadata]::Describe([Int64]$handle)
-}
+}`}
 `
 
   return new Promise((resolve) => {
@@ -434,7 +469,7 @@ foreach ($handle in @(${handles.join(',')})) {
     })
     child.stderr?.resume()
     child.once('error', () => finish())
-    child.once('close', (exitCode) => finish(exitCode === 0 ? parseWindowMetadata(stdout, requestedWindowIds) : undefined))
+    child.once('close', (exitCode) => finish(exitCode === 0 ? parseWindowMetadata(stdout, requestedWindowIds, enumerate) : undefined))
   })
 }
 
@@ -558,7 +593,40 @@ const scheduleWindowMetadataEnrichment = (windowIds: string[]): void => {
     })
 }
 
-const listWindowCaptureSources = async (forceRefresh = false): Promise<WindowCaptureSource[]> => {
+const listNativeWindowSources = (): Promise<WindowCaptureSource[]> => {
+  if (nativeWindowSourcesCache && Date.now() - nativeWindowSourcesCache.loadedAtMs < nativeWindowSourcesCacheMs) {
+    return Promise.resolve(nativeWindowSourcesCache.sources)
+  }
+  if (nativeWindowSourcesRequest) return nativeWindowSourcesRequest
+  nativeWindowSourcesRequest = listWindowMetadata([], true).then((result) => {
+    if (!result) return nativeWindowSourcesCache?.sources ?? []
+    const sources = [...result.titlesByWindowId].map(([windowId, name]): WindowCaptureSource => {
+      const metadata = result.metadataByWindowId.get(windowId)
+      let displayId = ''
+      if (metadata?.bounds) {
+        try {
+          displayId = String(electronScreen.getDisplayMatching(metadata.bounds).id)
+        } catch {
+          // The window remains capturable when its display cannot be resolved.
+        }
+      }
+      return {
+        id: `window:${windowId}:0`,
+        name,
+        type: 'window',
+        displayId,
+        ...(metadata?.processId ? { processId: metadata.processId } : {}),
+        ...(metadata?.bounds ? { bounds: metadata.bounds } : {})
+      }
+    })
+    nativeWindowSourcesCache = { loadedAtMs: Date.now(), sources }
+    return sources
+  }).finally(() => { nativeWindowSourcesRequest = undefined })
+  return nativeWindowSourcesRequest
+}
+
+const listWindowCaptureSources = async (forceRefresh = false, terminalWindowsOnly = false): Promise<WindowCaptureSource[]> => {
+  if (terminalWindowsOnly && process.platform === 'win32') return listNativeWindowSources()
   if (!forceRefresh && windowCaptureSourcesCache && Date.now() - windowCaptureSourcesCache.loadedAtMs < windowCaptureSourcesCacheMs) {
     return windowCaptureSourcesCache.sources
   }
@@ -622,7 +690,7 @@ const terminalSourceLog = (source: WindowCaptureSource) => ({
 })
 
 const isCurrentWindowSourceAvailable = async (input: { sourceId: string, sourceName: string }): Promise<boolean> => {
-  const sources = await listWindowCaptureSources()
+  const sources = await listWindowCaptureSources(false, true)
   return sources.some((source) => (
     source.type === 'window' &&
     ((input.sourceId && source.id === input.sourceId) || (input.sourceName && source.name === input.sourceName))
@@ -1620,7 +1688,7 @@ app.whenReady().then(() => {
   const resolveManualWindowRecordingTarget = async (settings: AppSettings): Promise<CaptureTargetRef | undefined> => {
     if (settings.recording.sourceType !== 'window') return undefined
 
-    const sources = await listWindowCaptureSources(true)
+    const sources = await listWindowCaptureSources(true, true)
     const terminalSources = sources.filter((source) => (
       source.type === 'window' && isSupportedTerminalWindowName(source.name)
     ))
@@ -1858,7 +1926,7 @@ app.whenReady().then(() => {
     const settings = await settingsStore.load()
     if (settings.recording.sourceType === 'screen') return undefined
 
-    const sources = await listWindowCaptureSources(true)
+    const sources = await listWindowCaptureSources(true, true)
     const terminalSources = sources.filter((candidate) => (
       candidate.type === 'window' && terminalWindowMatchesSource(candidate.name, event.source)
     ))
@@ -2062,9 +2130,9 @@ app.whenReady().then(() => {
     void notifyProxyPaymentsDue().catch((error) => console.error('Proxy payment notification failed:', error))
     return updatedSettings
   })
-  ipcMain.handle('recording:list-window-sources', async (event, forceRefresh = false) => {
+  ipcMain.handle('recording:list-window-sources', async (event, forceRefresh = false, terminalWindowsOnly = false) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Источники записи доступны только главному окну')
-    return listWindowCaptureSources(forceRefresh === true)
+    return listWindowCaptureSources(forceRefresh === true, terminalWindowsOnly === true)
   })
   ipcMain.handle('recording:list-video-encoders', async (event) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Кодировщики доступны только главному окну')
@@ -2279,7 +2347,15 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('recording:append-segment', async (event, input: WindowRecordingSegmentInput) => {
     if (event.sender !== mainWindow?.webContents) throw new Error('Сегменты записи принимает только главное окно')
-    return windowRecorderService.appendSegment(input, await settingsStore.load())
+    try {
+      return await windowRecorderService.appendSegment(input, await settingsStore.load())
+    } catch (error) {
+      void appLog.error('recording', 'Failed to append encoded window fragment', {
+        sourceId: input?.sourceId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      throw error
+    }
   })
   ipcMain.handle('clipboard:write-text', (_event, text: string) => {
     if (typeof text !== 'string') throw new Error('Некорректный текст для буфера обмена')

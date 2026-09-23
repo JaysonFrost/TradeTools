@@ -157,7 +157,7 @@ const api = {
     }
   },
   recording: {
-    listWindowSources: (forceRefresh = false): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources', forceRefresh),
+    listWindowSources: (forceRefresh = false, terminalWindowsOnly = false): Promise<WindowCaptureSource[]> => ipcRenderer.invoke('recording:list-window-sources', forceRefresh, terminalWindowsOnly),
     listVideoEncoders: (): Promise<VideoEncoderOption[]> => ipcRenderer.invoke('recording:list-video-encoders'),
     getStatus: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:get-status'),
     check: (): Promise<WindowRecorderStatus> => ipcRenderer.invoke('recording:check'),
