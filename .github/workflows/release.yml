@@ -51,6 +51,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check native runtime dependencies
+        run: node node_modules/electron/cli.js -e "require('keytar'); require('ssh2'); console.log('Runtime dependencies loaded in Electron ' + process.versions.electron)"
+        env:
+          ELECTRON_RUN_AS_NODE: "1"
+
       - name: Run tests
         run: npm test
 

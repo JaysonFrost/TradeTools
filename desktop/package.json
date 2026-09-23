@@ -66,6 +66,7 @@
   "build": {
     "appId": "com.tradetools.desktop",
     "productName": "TradeTools",
+    "npmRebuild": false,
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "publish": [
       {
