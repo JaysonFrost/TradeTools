@@ -79,7 +79,7 @@ let recordingWidgetWindow: BrowserWindow | undefined
 let appQuitRequested = false
 
 const keepRecordingWidgetOnTop = (): void => {
-  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isVisible() || !recordingWidgetWindow.isAlwaysOnTop()) return
+  if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isVisible()) return
   recordingWidgetWindow.setAlwaysOnTop(true, 'pop-up-menu')
   recordingWidgetWindow.moveTop()
 }
@@ -941,13 +941,16 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
     y,
     useContentSize: true,
     frame: false,
+    thickFrame: false,
+    hasShadow: false,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
     show: true,
-    backgroundColor: '#0b1623',
+    transparent: true,
+    backgroundColor: '#00000000',
     title: 'TradeTools Recording',
     icon: getIconPath(),
     webPreferences: {
@@ -958,11 +961,17 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
     }
   })
   recordingWidgetWindow = window
+  window.on('show', keepRecordingWidgetOnTop)
+  window.on('moved', keepRecordingWidgetOnTop)
+  window.on('blur', keepRecordingWidgetOnTop)
+  // ponytail: Windows can raise the taskbar without a widget event; a native shell hook can replace polling if the 100 ms recovery becomes visible.
+  const keepOnTopTimer = process.platform === 'win32' ? setInterval(keepRecordingWidgetOnTop, 100) : undefined
   keepRecordingWidgetOnTop()
   window.setContentProtection(true)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.on('closed', () => {
+    if (keepOnTopTimer) clearInterval(keepOnTopTimer)
     recordingWidgetWindow = undefined
     if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) app.quit()
   })
@@ -983,7 +992,7 @@ const repositionRecordingWidgetWindow = (): void => {
   const display = electronScreen.getDisplayMatching(recordingWidgetWindow.getBounds())
   recordingWidgetWindow.setBounds(getRecordingWidgetPlacement(
     display,
-    process.platform === 'win32' && recordingWidgetWindow.isAlwaysOnTop()
+    process.platform === 'win32'
   ))
   keepRecordingWidgetOnTop()
 }
@@ -994,10 +1003,8 @@ const showRecordingWidget = (): void => {
     return
   }
   repositionRecordingWidgetWindow()
-  if (recordingWidgetWindow.isAlwaysOnTop()) {
-    recordingWidgetWindow.showInactive()
-    keepRecordingWidgetOnTop()
-  } else recordingWidgetWindow.show()
+  recordingWidgetWindow.showInactive()
+  keepRecordingWidgetOnTop()
 }
 
 app.whenReady().then(() => {
@@ -2072,17 +2079,6 @@ app.whenReady().then(() => {
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:show-main-window', () => focusMainWindow())
   ipcMain.handle('app:show-recording-widget', () => showRecordingWidget())
-  ipcMain.handle('app:get-recording-widget-always-on-top', (event) => {
-    if (event.sender !== recordingWidgetWindow?.webContents) throw new Error('Состояние закрепления доступно только виджету записи')
-    return recordingWidgetWindow.isAlwaysOnTop()
-  })
-  ipcMain.handle('app:toggle-recording-widget-always-on-top', (event) => {
-    if (event.sender !== recordingWidgetWindow?.webContents) throw new Error('Закреплением может управлять только виджет записи')
-    recordingWidgetWindow.setAlwaysOnTop(!recordingWidgetWindow.isAlwaysOnTop())
-    repositionRecordingWidgetWindow()
-    keepRecordingWidgetOnTop()
-    return recordingWidgetWindow.isAlwaysOnTop()
-  })
   ipcMain.handle('app:close-recording-widget', () => recordingWidgetWindow?.close())
   ipcMain.handle('logs:get', () => appLog.getSnapshot())
   ipcMain.handle('logs:show-file', async () => {

@@ -489,7 +489,7 @@ describe('main app lifecycle', () => {
     expect(source).toContain('applyAlwaysOnTop(settings)')
   })
 
-  it('creates a compact pinnable recording widget with recording and buffer hotkeys', async () => {
+  it('creates a compact always-pinned recording widget with recording and buffer hotkeys', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const preloadSource = await readFile(resolve('src/preload/index.ts'), 'utf8')
     const controlSource = await readFile(resolve('src/shared/recordingControl.ts'), 'utf8')
@@ -507,11 +507,10 @@ describe('main app lifecycle', () => {
     expect(widgetSource).not.toContain("window.once('ready-to-show'")
     expect(source).toContain("window: 'recording-widget'")
     expect(source).toContain("ipcMain.handle('app:show-recording-widget'")
-    expect(source).toContain("ipcMain.handle('app:get-recording-widget-always-on-top'")
-    expect(source).toContain("ipcMain.handle('app:toggle-recording-widget-always-on-top'")
-    expect(source).toContain('recordingWidgetWindow.setAlwaysOnTop(!recordingWidgetWindow.isAlwaysOnTop())')
+    expect(source).not.toContain('app:toggle-recording-widget-always-on-top')
+    expect(source).not.toContain('recordingWidgetWindow.setAlwaysOnTop(!recordingWidgetWindow.isAlwaysOnTop())')
     expect(source).toContain('recordingWidgetWindow.showInactive()')
-    expect(source).toContain('recordingWidgetWindow.show()')
+    expect(source).not.toContain('recordingWidgetWindow.show()')
     expect(source).not.toContain('recordingWidgetWindow.setAlwaysOnTop(true)\n  recordingWidgetWindow.showInactive()')
     expect(source).toContain("electronScreen.on('display-metrics-changed'")
     expect(source).toContain("electronScreen.on('display-removed'")
@@ -536,12 +535,12 @@ describe('main app lifecycle', () => {
     expect(controlSource).toContain('bufferHotkey: string')
     expect(controlSource).toContain('bufferHotkeyAvailable: boolean')
     expect(source).toContain('recordingControlStatus.bufferHotkeyAvailable = bufferHotkeyRegistered')
-    expect(preloadSource).toContain("ipcRenderer.invoke('app:get-recording-widget-always-on-top'")
-    expect(preloadSource).toContain("ipcRenderer.invoke('app:toggle-recording-widget-always-on-top'")
+    expect(preloadSource).not.toContain('getRecordingWidgetAlwaysOnTop')
+    expect(preloadSource).not.toContain('toggleRecordingWidgetAlwaysOnTop')
     expect(source).toContain('globalShortcut.unregisterAll()')
   })
 
-  it('keeps a visible pinned widget above the taskbar without stealing focus on blur', async () => {
+  it('keeps an inactive Windows widget above the taskbar and stops recovery when closed', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     const widgetSource = source.slice(source.indexOf('const createRecordingWidgetWindow'), source.indexOf('const repositionRecordingWidgetWindow'))
 
@@ -549,7 +548,15 @@ describe('main app lifecycle', () => {
     expect(source).toContain('!recordingWidgetWindow.isVisible()')
     expect(source).toContain("recordingWidgetWindow.setAlwaysOnTop(true, 'pop-up-menu')")
     expect(source).toContain('recordingWidgetWindow.moveTop()')
-    expect(widgetSource).not.toContain("window.on('blur', keepRecordingWidgetOnTop)")
+    expect(widgetSource).toContain("window.on('show', keepRecordingWidgetOnTop)")
+    expect(widgetSource).toContain("window.on('moved', keepRecordingWidgetOnTop)")
+    expect(widgetSource).toContain("window.on('blur', keepRecordingWidgetOnTop)")
+    expect(widgetSource.includes("process.platform === 'win32' ? setInterval(keepRecordingWidgetOnTop, 100) : undefined")).toBe(true)
+    const closeSource = widgetSource.slice(widgetSource.indexOf("window.on('closed'"))
+    expect(closeSource.includes('if (keepOnTopTimer) clearInterval(keepOnTopTimer)')).toBe(true)
+    const keepOnTopSource = source.slice(source.indexOf('const keepRecordingWidgetOnTop'), source.indexOf("app.on('second-instance'"))
+    expect(keepOnTopSource).not.toContain('.focus(')
+    expect(keepOnTopSource).not.toContain('.show(')
     expect((source.match(/keepRecordingWidgetOnTop\(\)/g) ?? []).length).toBeGreaterThanOrEqual(3)
     const showSource = source.slice(source.indexOf('const showRecordingWidget'), source.indexOf('app.whenReady'))
     expect(showSource).toContain('repositionRecordingWidgetWindow()')

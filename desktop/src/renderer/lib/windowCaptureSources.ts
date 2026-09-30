@@ -1,5 +1,11 @@
 import type { WindowCaptureSource } from '../../main/services/recording/windowRecorderService'
-import { isSupportedTerminalWindowName } from '../../shared/supportedTerminalWindows'
+import { detectSupportedTerminalWindow, isSupportedTerminalWindowName } from '../../shared/supportedTerminalWindows'
+
+export const colibriLocalApiSetupHint = 'В Colibri откройте «Настройки → Программа → Local API» и включите локальный API. TradeTools подключится автоматически. Для записи достаточно чтения позиций: торговый токен, разрешение на ордера и доступ из браузера не требуются.'
+
+export const needsColibriApiSetup = (sourceNames: readonly string[], availableSources: readonly string[]): boolean => (
+  !availableSources.includes('colibri') && sourceNames.some((name) => detectSupportedTerminalWindow(name) === 'colibri')
+)
 
 const ignoredWindowPatterns = [
   /tradetools/i,

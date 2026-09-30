@@ -25,8 +25,45 @@ body {
 }
 
 html[data-window='recording-widget'] body {
-  background-color: var(--bg);
-  background-size: 16px 16px, 16px 16px, 8px 8px, 8px 8px;
+  background: transparent !important;
+}
+
+html[data-window='recording-widget'] #root > main {
+  border: 1px solid color-mix(in srgb, var(--line) 30%, var(--panel-strong));
+  border-radius: 12px !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--panel-strong) 88%, var(--line)), var(--bg) 75%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+html[data-window='recording-widget'] #root > main > svg {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+html[data-window='recording-widget'] #root .recording-widget-dot {
+  border-radius: 50% !important;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+html[data-window='recording-widget'][data-interface-theme='classic'] #root .recording-widget-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+html[data-window='recording-widget'] #root button {
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: background-color 150ms, border-color 150ms, filter 150ms;
+}
+
+html[data-window='recording-widget'] #root button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+html[data-window='recording-widget'] #root button:focus-visible {
+  outline-offset: -2px;
 }
 
 ::selection {

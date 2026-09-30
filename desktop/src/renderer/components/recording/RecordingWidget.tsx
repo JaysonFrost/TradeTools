@@ -1,4 +1,4 @@
-import { Check, ExternalLink, GripHorizontal, LoaderCircle, Pin, PinOff, Play, Save, Square, TriangleAlert, X } from 'lucide-react'
+import { Check, ExternalLink, GripHorizontal, LoaderCircle, Play, Save, Square, TriangleAlert, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { recordingBufferSaveAccelerator, recordingToggleAccelerator, type RecordingControlStatus } from '../../../shared/recordingControl'
 import { applyInterfaceTheme, rememberInterfaceTheme } from '../../lib/interfaceTheme'
@@ -38,11 +38,9 @@ const compactIconClass = 'text-[#f7fbff]'
 export const RecordingWidget = () => {
   const [status, setStatus] = useState<RecordingControlStatus>(initialStatus)
   const [loading, setLoading] = useState(true)
-  const [pinned, setPinned] = useState(true)
   const [savingBuffer, setSavingBuffer] = useState(false)
   const [bufferFeedback, setBufferFeedback] = useState('')
   const [bufferFailed, setBufferFailed] = useState(false)
-  const [pinError, setPinError] = useState('')
 
   useEffect(() => {
     const api = getTradeToolsApi()
@@ -63,10 +61,6 @@ export const RecordingWidget = () => {
         }))
         setLoading(false)
       })
-
-    void api.app.getRecordingWidgetAlwaysOnTop()
-      .then(setPinned)
-      .catch((error) => setPinError(error instanceof Error ? error.message : 'Не удалось получить состояние закрепления'))
 
     return unsubscribe
   }, [])
@@ -126,32 +120,22 @@ export const RecordingWidget = () => {
     }
   }
 
-  const togglePinned = async () => {
-    try {
-      setPinned(await getTradeToolsApi().app.toggleRecordingWidgetAlwaysOnTop())
-      setPinError('')
-    } catch (error) {
-      setPinError(error instanceof Error ? error.message : 'Не удалось изменить закрепление')
-    }
-  }
-
   const actionClass = status.enabled
     ? 'border-[var(--danger)] bg-[rgba(255,93,115,0.12)] text-[var(--danger)] hover:bg-[rgba(255,93,115,0.2)]'
     : 'border-[var(--action)] !bg-[var(--action)] text-[var(--action-foreground)] hover:!bg-[var(--action-hover)]'
   const bufferLabel = bufferFeedback || 'Сохранить последний буфер'
   const bufferHotkeyLabel = status.bufferHotkeyAvailable ? displayHotkey(status.bufferHotkey) : 'хоткей занят'
-  const pinLabel = pinError || (pinned ? 'Открепить от остальных окон' : 'Закрепить поверх окон')
 
   return (
     <main
       style={dragRegionStyle}
-      className="blueprint-frame flex h-full w-full items-center gap-1 overflow-hidden bg-[var(--bg)] px-1.5 text-[var(--text)]"
+      className="flex h-full w-full items-center gap-1 overflow-hidden px-2 text-[var(--text)]"
     >
       <GripHorizontal size={14} className={`shrink-0 ${compactIconClass}`} aria-hidden="true" />
 
       <div className="flex min-w-0 flex-1 items-center gap-2 px-1" aria-live="polite" aria-atomic="true" title={view.detail}>
-        <span className={`h-2.5 w-2.5 shrink-0 ${tone.dot}`} aria-hidden="true" />
-        <span className={`truncate text-[10px] font-bold uppercase tracking-[0.06em] ${tone.eyebrow}`}>{view.title}</span>
+        <span className={`recording-widget-dot h-2 w-2 shrink-0 ${tone.dot}`} aria-hidden="true" />
+        <span className={`recording-widget-title truncate text-[10px] font-bold uppercase tracking-[0.06em] ${tone.eyebrow}`}>{view.title}</span>
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
@@ -182,17 +166,6 @@ export const RecordingWidget = () => {
               : bufferFeedback
                 ? <Check size={15} className={compactIconClass} aria-hidden="true" />
                 : <Save size={15} className={compactIconClass} aria-hidden="true" />}
-        </button>
-        <button
-          type="button"
-          style={noDragRegionStyle}
-          className={`${compactButtonClass} ${pinError ? 'border-[var(--danger)] text-[var(--danger)]' : pinned ? 'border-[var(--action)] text-[var(--action)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--line)] hover:text-[var(--text)]'}`}
-          onClick={() => void togglePinned()}
-          aria-label={pinLabel}
-          aria-pressed={pinned}
-          title={pinLabel}
-        >
-          {pinned ? <Pin size={14} className={compactIconClass} aria-hidden="true" /> : <PinOff size={14} className={compactIconClass} aria-hidden="true" />}
         </button>
         <button
           type="button"

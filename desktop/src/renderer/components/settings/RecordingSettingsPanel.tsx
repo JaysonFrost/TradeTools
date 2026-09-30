@@ -5,7 +5,7 @@ import type { AppSettings } from '../../../main/services/settings/settings'
 import type { VideoEncoderOption } from '../../../main/services/video/videoEncoderDevices'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
-import { findAutoRecordedTerminalSources } from '../../lib/windowCaptureSources'
+import { findAutoRecordedTerminalSources, colibriLocalApiSetupHint } from '../../lib/windowCaptureSources'
 import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -432,6 +432,10 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
         <section className={sectionClass}>
           <div className={sectionTitleClass}>Источник записи</div>
           <p className={sectionHintClass}>Окна поддержанных терминалов подключаются автоматически. Для записи мониторов выбор остаётся ручным.</p>
+          <details className="mt-2 text-sm leading-6 text-[#8b9bb4]">
+            <summary className="cursor-pointer text-cyan-200">Настройка доступа к Colibri</summary>
+            <p className="mt-1">{colibriLocalApiSetupHint}</p>
+          </details>
           <div className="mt-3 inline-flex items-center border border-cyan-400/50 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100">
             <Monitor size={16} className="mr-2" />Встроенная запись
           </div>

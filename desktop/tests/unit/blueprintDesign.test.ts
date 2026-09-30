@@ -28,15 +28,18 @@ describe('visual system', () => {
     expect(badge).not.toContain('rounded-full')
   })
 
-  it('keeps the shell static and carries the blueprint geometry into the widget', async () => {
-    const [shell, widget] = await Promise.all([
+  it('keeps the shell static and gives the widget a surface using theme colors', async () => {
+    const [shell, widget, globals] = await Promise.all([
       readFile(resolve('src/renderer/components/layout/AppShell.tsx'), 'utf8'),
-      readFile(resolve('src/renderer/components/recording/RecordingWidget.tsx'), 'utf8')
+      readFile(resolve('src/renderer/components/recording/RecordingWidget.tsx'), 'utf8'),
+      readFile(resolve('src/renderer/styles/globals.css'), 'utf8')
     ])
 
     expect(shell).not.toContain("from 'framer-motion'")
     expect(shell).toContain('blueprint-frame')
-    expect(widget).toContain('bg-[var(--bg)]')
+    const widgetSurface = globals.match(/html\[data-window='recording-widget'\] #root > main \{([^}]+)\}/)?.[1]
+    expect(widgetSurface).toContain('var(--bg)')
+    expect(widgetSurface).toContain('var(--line)')
     expect(widget).not.toContain('rounded-xl')
     expect(widget).not.toContain('rounded-md')
   })

@@ -19,6 +19,7 @@ import { ClipCard } from '../components/trade/ClipCard'
 import { filterClips, getClipDayGroups, getClipsForDate, getClipsForPeriod, type ClipSortDirection, type ClipSortKey } from '../lib/clipList'
 import type { AppPage } from '../lib/navigation'
 import { getTradeToolsApi } from '../lib/tradeToolsApi'
+import { colibriLocalApiSetupHint, needsColibriApiSetup } from '../lib/windowCaptureSources'
 import type { ProxyChainSetupProgress } from '../../preload'
 
 export type DashboardProps = {
@@ -161,6 +162,11 @@ const RecordingStatusPanel = ({
     : 'Автовыбор терминала')
   const hasActiveTrade = terminalTrade.active
   const detectedTerminalNames = terminalTrade.availableSources.map((source) => supportedTerminalLabels[source])
+  const colibriNeedsSetup = needsColibriApiSetup([
+    windowRecorder?.sourceName ?? '',
+    settings?.recording.windowSourceName ?? '',
+    ...(windowRecorder?.sources ?? []).map((source) => source.sourceName)
+  ], terminalTrade.availableSources)
   const terminalStatus = `Пишем сделку, позиций: ${terminalTrade.activeTradeCount}. После закрытия TradeTools сам сохранит клип.`
   const activeTradeSummary = `${terminalTrade.activeTradeCount} поз.`
   const showStatusBadge = !backgroundRecordingEnabled || hasActiveTrade
@@ -189,6 +195,11 @@ const RecordingStatusPanel = ({
             )}
           </div>
           {message && <p className="mt-2 text-sm leading-6 text-[#8b9bb4]">{message}</p>}
+          {colibriNeedsSetup && (
+            <p className="mt-2 text-sm leading-6 text-[#ffb45f]" role="status">
+              <strong>Colibri: требуется подключение API.</strong> {colibriLocalApiSetupHint}
+            </p>
+          )}
           {backgroundRecordingEnabled && detectedTerminalNames.length > 0 && (
             <p className="mt-2 text-xs leading-5 text-[#8b9bb4]">Журналы терминалов: <span className="text-[#f0f0f0]">{detectedTerminalNames.join(', ')}</span></p>
           )}

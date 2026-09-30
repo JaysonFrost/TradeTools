@@ -8,7 +8,7 @@ import { defaultLocalProxyPort } from '../../../shared/defaults'
 import { defaultClipPaddingAfterSeconds, defaultClipPaddingBeforeSeconds, defaultReplayBufferSeconds, longClipAfterExitSeconds, longClipPresetSeconds } from '../../../shared/videoDefaults'
 import type { AppPage } from '../../lib/navigation'
 import { getTradeToolsApi } from '../../lib/tradeToolsApi'
-import { findAutoRecordedTerminalSources, findPreferredTerminalSource } from '../../lib/windowCaptureSources'
+import { findAutoRecordedTerminalSources, findPreferredTerminalSource, colibriLocalApiSetupHint } from '../../lib/windowCaptureSources'
 import { refreshWindowSourceList } from '../../lib/windowSourceListRefresh'
 import { proxySetupWizardSteps, videoSetupWizardSteps } from './setupWizardSteps'
 import { Button } from '../ui/Button'
@@ -819,6 +819,10 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
                           </div>
                         </fieldset>
                         <div data-testid="wizard-recording-details" className="grid min-w-0 gap-3 sm:grid-cols-2">
+                        <details className="text-sm leading-6 text-[#8b9bb4] sm:col-span-2">
+                          <summary className="cursor-pointer text-cyan-200">Настройка доступа к Colibri</summary>
+                          <p className="mt-1">{colibriLocalApiSetupHint}</p>
+                        </details>
                         <label className={`block min-w-0 ${fieldLabelClass}`}>
                           Разрешение
                           <select

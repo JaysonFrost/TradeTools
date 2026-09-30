@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { WindowCaptureSource } from '../../src/main/services/recording/windowRecorderService'
 import { detectSupportedTerminalWindow, isSupportedTerminalWindowName } from '../../src/shared/supportedTerminalWindows'
-import { findAutoRecordedTerminalSources, findPreferredTerminalSource } from '../../src/renderer/lib/windowCaptureSources'
+import { findAutoRecordedTerminalSources, findPreferredTerminalSource, needsColibriApiSetup } from '../../src/renderer/lib/windowCaptureSources'
 
 const source = (name: string): WindowCaptureSource => ({
   id: `window:${name}`,
@@ -11,6 +11,14 @@ const source = (name: string): WindowCaptureSource => ({
 })
 
 describe('windowCaptureSources', () => {
+  it('reminds Colibri users about Local API until the terminal API is connected', () => {
+    expect(needsColibriApiSetup(['Colibri — Главное'], [])).toBe(true)
+    expect(needsColibriApiSetup(['Colibri — Главное'], ['colibri'])).toBe(false)
+    expect(needsColibriApiSetup(['Colibri — Главное'], ['vataga'])).toBe(true)
+    expect(needsColibriApiSetup(['Vataga', 'Colibri - Google Chrome'], [])).toBe(false)
+    expect(needsColibriApiSetup([], [])).toBe(false)
+  })
+
   it.each([
     ['Vataga.terminal', 'vataga'],
     ['Ватага - SOLUSDT', 'vataga'],

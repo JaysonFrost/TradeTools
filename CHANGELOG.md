@@ -6,6 +6,21 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-01
+
+### Added
+
+- Added automatic Colibri trade recording through its native local API, with account-scoped position tracking and safe recovery after unavailable or malformed snapshots.
+- Added a Colibri Local API setup reminder on the video dashboard and setup instructions in recording settings and the setup wizard.
+- Added an optional setting to save only the selected monitor containing the trade, with terminal-window attribution and safe handling of ambiguous targets.
+
+### Changed
+
+- Kept the recording widget available when the main window closes, while retaining one shared recording controller.
+- Made the widget always pinned and removed the pin toggle.
+- Redesigned the widget for Classic and Blueprint themes with rounded corners, subtle borders, compact controls, and transparent outer corners without a native window shadow.
+- Positioned the Windows widget over the taskbar, shifted it 100 pixels left to leave more space for system controls, and added stacking recovery while the widget is inactive.
+
 ## [1.0.1] - 2026-09-23
 
 ### Fixed
