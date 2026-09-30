@@ -6,6 +6,12 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-10-01
+
+### Fixed
+- Windows taskbar pins include the full application launch command and TradeTools icon, including when running the development version.
+- Development uses its own Windows application identity and notification shortcut, and no longer overwrites the installed application's autostart entry.
+
 ## [1.1.2] - 2026-10-01
 
 ### Changed
