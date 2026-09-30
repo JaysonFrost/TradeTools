@@ -55,6 +55,27 @@ describe('clip list helpers', () => {
     ])
   })
 
+  it('shows only the three newest clips in a compact preview', () => {
+    const preview = getClipDayGroups(clips, 'date', 'desc', 0, 3).flatMap((group) => group.clips)
+    expect(preview.map((item) => item.id)).toEqual(['tuesday', 'monday-alpha', 'monday-zebra'])
+    expect(clips.map((item) => item.id)).toEqual(['monday-zebra', 'monday-alpha', 'tuesday', 'previous-sunday'])
+  })
+
+  it('pages a large archive across day boundaries without skipping or repeating clips', () => {
+    const archive = Array.from({ length: 103 }, (_, index) => clip(String(index), mondayMorning + index * 3_600_000, `Video ${index}`, index))
+    const ordered = getClipDayGroups(archive, 'date', 'desc').flatMap((group) => group.clips)
+    const pages = Array.from({ length: 6 }, (_, page) => getClipDayGroups(archive, 'date', 'desc', page * 20, 20).flatMap((group) => group.clips))
+    expect(pages.map((page) => page.length)).toEqual([20, 20, 20, 20, 20, 3])
+    expect(pages.flat()).toEqual(ordered)
+    expect(getClipDayGroups([], 'date', 'desc', 0, 20)).toEqual([])
+    expect(getClipDayGroups(archive, 'date', 'desc', archive.length, 20)).toEqual([])
+  })
+
+  it('keeps the selected sort order when a page starts within a day', () => {
+    expect(getClipDayGroups(clips, 'name', 'asc', 1, 2).flatMap((group) => group.clips).map((item) => item.id)).toEqual(['monday-alpha', 'monday-zebra'])
+    expect(getClipDayGroups(clips, 'date', 'asc', 1, 2).flatMap((group) => group.clips).map((item) => item.id)).toEqual(['monday-zebra', 'monday-alpha'])
+  })
+
   it('filters clips by a pasted path, file name, trade fields and local date', () => {
     const createdAtMs = new Date(2026, 7, 6, 13, 19).getTime()
     const btcClip: ClipQueueItem = {

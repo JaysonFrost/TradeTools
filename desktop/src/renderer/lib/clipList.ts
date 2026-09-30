@@ -114,23 +114,31 @@ export const getClipsForDate = (clips: ClipQueueItem[], selectedDate: string): C
   selectedDate ? clips.filter((clip) => dateKey(clip.createdAtMs) === selectedDate) : []
 )
 
-export const getClipDayGroups = (clips: ClipQueueItem[], sort: ClipSortKey, direction: ClipSortDirection): ClipDayGroup[] => {
+export const getClipDayGroups = (clips: ClipQueueItem[], sort: ClipSortKey, direction: ClipSortDirection, startIndex = 0, maxClips = clips.length): ClipDayGroup[] => {
   const groups = new Map<string, ClipQueueItem[]>()
   for (const clip of clips) {
     const key = dateKey(clip.createdAtMs)
-    groups.set(key, [...(groups.get(key) ?? []), clip])
+    const group = groups.get(key)
+    if (group) group.push(clip)
+    else groups.set(key, [clip])
   }
 
   const dayDirection = sort === 'date' ? direction : 'desc'
-  return [...groups.entries()]
+  const orderedDays = [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right) * (dayDirection === 'asc' ? 1 : -1))
-    .map(([key, dayClips]) => {
-      const [year, month, day] = key.split('-').map(Number)
-      return {
-        key,
-        label: new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-          .format(new Date(year, (month ?? 1) - 1, day ?? 1)),
-        clips: [...dayClips].sort(compareClips(sort, direction))
-      }
-    })
+  const result: ClipDayGroup[] = []
+  const formatter = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  for (const [key, dayClips] of orderedDays) {
+    if (maxClips <= 0) break
+    if (startIndex >= dayClips.length) {
+      startIndex -= dayClips.length
+      continue
+    }
+    const visibleClips = dayClips.sort(compareClips(sort, direction)).slice(startIndex, startIndex + maxClips)
+    const [year, month, day] = key.split('-').map(Number)
+    result.push({ key, label: formatter.format(new Date(year, (month ?? 1) - 1, day ?? 1)), clips: visibleClips })
+    startIndex = 0
+    maxClips -= visibleClips.length
+  }
+  return result
 }

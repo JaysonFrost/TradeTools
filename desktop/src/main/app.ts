@@ -40,7 +40,9 @@ const isAllowedDevUrl = (url: string): boolean => {
   }
 }
 
-const getIconPath = (): string => join(__dirname, '../../build/icon.png')
+const getIconPath = (): string => app.isPackaged
+  ? join(process.resourcesPath, 'icon.png')
+  : join(__dirname, '../../build/icon.png')
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
 const windowsAppUserModelId = 'com.tradetools.desktop'

@@ -6,6 +6,16 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-01
+
+### Changed
+- Clip review starts collapsed with only the three latest videos; the full archive opens in pages of 20 clips with bounded scrolling, search, sorting, and selection across pages.
+- Clip day grouping no longer copies an entire day's array for every clip and skips sorting days outside the visible page.
+
+### Fixed
+- Package the application window icon as a runtime resource so Windows uses the TradeTools icon instead of Electron.
+- Verify the packaged icon and application version before release artifacts are published.
+
 ## [1.1.1] - 2026-10-01
 
 ### Added
