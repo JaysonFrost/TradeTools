@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, FileText, FolderOpen, ListX, Pause, PictureInPicture2, Play, RefreshCw, Search, Square, Trash2, Video, X, XCircle } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, FileText, FolderOpen, ListX, Pause, PictureInPicture2, Play, RefreshCw, Search, Square, Trash2, Video, X, XCircle } from 'lucide-react'
 import type { FreeRecordingStatus, WindowRecorderStatus } from '../../main/services/recording/windowRecorderService'
 import type { AppSettings } from '../../main/services/settings/settings'
 import type { TerminalTradeRecordingStatus } from '../../main/services/trades/terminalTradeRecorder'
@@ -354,16 +354,32 @@ type ClipQueueSectionProps = Pick<VideoPageProps,
 >
 
 const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRender, onClearQueue, onDeleteQueueFiles, onOpenClipFolder, onClipDeleted, onClipRenamed, onClipMessage }: ClipQueueSectionProps) => {
+  const [expanded, setExpanded] = useState(false)
+  const [page, setPage] = useState(1)
+  const listRef = useRef<HTMLDivElement>(null)
   const [selectedClipPaths, setSelectedClipPaths] = useState<Set<string>>(new Set())
   const [customDate, setCustomDate] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [sort, setSort] = useState<ClipSortKey>('date')
   const [sortDirection, setSortDirection] = useState<ClipSortDirection>('desc')
   const [deletingSelected, setDeletingSelected] = useState(false)
-  const filteredClips = useMemo(() => filterClips(clips, searchQuery), [clips, searchQuery])
-  const groups = useMemo(() => getClipDayGroups(filteredClips, sort, sortDirection), [filteredClips, sort, sortDirection])
+  const filteredClips = useMemo(() => expanded ? filterClips(clips, searchQuery) : clips, [clips, searchQuery, expanded])
+  const pageSize = 20
+  const pageCount = Math.max(1, Math.ceil(filteredClips.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const groups = useMemo(() => expanded
+    ? getClipDayGroups(filteredClips, sort, sortDirection, (currentPage - 1) * pageSize, pageSize)
+    : getClipDayGroups(clips, 'date', 'desc', 0, 3), [clips, filteredClips, sort, sortDirection, expanded, currentPage])
   const selectedClips = useMemo(() => clips.filter((clip) => selectedClipPaths.has(clip.metadataPath)), [clips, selectedClipPaths])
   const allVisibleSelected = filteredClips.length > 0 && filteredClips.every((clip) => selectedClipPaths.has(clip.metadataPath))
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount))
+  }, [pageCount])
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0 })
+  }, [currentPage, searchQuery, sort, sortDirection, expanded])
 
   useEffect(() => {
     const availablePaths = new Set(clips.map((clip) => clip.metadataPath))
@@ -416,23 +432,31 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
     <section className="col-span-12 border border-[#56b5d5]/40 bg-[#0d1d2b]/95 p-4 shadow-[inset_3px_0_0_#56b5d5]">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-        <h2 className="m-0 text-xl font-semibold uppercase tracking-[0.06em] text-[#f0f0f0]">Очередь проверки</h2>
-          <p className="mt-1 text-xs text-[#8b9bb4]">Выберите нужные видео, чтобы удалить только их. «Очистить» убирает из списка, «Удалить файл» стирает с диска.</p>
+          <h2 className="m-0 text-xl font-semibold uppercase tracking-[0.06em] text-[#f0f0f0]">Очередь проверки</h2>
+          <p className="mt-1 text-xs text-[#8b9bb4]">{expanded
+            ? 'Выберите нужные видео, чтобы удалить только их. «Очистить» убирает из списка, «Удалить файл» стирает с диска.'
+            : `Последние ${Math.min(3, clips.length)} видео из ${clips.length}. Раскройте список для поиска и просмотра остальных.`}</p>
           {clipMessage && <p className="mt-2 border-l-2 border-[#ff9f30] pl-2 text-sm text-[#ffb45f]">{clipMessage}</p>}
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
+          <button className={selectionButtonClass} onClick={() => setExpanded((current) => !current)} aria-expanded={expanded} aria-controls="clip-queue-list" type="button">
+            {expanded ? <ChevronUp size={14} className="mr-1.5" /> : <ChevronDown size={14} className="mr-1.5" />}
+            {expanded ? 'Свернуть список' : 'Показать все'}
+          </button>
           <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-[#56b5d5]/45 bg-[#56b5d5]/10 px-2.5 text-xs font-semibold text-[#b9edff] transition-colors duration-150 hover:bg-[#56b5d5]/20" onClick={onOpenClipFolder} type="button">
             <FolderOpen size={14} className="mr-1.5" />Открыть папку
           </button>
-          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-[#8b9bb4]/30 bg-[#1c2b3a]/65 px-2.5 text-xs font-semibold text-[#d6e0ee] transition-colors duration-150 hover:border-[#56b5d5]/60 hover:bg-[#56b5d5]/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
-            <ListX size={14} className="mr-1.5" />Убрать все из списка
-          </button>
-          <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-red-500/40 bg-red-500/10 px-2.5 text-xs font-semibold text-red-100 transition-colors duration-150 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
-            <Trash2 size={14} className="mr-1.5" />Удалить все видео
-          </button>
+          {expanded && <>
+            <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-[#8b9bb4]/30 bg-[#1c2b3a]/65 px-2.5 text-xs font-semibold text-[#d6e0ee] transition-colors duration-150 hover:border-[#56b5d5]/60 hover:bg-[#56b5d5]/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={onClearQueue} disabled={clips.length === 0} type="button">
+              <ListX size={14} className="mr-1.5" />Убрать все из списка
+            </button>
+            <button className="inline-flex min-h-8 cursor-pointer items-center whitespace-nowrap border border-red-500/40 bg-red-500/10 px-2.5 text-xs font-semibold text-red-100 transition-colors duration-150 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50" onClick={onDeleteQueueFiles} disabled={clips.length === 0} type="button">
+              <Trash2 size={14} className="mr-1.5" />Удалить все видео
+            </button>
+          </>}
         </div>
       </div>
-      <div className="mb-3 border border-[#56b5d5]/25 bg-[#091522]/90 p-3">
+      {expanded && <div className="mb-3 border border-[#56b5d5]/25 bg-[#091522]/90 p-3">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">Поиск по пути, имени, тикеру или дате</span>
@@ -440,7 +464,7 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             <input
               className="min-h-10 w-full border border-[#56b5d5]/30 bg-[#07101a]/85 py-2 pl-9 pr-10 text-sm text-[#f0f0f0] outline-none transition-colors duration-150 placeholder:text-[#8b9bb4]/65 focus:border-[#ff9f30] focus:bg-[#07101a] focus:ring-2 focus:ring-[#ff9f30]/25 focus:ring-offset-2 focus:ring-offset-[#0b1623]"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) => { setSearchQuery(event.target.value); setPage(1) }}
               placeholder="Поиск по пути, имени, тикеру или дате"
               aria-label="Поиск по пути, имени, тикеру или дате"
               spellCheck={false}
@@ -449,7 +473,7 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             {searchQuery && (
               <button
                 className="absolute right-2 top-1/2 inline-flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center text-[#8b9bb4] transition-colors duration-150 hover:bg-[#56b5d5]/10 hover:text-[#f0f0f0]"
-                onClick={() => setSearchQuery('')}
+                onClick={() => { setSearchQuery(''); setPage(1) }}
                 aria-label="Очистить поиск"
                 title="Очистить поиск"
                 type="button"
@@ -476,12 +500,12 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium text-[#8b9bb4]">Сортировка</span>
-            <select className="min-h-9 border border-[#56b5d5]/30 bg-[#07101a]/75 px-3 text-xs font-semibold text-[#f0f0f0] outline-none focus:border-[#ff9f30]" value={sort} onChange={(event) => setSort(event.target.value as ClipSortKey)} aria-label="Сортировка видео">
+            <select className="min-h-9 border border-[#56b5d5]/30 bg-[#07101a]/75 px-3 text-xs font-semibold text-[#f0f0f0] outline-none focus:border-[#ff9f30]" value={sort} onChange={(event) => { setSort(event.target.value as ClipSortKey); setPage(1) }} aria-label="Сортировка видео">
               <option value="date">Дата</option>
               <option value="name">Имя</option>
               <option value="duration">Длительность</option>
             </select>
-            <button className={selectionButtonClass} onClick={() => setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')} type="button">
+            <button className={selectionButtonClass} onClick={() => { setSortDirection((current) => current === 'asc' ? 'desc' : 'asc'); setPage(1) }} type="button">
               {sortDirection === 'asc' ? 'По возрастанию' : 'По убыванию'}
             </button>
           </div>
@@ -492,9 +516,9 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             <Trash2 size={14} className="mr-2" />{deletingSelected ? 'Удаляем...' : 'Удалить выбранные'}
           </button>
         </div>
-      </div>
+      </div>}
       {clipProcessing?.active && <div className="mb-3"><ClipProcessingBar status={clipProcessing} onCancel={onCancelClipRender} /></div>}
-      <div className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
+      <div id="clip-queue-list" ref={listRef} className="max-h-[620px] space-y-3 overflow-y-auto pr-1">
         {groups.length > 0 ? groups.map((group) => (
           <section key={group.key} aria-label={`Видео за ${group.label}`}>
             <div className="sticky top-0 z-10 mb-2 flex items-center justify-between border-b border-[#56b5d5]/25 bg-[#0b1623]/95 py-1 backdrop-blur">
@@ -515,9 +539,17 @@ const ClipQueueSection = ({ clips, clipMessage, clipProcessing, onCancelClipRend
             </div>
           </section>
         )) : <div className="border border-dashed border-[#56b5d5]/30 bg-[#07101a]/40 p-6 text-sm text-[#8b9bb4]">
-          {clips.length > 0 && searchQuery.trim() ? 'По запросу ничего не найдено.' : 'Пока нет клипов в очереди.'}
+          {expanded && clips.length > 0 && searchQuery.trim() ? 'По запросу ничего не найдено.' : 'Пока нет клипов в очереди.'}
         </div>}
       </div>
+      {expanded && filteredClips.length > 0 && <nav className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#56b5d5]/20 pt-3" aria-label="Страницы видео">
+        <span className="text-xs text-[#8b9bb4]">Показано {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredClips.length)} из {filteredClips.length}</span>
+        <div className="flex items-center gap-2">
+          <button className={selectionButtonClass} onClick={() => setPage(currentPage - 1)} disabled={currentPage === 1} aria-label="Предыдущая страница видео" type="button"><ChevronLeft size={14} className="mr-1" />Назад</button>
+          <span className="text-xs tabular-nums text-[#d6e0ee]" aria-live="polite">{currentPage} / {pageCount}</span>
+          <button className={selectionButtonClass} onClick={() => setPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="Следующая страница видео" type="button">Далее<ChevronRight size={14} className="ml-1" /></button>
+        </div>
+      </nav>}
     </section>
   )
 }
