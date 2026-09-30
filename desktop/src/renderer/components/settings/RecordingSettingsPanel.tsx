@@ -68,6 +68,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
   const [windowSourceId, setWindowSourceId] = useState('')
   const [windowSourceName, setWindowSourceName] = useState('')
   const [captureTargets, setCaptureTargets] = useState<AppSettings['recording']['captureTargets']>([])
+  const [saveTradeDisplayOnly, setSaveTradeDisplayOnly] = useState(false)
   const [videoEncoder, setVideoEncoder] = useState<AppSettings['recording']['videoEncoder']>('gpu')
   const [resolutionPreset, setResolutionPreset] = useState<AppSettings['recording']['resolutionPreset']>('1440p')
   const [frameRate, setFrameRate] = useState('30')
@@ -101,6 +102,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     windowSourceId,
     windowSourceName,
     captureTargets,
+    saveTradeDisplayOnly,
     videoEncoder,
     resolutionPreset,
     frameRate,
@@ -122,6 +124,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     windowSourceId: nextSettings.recording.windowSourceId,
     windowSourceName: nextSettings.recording.windowSourceName,
     captureTargets: nextSettings.recording.captureTargets,
+    saveTradeDisplayOnly: nextSettings.recording.saveTradeDisplayOnly,
     videoEncoder: nextSettings.recording.videoEncoder,
     resolutionPreset: nextSettings.recording.resolutionPreset,
     frameRate: String(nextSettings.recording.frameRate),
@@ -147,6 +150,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     setWindowSourceId(settings.recording.windowSourceId)
     setWindowSourceName(settings.recording.windowSourceName)
     setCaptureTargets(settings.recording.captureTargets)
+    setSaveTradeDisplayOnly(settings.recording.saveTradeDisplayOnly)
     setVideoEncoder(settings.recording.videoEncoder)
     setResolutionPreset(settings.recording.resolutionPreset)
     setFrameRate(String(settings.recording.frameRate))
@@ -253,6 +257,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
           captureTargets: nextCaptureTargets,
           saveTargetMode: sourceType === 'screen' ? 'all' : 'selected',
           saveTargetId,
+          saveTradeDisplayOnly,
           videoEncoder,
           resolutionPreset,
           frameRate: numberOrUndefined(frameRate),
@@ -302,6 +307,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
     windowSourceId,
     windowSourceName,
     captureTargets,
+    saveTradeDisplayOnly,
     videoEncoder,
     resolutionPreset,
     frameRate,
@@ -463,7 +469,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
               {sourceType === 'window' ? (
                 <div>
                   <div className="text-xs font-medium uppercase tracking-[0.08em] text-[#8b9bb4]">Терминалы для автозаписи</div>
-                  <p className={sectionHintClass}>TradeTools пишет все найденные окна Vataga, TigerTrade, LootX и MetaScalp. Выбирать одно окно не нужно.</p>
+                  <p className={sectionHintClass}>TradeTools пишет все найденные окна Vataga, TigerTrade, LootX, MetaScalp и Colibri. Выбирать одно окно не нужно.</p>
                   <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                     <div className={`${inputClass.replace('mt-1 ', '')} flex min-w-0 flex-1 flex-wrap items-center gap-2`} aria-label="Найденные терминалы">
                       {windowOptions.length > 0
@@ -480,7 +486,7 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8b9bb4]">Мониторы для записи</div>
-                      <p className={sectionHintClass}>Каждый выбранный монитор сохранится отдельным видео. Лишнее можно быстро удалить в очереди проверки.</p>
+                      <p className={sectionHintClass}>Выбранные мониторы записываются параллельно. Для сделки можно сохранять все или только монитор её терминала.</p>
                     </div>
                     <Button variant="ghost" onClick={() => void refreshWindowSources({ announce: true })} disabled={loadingSources}>
                       <RefreshCw size={16} className="mr-2" />{loadingSources ? 'Обновляем...' : 'Обновить'}
@@ -503,6 +509,18 @@ export const RecordingSettingsPanel = ({ settings, onSaved }: RecordingSettingsP
                     ))}
                     {screenSources.length === 0 && <span className="text-sm text-[#8b9bb4]">Экраны не найдены</span>}
                   </div>
+                  <label className={`${checkCardClass} mt-3`}>
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-orange-400"
+                      checked={saveTradeDisplayOnly}
+                      onChange={(event) => setSaveTradeDisplayOnly(event.target.checked)}
+                    />
+                    <span>
+                      <span className="block font-semibold text-[#f0f0f0]">Только монитор сделки</span>
+                      <span className="mt-1 block text-xs text-[#8b9bb4]">Не добавлять видео с остальных мониторов. Если экран терминала не выбран или не определён, клип не создаётся.</span>
+                    </span>
+                  </label>
                 </div>
               )}
           </div>

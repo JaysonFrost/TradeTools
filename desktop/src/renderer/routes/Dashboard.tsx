@@ -619,7 +619,7 @@ export const Dashboard = ({ activePage }: DashboardProps) => {
   const [terminalTrade, setTerminalTrade] = useState<TerminalTradeRecordingStatus>({
     active: false,
     startedAtMs: 0,
-    message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX или MetaScalp',
+    message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX, MetaScalp или Colibri',
     source: 'multi-terminal',
     availableSources: [],
     activeTradeCount: 0

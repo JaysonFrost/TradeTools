@@ -3,12 +3,30 @@ import {
   preferTerminalSourcesForSymbol,
   recordingSourceMatchesTarget,
   recordingSourcesMatchingTarget,
+  screenTargetForTerminalWindow,
   selectManualTerminalWindowSource,
   selectTerminalWindowSource,
   terminalTitleMatchesTicker
 } from '../../src/main/services/recording/terminalWindowSelection'
 
 describe('terminal window selection', () => {
+  it('selects only the configured screen containing the terminal window', () => {
+    const screens = [
+      { id: 'screen:1:0', name: 'Первый', type: 'screen' as const, displayId: '1' },
+      { id: 'screen:2:0', name: 'Второй', type: 'screen' as const, displayId: '2' }
+    ]
+    const second = { displayId: '2', processId: 42 }
+    expect(screenTargetForTerminalWindow({ source: second, candidates: [second], reason: 'process' }, screens, 42)).toBe(screens[1])
+    expect(screenTargetForTerminalWindow({ source: { displayId: '3' }, candidates: [], reason: 'first' }, screens)).toBeUndefined()
+    expect(screenTargetForTerminalWindow({ candidates: [], reason: 'none' }, screens)).toBeUndefined()
+    expect(screenTargetForTerminalWindow({ source: second, candidates: [second], reason: 'process' }, screens, 24)).toBeUndefined()
+    expect(screenTargetForTerminalWindow({
+      source: second, candidates: [second, { displayId: '1' }], reason: 'first'
+    }, screens)).toBeUndefined()
+    expect(screenTargetForTerminalWindow({
+      source: second, candidates: [second, { displayId: '1' }], reason: 'cursor'
+    }, screens)).toBe(screens[1])
+  })
   it('prefers the window whose title contains the exact normalized ticker', () => {
     const sources = [
       { id: 'btc', name: 'Tiger.com - BTC/USDT' },

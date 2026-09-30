@@ -26,7 +26,7 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     goal: 'TradeTools пишет окно или экраны терминала напрямую с нужным кодированием и звуком.',
     actions: [
       'Откройте торговый терминал, чтобы TradeTools увидел его окно',
-      'Окна Vataga, TigerTrade, LootX и MetaScalp подключаются автоматически, мониторы выбираются вручную',
+      'Окна Vataga, TigerTrade, LootX, MetaScalp и Colibri подключаются автоматически, мониторы выбираются вручную',
       'Настройте разрешение, кодирование, FPS и звук',
       'Сохраните режим записи'
     ]
@@ -68,7 +68,7 @@ export const videoSetupWizardSteps: SetupWizardStep[] = [
     goal: 'Локальная часть настроена: источник записи даёт replay, ffmpeg режет клип, очередь проверки показывает результат.',
     actions: [
       'Перед торговлей убедитесь, что поддержанный терминал или выбранный монитор доступен',
-      'В режиме без биржевых ключей TradeTools сам ждёт сделки Vataga, TigerTrade, LootX или MetaScalp',
+      'В режиме без биржевых ключей TradeTools сам ждёт сделки Vataga, TigerTrade, LootX, MetaScalp или Colibri',
       'Если что-то сломается, снова откройте настройку видео сверху'
     ]
   }

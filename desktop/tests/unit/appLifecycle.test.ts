@@ -114,7 +114,7 @@ describe('main app lifecycle', () => {
 
     expect(source).toContain('const browserRecordingStartedAtMs = (target?: CaptureTargetRef)')
     expect(source).toContain('recordingSourcesMatchingTarget(availableStarts, target)')
-    expect(source).toContain("if (settings.recording.sourceType === 'window' && !recordingTarget)")
+    expect(source).toContain("(settings.recording.sourceType === 'window' || settings.recording.saveTradeDisplayOnly) && !recordingTarget")
     expect(source).toContain('const requiredStartMs = event.eventTimeMs - settings.clip.paddingBeforeSeconds * 1000')
     expect(source).toContain('return browserStartedAtMs <= requiredStartMs')
     expect(source).toContain('notifyWindowRecordingNeeded()')
@@ -331,18 +331,27 @@ describe('main app lifecycle', () => {
     expect(source).toContain('recordingTarget: target')
     expect(source).toContain('queueClipForClosedTrade')
     expect(source).toContain('createClipForClosedTrade: queueClipForClosedTrade')
-    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).toContain("if (settings.recording.sourceType === 'screen' && !settings.recording.saveTradeDisplayOnly) return undefined")
     expect(source).not.toContain('captureTargetId')
   })
 
-  it('does not try to guess the trade monitor in screen recording mode', async () => {
+  it('restricts opt-in screen trade clips to the terminal display or skips them', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 
-    expect(source).toContain("if (settings.recording.sourceType === 'screen') return undefined")
+    expect(source).toContain("if (settings.recording.sourceType === 'screen' && !settings.recording.saveTradeDisplayOnly) return undefined")
+    expect(source).toContain('screenTargetForTerminalWindow(selection, configuredCaptureTargets(settings), event.processId)')
+    expect(source).toContain("if ((settings.recording.sourceType === 'window' || settings.recording.saveTradeDisplayOnly) && !recordingTarget)")
     expect(source).not.toContain('resolveVatagaLayoutMatch')
-    expect(source).not.toContain('saveTradeDisplayOnly')
     expect(source).not.toContain('unavailable-screen:')
-    expect(source).not.toContain('Terminal trade display matched screen capture target')
+  })
+
+  it('hides the dashboard while its recording widget owns the live recorder', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+    expect(source).toContain("window.on('close', (event) => {")
+    expect(source).toContain('event.preventDefault()\n    window.hide()')
+    expect(source).toContain("if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) app.quit()")
+    expect(source).toContain('appQuitRequested = true')
+    expect(source).not.toContain('recordingWidgetWindow.close()')
   })
 
   it('uses an ephemeral trade window without rewriting the selected recording target', async () => {

@@ -724,10 +724,47 @@ export const diffMetaScalpPositionSnapshots = (
   }
 }
 
+export const parseColibriPositionSnapshot = (
+  position: unknown,
+  connection: unknown,
+  nowMs: number
+): TerminalPositionEvent | undefined => {
+  const connectionId = normalizeText(getField(connection, ['id']))
+  const symbol = normalizeTerminalSymbol(getField(position, ['symbol']), '')
+  const size = parseNumericValue(getField(position, ['quantity']))
+  if (!connectionId || !symbol || !Number.isFinite(size) || isNearlyZero(size)) return undefined
+
+  return {
+    source: 'colibri',
+    positionId: `${connectionId}:${symbol}`.toUpperCase(),
+    exchange: normalizeExchangeName(normalizeText(getField(connection, ['exchange'])).replace(/(?:LinearFutures|InverseFutures|Futures|Spot)$/i, ''), 'COLIBRI'),
+    symbol,
+    side: normalizeSideFromSize(size),
+    isClosed: false,
+    eventTimeMs: nowMs,
+    size
+  }
+}
+
+export const diffColibriPositionSnapshots = (
+  current: Map<string, TerminalPositionEvent>,
+  previous: Map<string, TerminalPositionEvent>,
+  initialized: boolean,
+  nowMs: number
+): MetaScalpSnapshotDiff => {
+  const diff = diffMetaScalpPositionSnapshots(current, previous, initialized, nowMs)
+  if (!initialized) return diff
+  for (const [key, event] of current) {
+    const old = previous.get(key)
+    if (old && old.size !== event.size) diff.events.push(event)
+  }
+  return diff
+}
+
 export const createIdleTerminalTradeStatus = (): TerminalTradeRecordingStatus => ({
   active: false,
   startedAtMs: 0,
-  message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX или MetaScalp',
+  message: 'Автоматически ждём сделки Vataga, TigerTrade, LootX, MetaScalp или Colibri',
   source: 'multi-terminal',
   availableSources: [],
   activeTradeCount: 0
@@ -761,6 +798,10 @@ export const getLootxJournalPath = (env: NodeJS.ProcessEnv): string | undefined 
   const appData = normalizeText(env.APPDATA)
   return appData ? join(appData, 'TradingTerminal', 'journal.json') : undefined
 }
+
+export const getColibriDiscoveryPath = (env: NodeJS.ProcessEnv): string | undefined => (
+  env.APPDATA ? join(env.APPDATA, 'Colibri', 'localapi.json') : undefined
+)
 
 const getTigerTradeRootDir = (env: NodeJS.ProcessEnv): string | undefined => {
   const appData = normalizeText(env.APPDATA)
@@ -883,6 +924,7 @@ export const createTerminalTradeWatcher = ({
   const vatagaLogsDir = getVatagaLogsDir(env)
   const tigerTradeRootDir = getTigerTradeRootDir(env)
   const lootxJournalPath = getLootxJournalPath(env)
+  const colibriDiscoveryPath = getColibriDiscoveryPath(env)
   const tigerTradeExecutionTimes = new Map<string, number>()
   const parseTigerTradeLogLine = (line: string): TerminalPositionEvent | undefined => {
     const execution = parseTigerTradeExecutionEvent(line)
@@ -928,6 +970,9 @@ export const createTerminalTradeWatcher = ({
   let metaScalpKnownOpenPositions = new Map<string, TerminalPositionEvent>()
   let metaScalpSnapshotInitialized = false
   let metaScalpAvailable = false
+  let colibriKnownOpenPositions = new Map<string, TerminalPositionEvent>()
+  let colibriSnapshotInitialized = false
+  let colibriAvailable = false
   let timer: NodeJS.Timeout | undefined
   let polling = false
   let processing = Promise.resolve()
@@ -989,7 +1034,8 @@ export const createTerminalTradeWatcher = ({
   const availableSources = (): TerminalTradeSource[] => [
     ...providers.filter((provider) => provider.available).map((provider) => provider.source),
     ...(lootxAvailable ? ['lootx' as const] : []),
-    ...(metaScalpAvailable ? ['metascalp' as const] : [])
+    ...(metaScalpAvailable ? ['metascalp' as const] : []),
+    ...(colibriAvailable ? ['colibri' as const] : [])
   ]
 
   const hasSameAvailableSources = (sources: TerminalTradeSource[]): boolean => (
@@ -1006,7 +1052,7 @@ export const createTerminalTradeWatcher = ({
     const names = sources.map((source) => sourceDisplayNames[source])
     const message = names.length
       ? `Автозапись терминалов включена: ${names.join(', ')}`
-      : 'Откройте Vataga, TigerTrade, LootX или MetaScalp, TradeTools сам поймает сделки'
+      : 'Откройте Vataga, TigerTrade, LootX, MetaScalp или Colibri, TradeTools сам поймает сделки'
     if (status.message !== message || !hasSameAvailableSources(sources)) {
       emit({ message, source: 'multi-terminal', availableSources: sources, lastError: undefined })
     }
@@ -1026,7 +1072,7 @@ export const createTerminalTradeWatcher = ({
   const getPositionKey = (event: TerminalPositionEvent): string => `${event.source}:${event.positionId}`
 
   const getTradeKey = (event: TerminalPositionEvent): string => {
-    if (event.source === 'tigertrade' || event.source === 'lootx') return getPositionKey(event)
+    if (event.source === 'tigertrade' || event.source === 'lootx' || event.source === 'colibri') return getPositionKey(event)
 
     const sourceScope = event.source === 'vataga'
       ? String(event.processId ?? 'process')
@@ -1507,6 +1553,54 @@ export const createTerminalTradeWatcher = ({
     }
   }
 
+  const pollColibriApi = async (): Promise<boolean> => {
+    if (!colibriDiscoveryPath) {
+      colibriAvailable = false
+      return false
+    }
+    try {
+      const discovery = JSON.parse(await readFile(colibriDiscoveryPath, 'utf8')) as Record<string, unknown>
+      const port = discovery.port
+      if (!Number.isInteger(port) || typeof port !== 'number' || port < 1 || port > 65535) throw new Error('Invalid Colibri port')
+      const baseUrl = `http://127.0.0.1:${port}`
+      const ping = await fetchJsonWithTimeout(`${baseUrl}/ping`, metaScalpRequestTimeoutMs)
+      if (getField(ping, ['name']) !== 'Colibri') throw new Error('Not Colibri')
+      const connectionsPayload = await fetchJsonWithTimeout(`${baseUrl}/connections`, metaScalpRequestTimeoutMs)
+      const connections = getField(connectionsPayload, ['connections'])
+      if (!Array.isArray(connections)) throw new Error('Invalid Colibri connections')
+      const current = new Map<string, TerminalPositionEvent>()
+      const nowMs = Date.now()
+      for (const connection of connections) {
+        const id = normalizeText(getField(connection, ['id']))
+        if (!id) throw new Error('Invalid Colibri connection')
+        const payload = await fetchJsonWithTimeout(
+          `${baseUrl}/connections/${encodeURIComponent(id)}/positions`, metaScalpRequestTimeoutMs
+        )
+        const positions = getField(payload, ['positions'])
+        if (getField(payload, ['connectionId']) !== id || !Array.isArray(positions)) throw new Error('Invalid Colibri positions')
+        for (const position of positions) {
+          if (!normalizeText(getField(position, ['symbol'])) || !Number.isFinite(parseNumericValue(getField(position, ['quantity'])))) {
+            throw new Error('Invalid Colibri position')
+          }
+          const event = parseColibriPositionSnapshot(position, connection, nowMs)
+          if (event) {
+            event.processId = normalizeProcessId(discovery.pid)
+            current.set(getPositionKey(event), event)
+          }
+        }
+      }
+      const diff = diffColibriPositionSnapshots(current, colibriKnownOpenPositions, colibriSnapshotInitialized, nowMs)
+      colibriKnownOpenPositions = diff.currentOpenPositions
+      colibriSnapshotInitialized = diff.initialized
+      for (const event of diff.events) enqueueEvent(event)
+      colibriAvailable = true
+      return true
+    } catch {
+      colibriAvailable = false
+      return false
+    }
+  }
+
   const poll = async () => {
     if (polling) return
     polling = true
@@ -1519,6 +1613,7 @@ export const createTerminalTradeWatcher = ({
       await Promise.all(providers.map((provider) => pollLogProvider(provider)))
       await pollLootxJournal()
       await pollMetaScalpApi()
+      await pollColibriApi()
       await processing
       if (!getRecordingStartedAtMs || getRecordingStartedAtMs()) {
         const retryTimeMs = Date.now()
@@ -1562,6 +1657,9 @@ export const createTerminalTradeWatcher = ({
       lootxAvailable = false
       metaScalpKnownOpenPositions.clear()
       metaScalpSnapshotInitialized = false
+      colibriKnownOpenPositions.clear()
+      colibriSnapshotInitialized = false
+      colibriAvailable = false
       emit({ active: false, startedAtMs: 0, source: 'multi-terminal', availableSources: [], message: 'Автозапись терминалов остановлена' })
     },
     getStatus() {

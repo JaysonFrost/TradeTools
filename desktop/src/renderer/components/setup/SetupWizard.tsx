@@ -810,7 +810,7 @@ export const SetupWizard = ({ mode, open, settings, clipMessage, onClose, onSave
                               >
                                 {filteredSources.length > 0
                                   ? `Автовыбор: ${filteredSources.map((source) => source.name).join(', ')}`
-                                  : 'Откройте Vataga, TigerTrade, LootX или MetaScalp'}
+                                  : 'Откройте Vataga, TigerTrade, LootX, MetaScalp или Colibri'}
                               </div>
                             )}
                             <Button className="shrink-0" variant="ghost" onClick={() => void refreshWindowSources()} disabled={loadingSources}>

@@ -1,4 +1,5 @@
 import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
+import type { CaptureTargetRef } from '../settings/settings'
 
 const terminalTitleCharacterClass = '\\p{L}\\p{M}\\p{N}'
 
@@ -102,6 +103,21 @@ type TerminalWindowSelection = {
   source?: TerminalWindowCandidate
   candidates: TerminalWindowCandidate[]
   reason: 'process' | 'symbol' | 'cursor' | 'first' | 'ambiguous' | 'none'
+}
+
+export const screenTargetForTerminalWindow = (
+  selection: {
+    source?: { displayId?: string, processId?: number }
+    candidates: Array<{ displayId?: string }>
+    reason: TerminalWindowSelection['reason']
+  },
+  targets: CaptureTargetRef[],
+  processId?: number
+): CaptureTargetRef | undefined => {
+  const source = selection.source
+  if (!source?.displayId || (processId && source.processId !== processId)) return undefined
+  if (selection.reason === 'first' && selection.candidates.some((candidate) => candidate.displayId !== source.displayId)) return undefined
+  return targets.find((target) => target.type === 'screen' && target.displayId === source.displayId)
 }
 
 const windowContainsPoint = (

@@ -1,10 +1,11 @@
-export type SupportedTerminalId = 'vataga' | 'tigertrade' | 'lootx' | 'metascalp'
+export type SupportedTerminalId = 'vataga' | 'tigertrade' | 'lootx' | 'metascalp' | 'colibri'
 
 export const supportedTerminalLabels: Record<SupportedTerminalId, string> = {
   vataga: 'Vataga',
   tigertrade: 'TigerTrade',
   lootx: 'LootX',
-  metascalp: 'MetaScalp'
+  metascalp: 'MetaScalp',
+  colibri: 'Colibri'
 }
 
 const supportedTerminalWindowPatterns: ReadonlyArray<{
@@ -14,7 +15,8 @@ const supportedTerminalWindowPatterns: ReadonlyArray<{
   { id: 'vataga', patterns: [/\bvataga\b/i, /ватага/i] },
   { id: 'tigertrade', patterns: [/\btiger(?:\.com|\.trade|\s*trade)?\b/i, /тигр/i] },
   { id: 'lootx', patterns: [/\bloot\s*x\b/i] },
-  { id: 'metascalp', patterns: [/\bmeta\s*scalp\b/i] }
+  { id: 'metascalp', patterns: [/\bmeta\s*scalp\b/i] },
+  { id: 'colibri', patterns: [/\bcolibri\b/i, /колибри/i] }
 ]
 
 const unsupportedWindowPatterns = [

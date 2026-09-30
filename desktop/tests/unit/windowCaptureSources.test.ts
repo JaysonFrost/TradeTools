@@ -19,7 +19,8 @@ describe('windowCaptureSources', () => {
     ['Tiger.com - ETH/USDT', 'tigertrade'],
     ['LootX', 'lootx'],
     ['Loot X - Trading Terminal', 'lootx'],
-    ['MetaScalp - XRPUSDT', 'metascalp']
+    ['MetaScalp - XRPUSDT', 'metascalp'],
+    ['Colibri - BTCUSDT', 'colibri']
   ] as const)('classifies the supported terminal window %s', (name, terminal) => {
     expect(detectSupportedTerminalWindow(name)).toBe(terminal)
     expect(isSupportedTerminalWindowName(name)).toBe(true)
@@ -36,7 +37,8 @@ describe('windowCaptureSources', () => {
     'LootX - Google Chrome',
     'TradeTools - LootX clip',
     'LootX support - Codex',
-    'MetaScalp parser - DevTools'
+    'MetaScalp parser - DevTools',
+    'Colibri - Google Chrome'
   ])('rejects the unsupported window %s', (name) => {
     expect(detectSupportedTerminalWindow(name)).toBeUndefined()
     expect(isSupportedTerminalWindowName(name)).toBe(false)

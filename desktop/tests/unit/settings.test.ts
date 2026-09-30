@@ -164,6 +164,11 @@ describe('settings', () => {
     })
   })
 
+  it('keeps monitor-only trade clips opt-in across settings normalization', () => {
+    expect(normalizeSettings({}, '/app-data').recording.saveTradeDisplayOnly).toBe(false)
+    expect(normalizeSettings({ recording: { saveTradeDisplayOnly: true } }, '/app-data').recording.saveTradeDisplayOnly).toBe(true)
+  })
+
   it('migrates legacy OBS recording settings to the built-in recorder', () => {
     const settings = normalizeSettings({
       recording: { mode: 'obs' },
@@ -249,7 +254,7 @@ describe('settings', () => {
     }])
   })
 
-  it('ignores the legacy trade-display-only screen saving flag', () => {
+  it('preserves the opt-in trade-display-only screen saving flag', () => {
     const settings = normalizeSettings({
       recording: {
         mode: 'window',
@@ -263,7 +268,7 @@ describe('settings', () => {
       }
     }, '/app-data')
 
-    expect(settings.recording.saveTradeDisplayOnly).toBe(false)
+    expect(settings.recording.saveTradeDisplayOnly).toBe(true)
   })
 
   it('drops legacy window ids that were mislabeled as screen capture targets', () => {

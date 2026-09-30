@@ -8,7 +8,7 @@ import { listProxyPaymentReminders } from './services/notifications/proxyPayment
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
 import { reconnectStoredProxyRuntime, setupProxyChainOnServers, type ProxyChainRuntimeConfig } from './services/proxies/proxyChainSetup'
 import { createWindowRecorderService, recorderStatusHasFreshSegments, type WindowCaptureSource, type WindowRecorderStatus, type WindowRecordingSegmentInput, type WindowRecordingStartedInput, type WindowRecordingStoppedInput } from './services/recording/windowRecorderService'
-import { recordingSourcesMatchingTarget, selectManualTerminalWindowSource, selectTerminalWindowSource } from './services/recording/terminalWindowSelection'
+import { recordingSourcesMatchingTarget, screenTargetForTerminalWindow, selectManualTerminalWindowSource, selectTerminalWindowSource } from './services/recording/terminalWindowSelection'
 import { checkSshConnection, parseSshEndpoint, type SshConnectionCheckResult } from './services/proxies/sshConnectionCheck'
 import { configureVpnBypassRoutes, type VpnBypassRouteResult, type VpnBypassStatus } from './services/proxies/vpnBypassRoutes'
 import { createVpnBypassMonitor, type VpnBypassMonitor } from './services/proxies/vpnBypassMonitor'
@@ -76,6 +76,7 @@ process.on('exit', appDataInstanceLock.release)
 
 let mainWindow: BrowserWindow | undefined
 let recordingWidgetWindow: BrowserWindow | undefined
+let appQuitRequested = false
 
 const keepRecordingWidgetOnTop = (): void => {
   if (!recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isVisible() || !recordingWidgetWindow.isAlwaysOnTop()) return
@@ -909,9 +910,13 @@ const createMainWindow = (): BrowserWindow => {
     }
   })
   mainWindow = window
+  window.on('close', (event) => {
+    if (appQuitRequested || !recordingWidgetWindow || recordingWidgetWindow.isDestroyed() || !recordingWidgetWindow.isVisible()) return
+    event.preventDefault()
+    window.hide()
+  })
   window.on('closed', () => {
     mainWindow = undefined
-    if (recordingWidgetWindow && !recordingWidgetWindow.isDestroyed()) recordingWidgetWindow.close()
   })
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -957,7 +962,10 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
   window.setContentProtection(true)
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
-  window.on('closed', () => { recordingWidgetWindow = undefined })
+  window.on('closed', () => {
+    recordingWidgetWindow = undefined
+    if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) app.quit()
+  })
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL && isAllowedDevUrl(process.env.ELECTRON_RENDERER_URL)) {
     const url = new URL(process.env.ELECTRON_RENDERER_URL)
@@ -1704,7 +1712,7 @@ app.whenReady().then(() => {
     )
     if (!source) {
       notifyWindowRecordingNeeded()
-      throw new Error('Окно терминала не найдено. Откройте Vataga, TigerTrade, LootX или MetaScalp.')
+      throw new Error('Окно терминала не найдено. Откройте Vataga, TigerTrade, LootX, MetaScalp или Colibri.')
     }
 
     return toCaptureTargetRef(source)
@@ -1891,7 +1899,7 @@ app.whenReady().then(() => {
     const settings = await settingsStore.load()
     if (gateRevision !== recordingGateRevision || recordingControlShuttingDown) return false
     if (!backgroundWindowRecordingEnabled) return false
-    if (settings.recording.sourceType === 'window' && !recordingTarget) {
+    if ((settings.recording.sourceType === 'window' || settings.recording.saveTradeDisplayOnly) && !recordingTarget) {
       notifyWindowRecordingNeeded()
       return false
     }
@@ -1924,7 +1932,7 @@ app.whenReady().then(() => {
 
   const resolveTerminalRecordingTarget = async (event: TerminalPositionEvent): Promise<CaptureTargetRef | undefined> => {
     const settings = await settingsStore.load()
-    if (settings.recording.sourceType === 'screen') return undefined
+    if (settings.recording.sourceType === 'screen' && !settings.recording.saveTradeDisplayOnly) return undefined
 
     const sources = await listWindowCaptureSources(true, true)
     const terminalSources = sources.filter((candidate) => (
@@ -1932,6 +1940,15 @@ app.whenReady().then(() => {
     ))
     const selection = selectTerminalWindowSource(event, terminalSources, electronScreen.getCursorScreenPoint())
     const source = selection.source
+    if (settings.recording.sourceType === 'screen') {
+      const target = screenTargetForTerminalWindow(selection, configuredCaptureTargets(settings), event.processId)
+      if (!target) {
+        void appLog.warn('recording', 'Trade monitor not identified among selected capture targets; skipping trade', {
+          source: event.source, symbol: event.symbol, selectedWindow: source ? terminalSourceLog(source) : undefined
+        })
+      }
+      return target
+    }
     if (event.processId && terminalSources.length > 1 && selection.candidates.length === 0) {
       void appLog.warn('recording', 'Terminal process id and ticker did not identify a capture window; trade will wait for an exact window', {
         source: event.source,
@@ -2757,6 +2774,7 @@ app.whenReady().then(() => {
     let gracefulQuitStarted = false
     let gracefulQuitFinished = false
     app.on('before-quit', (event) => {
+      appQuitRequested = true
       if (gracefulQuitFinished) return
       event.preventDefault()
       if (gracefulQuitStarted) return
