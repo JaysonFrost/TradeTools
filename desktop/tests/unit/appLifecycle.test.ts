@@ -457,6 +457,21 @@ describe('main app lifecycle', () => {
     expect(source).toContain("app.getPath('appData')")
   })
 
+  it('keeps dev taskbar pins and shortcuts separate and relaunches the application', async () => {
+    const source = await readFile(resolve('src/main/app.ts'), 'utf8')
+
+    expect(source).toContain("app.isPackaged ? 'com.tradetools.desktop' : 'com.tradetools.desktop.dev'")
+    expect(source).toContain("app.isPackaged ? 'TradeTools' : 'TradeTools Dev'")
+    expect(source).toContain('`${windowsAppName}.lnk`')
+    expect(source).toContain("app.on('browser-window-created'")
+    expect(source).toContain('window.setAppDetails({')
+    expect(source).toContain('relaunchCommand: [process.execPath, ...getWindowsLaunchArgs(false)]')
+    expect(source).toContain('relaunchDisplayName: windowsAppName')
+    expect(source).toContain('...(process.defaultApp ? [app.getAppPath()] : [])')
+    const autostartSource = source.slice(source.indexOf('const applyLaunchAtLogin ='), source.indexOf('const applyAlwaysOnTop ='))
+    expect(autostartSource).toContain('if (!app.isPackaged) return')
+  })
+
   it('reports when Windows toast notifications are disabled globally', async () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
 

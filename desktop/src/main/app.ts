@@ -45,7 +45,11 @@ const getIconPath = (): string => app.isPackaged
   : join(__dirname, '../../build/icon.png')
 const proxyPaymentReminderIntervalMs = 6 * 60 * 60 * 1000
 const previewVideoExtensions = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts'])
-const windowsAppUserModelId = 'com.tradetools.desktop'
+const windowsAppUserModelId = app.isPackaged ? 'com.tradetools.desktop' : 'com.tradetools.desktop.dev'
+const windowsAppName = app.isPackaged ? 'TradeTools' : 'TradeTools Dev'
+const getWindowsShellIconPath = (): string => app.isPackaged
+  ? process.execPath
+  : join(__dirname, '../../build/icon.ico')
 const windowsProxyRuntimeRunValueName = 'TradeTools Proxy Runtime'
 const windowsRunKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 const windowsLoginLaunchArg = '--windows-login'
@@ -188,10 +192,21 @@ let windowsNotificationShortcutReady = process.platform !== 'win32'
 
 const quoteWindowsShortcutArg = (value: string): string => `"${value.replace(/"/g, '\\"')}"`
 
-const getWindowsLaunchArgs = (): string[] => [
+const getWindowsLaunchArgs = (loginLaunch = true): string[] => [
   ...(process.defaultApp ? [app.getAppPath()] : []),
-  windowsLoginLaunchArg
+  ...(loginLaunch ? [windowsLoginLaunchArg] : [])
 ]
+
+app.on('browser-window-created', (_event, window) => {
+  if (process.platform !== 'win32') return
+  window.setAppDetails({
+    appId: windowsAppUserModelId,
+    appIconPath: getWindowsShellIconPath(),
+    appIconIndex: 0,
+    relaunchCommand: [process.execPath, ...getWindowsLaunchArgs(false)].map(quoteWindowsShortcutArg).join(' '),
+    relaunchDisplayName: windowsAppName
+  })
+})
 
 const isWindowsLoginLaunch = (): boolean => process.platform === 'win32' && process.argv.includes(windowsLoginLaunchArg)
 
@@ -222,7 +237,7 @@ const getWindowsNotificationShortcutPath = (): string => join(
   'Windows',
   'Start Menu',
   'Programs',
-  'TradeTools.lnk'
+  `${windowsAppName}.lnk`
 )
 
 const ensureWindowsNotificationShortcut = (): boolean => {
@@ -236,9 +251,9 @@ const ensureWindowsNotificationShortcut = (): boolean => {
       target: process.execPath,
       args: getWindowsLaunchArgs().map(quoteWindowsShortcutArg).join(' '),
       cwd: app.getAppPath(),
-      description: 'TradeTools',
+      description: windowsAppName,
       appUserModelId: windowsAppUserModelId,
-      icon: process.execPath,
+      icon: getWindowsShellIconPath(),
       iconIndex: 0
     })
     if (!windowsNotificationShortcutReady) console.warn('Windows notification shortcut was not created')
@@ -870,6 +885,7 @@ const buildProxyChainInstructions = (
 }
 
 const applyLaunchAtLogin = (settings: AppSettings): void => {
+  if (!app.isPackaged) return
   app.setLoginItemSettings({
     openAtLogin: settings.system.launchAtLogin,
     ...(process.platform === 'win32'
