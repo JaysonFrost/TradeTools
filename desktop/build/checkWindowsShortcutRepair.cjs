@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict')
 const { spawnSync } = require('node:child_process')
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } = require('node:fs')
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
-const { join } = require('node:path')
+const { dirname, join } = require('node:path')
 const { app, shell } = require('electron')
 
 app.whenReady().then(() => {
@@ -48,13 +48,14 @@ app.whenReady().then(() => {
     assert.equal(existsSync(brokenPin), false, 'Corrupted taskbar pin must be unregistered')
     assert.deepEqual(readFileSync(healthyPin), healthyBefore, 'Healthy pin must stay unchanged')
     assert.deepEqual(readFileSync(unrelated), unrelatedBefore, 'Another Electron app must stay unchanged')
-    assert.equal(shell.readShortcutLink(canonical).target, installedTarget)
+    assert.equal(shell.readShortcutLink(canonical).target, realpathSync.native(installedTarget))
     const backupCount = readdirSync(backup).length
     assert.equal(backupCount, 2, 'Both original shortcuts must be backed up')
     run()
     assert.equal(readdirSync(backup).length, backupCount, 'Repeated startup must be harmless')
     console.log('Windows shortcut repair passed: legacy alias, pin, backup, unrelated apps, repeated startup')
   } finally {
+    assert.equal(realpathSync.native(dirname(root)), realpathSync.native(tmpdir()))
     rmSync(root, { recursive: true, force: true })
   }
   app.quit()

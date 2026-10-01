@@ -6,6 +6,7 @@ param(
   [string]$AppId = 'com.tradetools.desktop'
 )
 $ErrorActionPreference = 'Stop'
+$ExecutablePath = (Get-Item -LiteralPath $ExecutablePath).FullName
 $programs = Join-Path $AppDataDir 'Microsoft\Windows\Start Menu\Programs'
 $pins = Join-Path $AppDataDir 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
 $canonical = $CanonicalShortcutPath
@@ -35,9 +36,10 @@ $legacyAliases = @(Get-LegacyLinks $programs)
 if ($legacyPins.Count + $legacyAliases.Count -eq 0) { return }
 if (!(Test-Path -LiteralPath $canonical)) { throw 'The TradeTools Start menu shortcut must exist before migration' }
 $canonicalItem = $explorerShell.NameSpace((Split-Path -Parent $canonical)).ParseName((Split-Path -Leaf $canonical))
+$canonicalTarget = $linkShell.CreateShortcut($canonical).TargetPath
 if ($canonicalItem.ExtendedProperty('System.AppUserModel.ID') -ne $AppId -or
-    $linkShell.CreateShortcut($canonical).TargetPath -ine $ExecutablePath) {
-  throw 'The replacement shortcut does not match the installed application'
+    $canonicalTarget -ine $ExecutablePath) {
+  throw "The replacement shortcut does not match the installed application: $canonicalTarget != $ExecutablePath"
 }
 New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 
