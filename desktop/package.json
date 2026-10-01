@@ -1,6 +1,6 @@
 {
   "name": "tradetools",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "TradeTools desktop app for automatic trade video clipping and proxy management.",
   "author": "JaysonFrost",
   "license": "MIT",
@@ -24,7 +24,8 @@
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "preview": "node build/ensureElectronMacCapturePermissions.cjs && electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:win-shortcuts": "node node_modules/electron/cli.js build/checkWindowsShortcutRepair.cjs"
   },
   "dependencies": {
     "@ffprobe-installer/ffprobe": "2.1.2",
@@ -94,6 +95,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/repairWindowsShortcuts.ps1",
+        "to": "repairWindowsShortcuts.ps1"
       }
     ],
     "afterPack": "build/verifyPackagedApp.cjs",

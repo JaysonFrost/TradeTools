@@ -6,6 +6,13 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-10-01
+
+### Fixed
+- Installed Windows builds remove legacy TradeTools shortcuts and cached taskbar pins that launch the bare Electron executable. Original shortcuts are backed up before removal; unaffected TradeTools pins and other applications are left unchanged.
+- Start menu registration is refreshed after unpinning, including the Electron alias Windows can restore from its pin cache. A removed legacy pin can be replaced by pinning TradeTools again.
+- Verify Windows shortcut migration with real shell links in CI and check that the migration is included in packaged Windows builds.
+
 ## [1.1.3] - 2026-10-01
 
 ### Fixed

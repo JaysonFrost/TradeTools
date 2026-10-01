@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
@@ -1025,10 +1025,23 @@ const showRecordingWidget = (): void => {
   keepRecordingWidgetOnTop()
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!ownsAppInstance) return
 
-  ensureWindowsNotificationShortcut()
+  const windowsShortcutReady = ensureWindowsNotificationShortcut()
+  if (process.platform === 'win32' && app.isPackaged && windowsShortcutReady) {
+    await new Promise<void>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+        join(process.resourcesPath, 'repairWindowsShortcuts.ps1'),
+        '-AppDataDir', app.getPath('appData'), '-BackupDir', join(app.getPath('userData'), 'shortcut-backup'),
+        '-ExecutablePath', process.execPath, '-CanonicalShortcutPath', getWindowsNotificationShortcutPath()],
+      { windowsHide: true, timeout: 15_000 }, (error, stdout, stderr) => {
+        if (error) console.warn('Windows shortcut migration failed:', stderr || error.message)
+        else if (stdout.trim()) console.info(stdout.trim())
+        resolve()
+      })
+    })
+  }
   const appLog = createAppLogService({ appDataDir: app.getPath('userData') })
   const settingsStore = createSettingsStore(app.getPath('userData'))
   const secretStore = createSecretStore()

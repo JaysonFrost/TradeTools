@@ -50,5 +50,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Windows shortcut migration
+        if: runner.os == 'Windows'
+        run: npm run test:win-shortcuts
+
       - name: Production build
         run: npm run build
