@@ -59,6 +59,10 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Windows shortcut migration
+        if: runner.os == 'Windows'
+        run: npm run test:win-shortcuts
+
       - name: Build release package
         run: ${{ matrix.script }}
         env:
