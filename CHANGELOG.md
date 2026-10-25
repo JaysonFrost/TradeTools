@@ -6,6 +6,8 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-10-25
+
 ### Fixed
 - LootX clips no longer cut the entry short when the PC clock is behind exchange time. LootX writes fill times in exchange time, while the video buffer uses the PC clock; TradeTools now measures the offset against Binance server time and moves LootX entry and exit times onto the recording clock, so the configured seconds before entry are really in the clip.
 
