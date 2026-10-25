@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net, Notification, screen as electronScreen, session, shell, type OpenDialogOptions } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { listProxyPaymentReminders } from './services/notifications/proxyPaymentReminders'
 import { inspectProxyNetworkEnvironment, type NetworkDiagnosticStatus, type NetworkEnvironmentSnapshot } from './services/proxies/networkEnvironment'
@@ -29,6 +29,7 @@ import { createAppLogService } from './services/logging/appLogService'
 import { acquireAppDataInstanceLock } from './services/appDataInstanceLock'
 import { recordingBufferSaveAccelerator, recordingToggleAccelerator, type RecordingControlStatus } from '../shared/recordingControl'
 import { getRecordingWidgetPlacement } from './recordingWidgetPlacement'
+import { createExchangeClock, fetchBinanceServerTimeMs } from './services/time/exchangeClock'
 import { detectSupportedTerminalWindow, isSupportedTerminalWindowName } from '../shared/supportedTerminalWindows'
 
 const isAllowedDevUrl = (url: string): boolean => {
@@ -2034,8 +2035,19 @@ app.whenReady().then(async () => {
     )))
   }
 
+  let loggedExchangeClockOffsetMs: number | undefined
+  const exchangeClock = createExchangeClock({
+    fetchServerTimeMs: () => fetchBinanceServerTimeMs((url, init) => net.fetch(url, init)),
+    onOffset: (offsetMs) => {
+      if (loggedExchangeClockOffsetMs !== undefined && Math.abs(offsetMs - loggedExchangeClockOffsetMs) < 100) return
+      loggedExchangeClockOffsetMs = offsetMs
+      void appLog.info('terminal-trade', 'Exchange clock offset measured', { offsetMs })
+    }
+  })
+
   const terminalTradeWatcher = createTerminalTradeWatcher({
     getSettings: () => settingsStore.load(),
+    getExchangeClockOffsetMs: exchangeClock.offsetMs,
     getRecordingStartedAtMs: () => backgroundWindowRecordingStartedAtMs,
     ensureVideoRecordingReady,
     getRecordingGateRevision: () => recordingGateRevision,
@@ -2775,6 +2787,7 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.setBackgroundThrottling(!recordingControlStatus.enabled)
     broadcastRecordingControlStatus()
     appUpdateService.startBackgroundCheck()
+    exchangeClock.start()
     terminalTradeWatcher.start()
     void secretStore.getTmmApiKey()
       .then((apiKey) => apiKey ? clipPipeline.syncTmmTradeLinks() : undefined)
@@ -2809,6 +2822,7 @@ app.whenReady().then(async () => {
       recordingControlShuttingDown = true
       recordingGateRevision += 1
       terminalTradeWatcher.stop()
+      exchangeClock.stop()
       stopProxyRuntimeWatchdog()
       globalShortcut.unregisterAll()
       if (vpnBypassMonitor) vpnBypassMonitor.stop()
