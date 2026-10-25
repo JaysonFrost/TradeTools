@@ -78,6 +78,7 @@ export type TerminalTradeWatcherInput = {
   createClipForClosedTrade: (trade: ClosedTrade) => Promise<ClipQueueItem | void>
   resolveRecordingTarget?: (event: TerminalPositionEvent) => Promise<CaptureTargetRef | undefined>
   onStatusChange?: (status: TerminalTradeRecordingStatus) => void
+  getExchangeClockOffsetMs?: () => number
   env?: NodeJS.ProcessEnv
   pollIntervalMs?: number
 }
@@ -583,6 +584,7 @@ export const createTerminalTradeWatcher = ({
   createClipForClosedTrade,
   resolveRecordingTarget,
   onStatusChange,
+  getExchangeClockOffsetMs = () => 0,
   env = process.env,
   pollIntervalMs = defaultPollIntervalMs
 }: TerminalTradeWatcherInput): TerminalTradeWatcher => {
@@ -1109,7 +1111,7 @@ export const createTerminalTradeWatcher = ({
         symbol: position.symbol,
         side: position.side,
         isClosed: false,
-        eventTimeMs: Math.max(position.entryTimeMs, recordingStartedAtMs),
+        eventTimeMs: Math.max(position.entryTimeMs - getExchangeClockOffsetMs(), recordingStartedAtMs),
         size: position.size
       })
     }
@@ -1138,7 +1140,7 @@ export const createTerminalTradeWatcher = ({
     const advance = advanceLootxJournalSnapshot(snapshot, previousCursor)
     lootxCursor = advance.cursor
     if (!previousCursor) replayLootxOpenPositions(advance.openPositions)
-    for (const event of advance.events) enqueueEvent(event)
+    for (const event of advance.events) enqueueEvent({ ...event, eventTimeMs: event.eventTimeMs - getExchangeClockOffsetMs() })
     return true
   }
 
