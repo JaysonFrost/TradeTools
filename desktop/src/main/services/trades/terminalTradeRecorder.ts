@@ -5,7 +5,25 @@ import type { AppSettings, CaptureTargetRef } from '../settings/settings'
 import type { ClosedTrade } from './simulatedTradePipeline'
 import type { ClipQueueItem } from './tradeClipPipeline'
 import { supportedTerminalLabels, type SupportedTerminalId } from '../../../shared/supportedTerminalWindows'
-import { normalizeTerminalSymbolToken } from '../../../shared/terminalSymbol'
+import {
+  advanceLootxJournalSnapshot,
+  getLootxJournalPath,
+  parseLootxJournalSnapshot,
+  type LootxJournalCursor,
+  type LootxPositionState
+} from './lootxJournal'
+import {
+  getField,
+  isNearlyZero,
+  normalizeAnyText,
+  normalizeExchangeName,
+  normalizeSideFromSize,
+  normalizeTerminalSymbol,
+  normalizeText,
+  parseLocalDateTime,
+  parseMaybeTime,
+  parseNumericValue
+} from './terminalEventParsing'
 
 export type TerminalTradeSource = SupportedTerminalId
 
@@ -91,45 +109,6 @@ type MetaScalpSnapshotDiff = {
   initialized: boolean
 }
 
-export type LootxJournalFill = {
-  id: string
-  positionId: string
-  exchange: string
-  symbol: string
-  eventTimeMs: number
-  signedQuantity: number
-  sortIndex: number
-}
-
-export type LootxPositionState = {
-  positionId: string
-  exchange: string
-  symbol: string
-  side: string
-  size: number
-  entryTimeMs: number
-  latestEventAtMs: number
-}
-
-export type LootxJournalSnapshot = {
-  resetTimestampMs: number
-  fills: LootxJournalFill[]
-}
-
-export type LootxJournalCursor = {
-  resetTimestampMs: number
-  seenFillIds: Set<string>
-  positions: Map<string, LootxPositionState>
-  latestEventAtMsByPosition: Map<string, number>
-}
-
-export type LootxJournalAdvance = {
-  cursor: LootxJournalCursor
-  events: TerminalPositionEvent[]
-  openPositions: LootxPositionState[]
-  resetDetected: boolean
-}
-
 const defaultPollIntervalMs = 1_000
 const readChunkSize = 128 * 1024
 const metaScalpPorts = Array.from({ length: 11 }, (_, index) => 17_845 + index)
@@ -138,8 +117,6 @@ const metaScalpRequestTimeoutMs = 900
 const tigerTradeReplayExecutionToleranceMs = 6 * 60 * 60 * 1000
 const crossSourceDuplicateToleranceMs = 1_000
 const recentClosedTradeTtlMs = 60_000
-const zeroTolerance = 1e-12
-
 type RecentClosedTerminalTrade = {
   source: TerminalTradeSource
   exchange: string
@@ -152,37 +129,11 @@ type RecentClosedTerminalTrade = {
 
 const sourceDisplayNames: Record<TerminalTradeSource, string> = supportedTerminalLabels
 
-const normalizeText = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
-
-const normalizeAnyText = (value: unknown): string => {
-  if (typeof value === 'string') return value.trim()
-  if (typeof value === 'number' || typeof value === 'bigint') return String(value)
-  return ''
-}
-
-const parseNumericValue = (value: unknown): number => {
-  if (typeof value === 'number') return value
-  const text = normalizeAnyText(value).replace(',', '.')
-  if (!text) return Number.NaN
-  return Number(text)
-}
-
-const isNearlyZero = (value: number): boolean => Number.isFinite(value) && Math.abs(value) <= zeroTolerance
 const isPositionReversal = (previousSize: unknown, nextSize: unknown): boolean => {
   if (typeof previousSize !== 'number' || typeof nextSize !== 'number') return false
   if (!Number.isFinite(previousSize) || !Number.isFinite(nextSize)) return false
   if (isNearlyZero(previousSize) || isNearlyZero(nextSize)) return false
   return Math.sign(previousSize) !== Math.sign(nextSize)
-}
-
-const getField = (record: unknown, names: string[]): unknown => {
-  if (!record || typeof record !== 'object') return undefined
-  const entries = Object.entries(record as Record<string, unknown>)
-  for (const name of names) {
-    const match = entries.find(([key]) => key.toLowerCase() === name.toLowerCase())
-    if (match) return match[1]
-  }
-  return undefined
 }
 
 const getErrorCode = (error: unknown): string => (
@@ -193,30 +144,10 @@ const getErrorMessage = (error: unknown, fallback: string): string => (
   error instanceof Error && error.message ? error.message : fallback
 )
 
-const normalizeTerminalSymbol = (value: unknown, fallback = 'TERMINAL'): string => {
-  return normalizeTerminalSymbolToken(value) || fallback
-}
-
 const normalizeVatagaSymbolTitle = (value: unknown): string => {
   const text = normalizeAnyText(value)
   const symbol = text.includes('/') ? text.split('/').at(-1) ?? text : text
   return normalizeTerminalSymbol(symbol)
-}
-
-const normalizeExchangeName = (value: unknown, fallback: string): string => {
-  const text = normalizeAnyText(value)
-  if (!text) return fallback
-  const firstChunk = text.split(/[\s:|/\\-]+/).find(Boolean) ?? text
-  return firstChunk.toUpperCase().replace(/[^A-Z0-9]+/g, '') || fallback
-}
-
-const normalizeSideFromSize = (size: number, fallback: unknown = undefined): string => {
-  if (Number.isFinite(size) && !isNearlyZero(size)) return size > 0 ? 'LONG' : 'SHORT'
-
-  const side = normalizeAnyText(fallback).toLowerCase()
-  if (['buy', 'long', 'bought', '1'].includes(side)) return 'LONG'
-  if (['sell', 'short', 'sold', '2', '-1'].includes(side)) return 'SHORT'
-  return 'TRADE'
 }
 
 const parseVatagaTime = (value: unknown): number => {
@@ -225,43 +156,6 @@ const parseVatagaTime = (value: unknown): number => {
   const normalized = /(?:z|[+-]\d\d:?\d\d)$/i.test(text) ? text : `${text}Z`
   const time = Date.parse(normalized)
   return Number.isFinite(time) && time > 0 ? time : 0
-}
-
-const parseLocalDateTime = (
-  day: string,
-  month: string,
-  year: string,
-  hour: string,
-  minute: string,
-  second: string,
-  millisecond = '0'
-): number => {
-  const time = new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-    Number(millisecond.padEnd(3, '0').slice(0, 3))
-  ).getTime()
-  return Number.isFinite(time) && time > 0 ? time : 0
-}
-
-const parseMaybeTime = (value: unknown): number => {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return value < 10_000_000_000 ? value * 1000 : value
-  }
-
-  const text = normalizeAnyText(value)
-  if (!text) return 0
-  const localMatch = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/.exec(text)
-  if (localMatch) {
-    return parseLocalDateTime(localMatch[1], localMatch[2], localMatch[3], localMatch[4], localMatch[5], localMatch[6], localMatch[7] ?? '0')
-  }
-
-  const parsed = Date.parse(text)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
 const normalizeVatagaExchange = (value: unknown, symbolTitle: unknown): string => {
@@ -385,230 +279,6 @@ export const parseTigerTradePositionEvent = (line: string): TerminalPositionEven
     isClosed: eventCloses,
     eventTimeMs,
     size
-  }
-}
-
-const normalizeLootxExchangeName = (exchangeId: string, connectionTag: string): string => {
-  const exchange = normalizeExchangeName(exchangeId, 'LOOTX')
-  return /:F$/i.test(connectionTag) && exchange.endsWith('F')
-    ? exchange.slice(0, -1) || 'LOOTX'
-    : exchange
-}
-
-const getLootxPositionId = (connectionTag: string, exchangeId: string, symbol: string): string => (
-  `${connectionTag || 'CONNECTION'}:${exchangeId}:${symbol}`.toUpperCase()
-)
-
-export const parseLootxJournalSnapshot = (text: string): LootxJournalSnapshot | undefined => {
-  let payload: unknown
-  try {
-    payload = JSON.parse(text)
-  } catch {
-    return undefined
-  }
-
-  if (!payload || typeof payload !== 'object') return undefined
-  const resetTimestampMs = parseNumericValue(getField(payload, ['ResetTimestampMs']))
-  const trades = getField(payload, ['Trades'])
-  if (!Number.isFinite(resetTimestampMs) || resetTimestampMs < 0 || !Array.isArray(trades)) return undefined
-
-  const fills: LootxJournalFill[] = []
-  const seenFillIds = new Set<string>()
-  const fallbackOccurrences = new Map<string, number>()
-
-  for (const [sortIndex, trade] of trades.entries()) {
-    if (!trade || typeof trade !== 'object') continue
-
-    const execId = normalizeAnyText(getField(trade, ['ExecId']))
-    if (execId.toUpperCase() === 'SYNTHETIC_SEED') continue
-
-    const instrument = getField(trade, ['Instrument'])
-    const exchangeId = normalizeAnyText(getField(instrument, ['ExchangeId']))
-    const symbol = normalizeTerminalSymbol(getField(instrument, ['Symbol']), '')
-    const connectionTag = normalizeAnyText(getField(trade, ['ConnectionTag']))
-    const eventTimeMs = parseMaybeTime(getField(trade, ['TimestampMs']))
-    const quantityRaw = parseNumericValue(getField(trade, ['QuantityRaw', 'Quantity']))
-    const quantityScaleValue = parseNumericValue(getField(trade, ['QuantityScale']))
-    const quantityScale = Number.isFinite(quantityScaleValue) && quantityScaleValue > 0 ? quantityScaleValue : 1
-    const quantity = Math.abs(quantityRaw / quantityScale)
-    const side = normalizeAnyText(getField(trade, ['Side'])).toLowerCase()
-    const direction = ['bid', 'buy', 'long'].includes(side)
-      ? 1
-      : ['ask', 'sell', 'short'].includes(side)
-        ? -1
-        : 0
-    if (!exchangeId || !symbol || !eventTimeMs || !Number.isFinite(quantity) || isNearlyZero(quantity) || !direction) continue
-
-    const positionId = getLootxPositionId(connectionTag, exchangeId, symbol)
-    const tradeId = normalizeAnyText(getField(trade, ['TradeId']))
-    const usableExecId = execId && execId !== '0' ? execId : ''
-    const usableTradeId = tradeId && tradeId !== '0' ? tradeId : ''
-    let id = usableExecId
-      ? `${positionId}|exec:${usableExecId}`
-      : usableTradeId
-        ? `${positionId}|trade:${usableTradeId}`
-        : ''
-
-    if (!id) {
-      const orderId = normalizeAnyText(getField(trade, ['OrderId']))
-      const cumulativeQuantity = normalizeAnyText(getField(trade, ['CumulativeFilledQtyRaw']))
-      const fallbackBase = `${positionId}|fill:${eventTimeMs}:${orderId}:${side}:${quantityRaw}:${quantityScale}:${cumulativeQuantity}`
-      const occurrence = fallbackOccurrences.get(fallbackBase) ?? 0
-      fallbackOccurrences.set(fallbackBase, occurrence + 1)
-      id = `${fallbackBase}:${occurrence}`
-    }
-
-    const normalizedId = id.toUpperCase()
-    if (seenFillIds.has(normalizedId)) continue
-    seenFillIds.add(normalizedId)
-    fills.push({
-      id: normalizedId,
-      positionId,
-      exchange: normalizeLootxExchangeName(exchangeId, connectionTag),
-      symbol,
-      eventTimeMs,
-      signedQuantity: direction * quantity,
-      sortIndex
-    })
-  }
-
-  fills.sort((left, right) => (
-    left.eventTimeMs - right.eventTimeMs
-    || left.sortIndex - right.sortIndex
-    || left.id.localeCompare(right.id)
-  ))
-  return { resetTimestampMs, fills }
-}
-
-const applyLootxFill = (
-  positions: Map<string, LootxPositionState>,
-  latestEventAtMsByPosition: Map<string, number>,
-  fill: LootxJournalFill
-): TerminalPositionEvent => {
-  const previous = positions.get(fill.positionId)
-  const previousSize = previous?.size ?? 0
-  const rawNextSize = previousSize + fill.signedQuantity
-  const nextSize = isNearlyZero(rawNextSize) ? 0 : rawNextSize
-  const reversed = !isNearlyZero(previousSize)
-    && !isNearlyZero(nextSize)
-    && Math.sign(previousSize) !== Math.sign(nextSize)
-  const entryTimeMs = isNearlyZero(previousSize) || reversed
-    ? fill.eventTimeMs
-    : previous?.entryTimeMs ?? fill.eventTimeMs
-  const side = isNearlyZero(nextSize)
-    ? previous?.side ?? normalizeSideFromSize(fill.signedQuantity)
-    : normalizeSideFromSize(nextSize)
-  const state: LootxPositionState = {
-    positionId: fill.positionId,
-    exchange: fill.exchange,
-    symbol: fill.symbol,
-    side,
-    size: nextSize,
-    entryTimeMs,
-    latestEventAtMs: fill.eventTimeMs
-  }
-  positions.set(fill.positionId, state)
-  latestEventAtMsByPosition.set(fill.positionId, fill.eventTimeMs)
-  return {
-    source: 'lootx',
-    positionId: state.positionId,
-    exchange: state.exchange,
-    symbol: state.symbol,
-    side: state.side,
-    isClosed: isNearlyZero(state.size),
-    eventTimeMs: fill.eventTimeMs,
-    size: state.size
-  }
-}
-
-const buildLootxBaseline = (snapshot: LootxJournalSnapshot): {
-  positions: Map<string, LootxPositionState>
-  latestEventAtMsByPosition: Map<string, number>
-} => {
-  const positions = new Map<string, LootxPositionState>()
-  const latestEventAtMsByPosition = new Map<string, number>()
-  for (const fill of snapshot.fills) applyLootxFill(positions, latestEventAtMsByPosition, fill)
-  return { positions, latestEventAtMsByPosition }
-}
-
-const getOpenLootxPositions = (positions: Map<string, LootxPositionState>): LootxPositionState[] => (
-  [...positions.values()].filter((position) => !isNearlyZero(position.size))
-)
-
-export const advanceLootxJournalSnapshot = (
-  snapshot: LootxJournalSnapshot,
-  previous?: LootxJournalCursor
-): LootxJournalAdvance => {
-  const snapshotFillIds = new Set(snapshot.fills.map((fill) => fill.id))
-  if (!previous) {
-    const baseline = buildLootxBaseline(snapshot)
-    const cursor: LootxJournalCursor = {
-      resetTimestampMs: snapshot.resetTimestampMs,
-      seenFillIds: snapshotFillIds,
-      positions: baseline.positions,
-      latestEventAtMsByPosition: baseline.latestEventAtMsByPosition
-    }
-    return {
-      cursor,
-      events: [],
-      openPositions: getOpenLootxPositions(cursor.positions),
-      resetDetected: false
-    }
-  }
-
-  const resetTimestampChanged = snapshot.resetTimestampMs !== previous.resetTimestampMs
-  const snapshotTruncated = [...previous.seenFillIds].some((fillId) => !snapshotFillIds.has(fillId))
-  if (resetTimestampChanged || snapshotTruncated) {
-    const positions = new Map([...previous.positions].map(([positionId, position]) => [positionId, { ...position }]))
-    const latestEventAtMsByPosition = new Map(previous.latestEventAtMsByPosition)
-    const events: TerminalPositionEvent[] = []
-    for (const fill of snapshot.fills) {
-      if (previous.seenFillIds.has(fill.id)) continue
-      const latestEventAtMs = latestEventAtMsByPosition.get(fill.positionId)
-      if (latestEventAtMs !== undefined && fill.eventTimeMs < latestEventAtMs) continue
-      events.push(applyLootxFill(positions, latestEventAtMsByPosition, fill))
-    }
-
-    const seenFillIds = resetTimestampChanged
-      ? snapshotFillIds
-      : new Set([...previous.seenFillIds, ...snapshotFillIds])
-    const cursor: LootxJournalCursor = {
-      resetTimestampMs: snapshot.resetTimestampMs,
-      seenFillIds,
-      positions,
-      latestEventAtMsByPosition
-    }
-    return {
-      cursor,
-      events,
-      openPositions: getOpenLootxPositions(cursor.positions),
-      resetDetected: true
-    }
-  }
-
-  const seenFillIds = new Set(previous.seenFillIds)
-  const positions = new Map([...previous.positions].map(([positionId, position]) => [positionId, { ...position }]))
-  const latestEventAtMsByPosition = new Map(previous.latestEventAtMsByPosition)
-  const events: TerminalPositionEvent[] = []
-  for (const fill of snapshot.fills) {
-    if (seenFillIds.has(fill.id)) continue
-    seenFillIds.add(fill.id)
-    const latestEventAtMs = latestEventAtMsByPosition.get(fill.positionId)
-    if (latestEventAtMs !== undefined && fill.eventTimeMs < latestEventAtMs) continue
-    events.push(applyLootxFill(positions, latestEventAtMsByPosition, fill))
-  }
-
-  const cursor: LootxJournalCursor = {
-    resetTimestampMs: snapshot.resetTimestampMs,
-    seenFillIds,
-    positions,
-    latestEventAtMsByPosition
-  }
-  return {
-    cursor,
-    events,
-    openPositions: getOpenLootxPositions(cursor.positions),
-    resetDetected: false
   }
 }
 
@@ -792,11 +462,6 @@ export const getVatagaLogsDir = (env: NodeJS.ProcessEnv): string | undefined => 
 
   const macDataDir = getMacApplicationSupportDir(env)
   return macDataDir ? posix.join(macDataDir, 'Vataga', 'Vataga.terminal', 'Logs') : undefined
-}
-
-export const getLootxJournalPath = (env: NodeJS.ProcessEnv): string | undefined => {
-  const appData = normalizeText(env.APPDATA)
-  return appData ? join(appData, 'TradingTerminal', 'journal.json') : undefined
 }
 
 export const getColibriDiscoveryPath = (env: NodeJS.ProcessEnv): string | undefined => (

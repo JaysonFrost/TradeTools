@@ -6,11 +6,13 @@ import { createDefaultSettings, type CaptureTargetRef } from '../../src/main/ser
 import type { ClosedTrade } from '../../src/main/services/trades/simulatedTradePipeline'
 import {
   advanceLootxJournalSnapshot,
+  getLootxJournalPath,
+  parseLootxJournalSnapshot
+} from '../../src/main/services/trades/lootxJournal'
+import {
   createTerminalTradeWatcher,
   diffMetaScalpPositionSnapshots,
-  getLootxJournalPath,
   getVatagaLogsDir,
-  parseLootxJournalSnapshot,
   parseMetaScalpPositionSnapshot,
   parseTigerTradePositionEvent,
   parseVatagaPositionEvent,
