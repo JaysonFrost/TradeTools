@@ -6,6 +6,9 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+### Fixed
+- LootX no longer produces phantom open trades. TradeTools now trusts LootX `FlatSpans` when `journal.json` is missing a fill (a `SYNTHETIC_SEED` entry or a dropped closing fill), so a closed position is not shown as recording and is not replayed on startup.
+
 ## [1.1.4] - 2026-10-01
 
 ### Fixed
