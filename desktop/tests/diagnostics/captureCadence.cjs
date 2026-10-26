@@ -155,4 +155,9 @@ app.whenReady().then(async () => {
   app.exit(1)
 })
 
-app.on('quit', () => rmSync(directory, { recursive: true, force: true }))
+app.on('window-all-closed', () => undefined)
+app.on('quit', () => {
+  try {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5 })
+  } catch {}
+})

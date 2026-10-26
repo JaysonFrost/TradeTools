@@ -1764,6 +1764,7 @@ describe('windowRecorderService', () => {
     expect(encoderSource).toContain("fastStart: 'fragmented'")
     expect(encoderSource).toContain('minimumFragmentDuration: fragmentSeconds')
     expect(encoderSource).toContain('keyFrameInterval: fragmentSeconds')
+    expect(encoderSource).toContain('{ frameRate: null }')
     expect(encoderSource).toContain("codec: 'avc'")
     expect(encoderSource).toContain("codec: 'aac'")
     expect(serviceSource).toContain('cleanup?: boolean')
