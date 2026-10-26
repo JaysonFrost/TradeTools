@@ -6,6 +6,11 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-10-26
+
+### Fixed
+- TradeTools no longer flashes console windows on Windows. ffmpeg and ffprobe runs while saving a clip now start hidden, and the proxy runtime that Windows starts at login runs through a headless console host instead of opening its own console window. A unit test now fails if any child process in the main process is started without `windowsHide`.
+
 ## [1.1.6] - 2026-10-25
 
 ### Fixed

@@ -729,7 +729,7 @@ const throwIfAborted = (signal?: AbortSignal): void => {
 const runFfmpeg = async (args: string[], signal?: AbortSignal): Promise<void> => {
   await new Promise<void>((resolve, reject) => {
     throwIfAborted(signal)
-    const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawn(resolveMediaToolPath('ffmpeg'), args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
     let stderr = ''
     let settled = false
     let aborted = false

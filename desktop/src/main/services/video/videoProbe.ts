@@ -65,7 +65,7 @@ const runFfprobe = async (videoPath: string): Promise<string> => {
   ]
 
   return new Promise<string>((resolve, reject) => {
-    const child = spawn(resolveMediaToolPath('ffprobe'), args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(resolveMediaToolPath('ffprobe'), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     let stdout = ''
     let stderr = ''
     let settled = false

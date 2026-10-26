@@ -490,6 +490,7 @@ describe('main app lifecycle', () => {
     expect(source).toContain("const windowsLoginLaunchArg = '--windows-login'")
     expect(source).toContain('windowsProxyRuntimeStartupGraceMs = 8_000')
     expect(source).toContain('process.argv.includes(windowsLoginLaunchArg)')
+    expect(source).toContain('conhost.exe --headless')
     expect(source).toContain('run -config')
     expect(source).toContain('applyWindowsProxyRuntimeAutostart(settings)')
     expect(source).toContain('applyLaunchAtLogin(updatedSettings)')

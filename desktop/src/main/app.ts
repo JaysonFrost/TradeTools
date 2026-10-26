@@ -224,7 +224,7 @@ const applyWindowsProxyRuntimeAutostart = (settings: AppSettings): void => {
 
   try {
     const result = enabled
-      ? spawnSync('reg', ['add', windowsRunKey, '/v', windowsProxyRuntimeRunValueName, '/t', 'REG_SZ', '/d', `"${xrayPath}" run -config "${configPath}"`, '/f'], { encoding: 'utf8', windowsHide: true })
+      ? spawnSync('reg', ['add', windowsRunKey, '/v', windowsProxyRuntimeRunValueName, '/t', 'REG_SZ', '/d', `conhost.exe --headless "${xrayPath}" run -config "${configPath}"`, '/f'], { encoding: 'utf8', windowsHide: true })
       : spawnSync('reg', ['delete', windowsRunKey, '/v', windowsProxyRuntimeRunValueName, '/f'], { encoding: 'utf8', windowsHide: true })
     if (enabled && result.status !== 0) console.warn(`Windows proxy autostart registration failed: ${result.stderr || result.stdout}`)
   } catch (error) {
