@@ -6,6 +6,11 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-10-26
+
+### Fixed
+- Window recordings no longer freeze for a frame and then jump at fast moments such as a trade entry. The window capture delivers about 29 frames per second with uneven spacing, and the recorder used to resample it onto a fixed 30 fps clock, which repeated about 15% of frames and dropped about 12% of real ones. Every captured frame is now encoded with its own capture time, and the clip export alone produces the steady frame rate.
+
 ## [1.1.7] - 2026-10-26
 
 ### Fixed

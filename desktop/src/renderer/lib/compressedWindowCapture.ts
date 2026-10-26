@@ -116,7 +116,7 @@ export const startCompressedWindowCapture = async (
     latencyMode: 'realtime',
     sizeChangeBehavior: 'contain',
     ...(width !== dimensions.width || height !== dimensions.height ? { transform: { width, height, fit: 'contain' as const } } : {})
-  }, { frameRate })
+  }, { frameRate: null })
   output.addVideoTrack(videoSource)
   const audioTrack = stream.getAudioTracks()[0]
   let audioSource: MediaStreamAudioTrackSource | undefined
