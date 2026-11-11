@@ -6,6 +6,11 @@ The project follows tag-based GitHub Releases. Version numbers are kept in `desk
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-11-11
+
+### Fixed
+- Closing the recording widget no longer quits TradeTools when the main window is minimized.
+
 ## [1.1.8] - 2026-10-26
 
 ### Fixed
