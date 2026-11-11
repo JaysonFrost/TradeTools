@@ -349,7 +349,7 @@ describe('main app lifecycle', () => {
     const source = await readFile(resolve('src/main/app.ts'), 'utf8')
     expect(source).toContain("window.on('close', (event) => {")
     expect(source).toContain('event.preventDefault()\n    window.hide()')
-    expect(source).toContain("if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) app.quit()")
+    expect(source).toContain("if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !mainWindow.isMinimized()) app.quit()")
     expect(source).toContain('appQuitRequested = true')
     expect(source).not.toContain('recordingWidgetWindow.close()')
   })

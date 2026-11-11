@@ -992,7 +992,7 @@ const createRecordingWidgetWindow = (): BrowserWindow => {
   window.on('closed', () => {
     if (keepOnTopTimer) clearInterval(keepOnTopTimer)
     recordingWidgetWindow = undefined
-    if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) app.quit()
+    if (!appQuitRequested && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !mainWindow.isMinimized()) app.quit()
   })
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL && isAllowedDevUrl(process.env.ELECTRON_RENDERER_URL)) {
